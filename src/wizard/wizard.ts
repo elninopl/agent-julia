@@ -21,6 +21,16 @@ import { runMaintenance } from "../maintenance/maintenance.js";
 import { install } from "./register.js";
 import { Prompter } from "./prompt.js";
 import { expandPath } from "../util/paths.js";
+import { banner, c, hintLine, info, ok, step, summaryBox } from "./ui.js";
+
+const STEPS = 9;
+
+// Pick the language to render style samples in. We ship samples in en + pl; any
+// Polish-ish input maps to pl, everything else falls back to en (the samples
+// illustrate STYLE, not language).
+function sampleLang(language: string): string {
+  return /^(pl|pol)/i.test(language.trim()) ? "pl" : "en";
+}
 
 // Zero-friction onboarding. Configures the persona by example, writes config with
 // schemaVersion, initializes the store (via migrations), builds the index, and
@@ -28,21 +38,24 @@ import { expandPath } from "../util/paths.js";
 export async function runWizard(): Promise<void> {
   const p = new Prompter();
   try {
-    console.log("\nagent-julia — setup\n===================");
+    banner();
     if (configExists()) {
       const overwrite = await p.confirm(
-        `A config already exists at ${configPath()}. Reconfigure?`,
+        `A config already exists at ${c.cyan(configPath())}. Reconfigure?`,
         false,
       );
       if (!overwrite) {
-        console.log("Keeping existing config. Nothing changed.");
+        info("Keeping existing config. Nothing changed.");
         return;
       }
     }
 
-    const name = await p.text("Agent name", "Julia");
+    step(1, STEPS, "Agent name");
+    const name = await p.text("Name", "Julia");
+
+    step(2, STEPS, "Gender / pronouns");
     const gender = (await p.choice<"f" | "m" | "n">(
-      "Gender / pronouns",
+      "Pronouns",
       [
         { value: "f", label: "she/her" },
         { value: "m", label: "he/him" },
@@ -52,21 +65,17 @@ export async function runWizard(): Promise<void> {
     )) as Config["gender"];
     const pronouns = gender === "f" ? "she/her" : gender === "m" ? "he/him" : "they/them";
 
-    const language = await p.choice(
-      "Output language (code & docs stay English)",
-      [
-        { value: "en", label: "English" },
-        { value: "pl", label: "Polski" },
-      ],
-      0,
-    );
+    step(3, STEPS, "Output language");
+    hintLine("Any language for the agent's replies — code, docs, and commits stay English.");
+    hintLine("Use a code or name, e.g. en · pl · de · es · fr · 'Português'.");
+    const language = await p.text("Language", "en");
 
-    // Style preset BY EXAMPLE — show the same utterance in all four voices.
-    console.log("\nSame message, four voices — pick the one that sounds like your agent:\n");
+    step(4, STEPS, "Style — same message, four voices. Pick the one that sounds like your agent.");
     const presets = allPresets();
+    const lang = sampleLang(language);
     presets.forEach((preset, i) => {
-      console.log(`  ${i + 1}) ${preset.label}`);
-      console.log(`     “${presetSample(preset.id, language)}”\n`);
+      console.log(`    ${c.cyanBold(String(i + 1))}  ${c.bold(preset.label)}`);
+      console.log(`       ${c.italic(c.gray("“" + presetSample(preset.id, lang) + "”"))}`);
     });
     const stylePreset = await p.choice<StylePreset>(
       "Style preset",
@@ -74,18 +83,31 @@ export async function runWizard(): Promise<void> {
       0,
     );
 
-    const memoryDirRaw = await p.text(
-      "Memory directory (git repo you own)",
-      join(homedir(), "agent-julia-memory"),
-    );
+    step(5, STEPS, "Memory directory");
+    hintLine("A git repo you own, holding your knowledge base as markdown.");
+    hintLine("An existing markdown KB here is adopted, not overwritten.");
+    const memoryDirRaw = await p.text("Path", join(homedir(), "agent-julia-memory"));
     const memoryDir = expandPath(memoryDirRaw);
 
+    step(6, STEPS, "Search mode");
     const search = await p.choice<SearchMode>(
-      "Search mode",
+      "How recall works",
       [
-        { value: "hybrid", label: "Hybrid (FTS + embeddings) — recommended" },
-        { value: "fts", label: "Full-text only (offline, no embeddings)" },
-        { value: "semantic", label: "Semantic only" },
+        {
+          value: "hybrid",
+          label: "Hybrid — keyword + meaning",
+          hint: "Best recall. The semantic half needs an embeddings provider; without one it falls back to keyword-only.",
+        },
+        {
+          value: "fts",
+          label: "Full-text — keyword only",
+          hint: "Exact keyword match. Fully offline, zero setup, no API or model.",
+        },
+        {
+          value: "semantic",
+          label: "Semantic — meaning only",
+          hint: "Meaning-based match. Requires an embeddings provider; no keyword fallback.",
+        },
       ],
       0,
     );
@@ -97,25 +119,31 @@ export async function runWizard(): Promise<void> {
       embeddingProvider = await p.choice<EmbeddingProviderKind>(
         "Embeddings provider",
         [
-          { value: "none", label: "None for now (FTS-only until configured) — privacy-first default" },
-          { value: "openai-compatible", label: "OpenAI-compatible API (OpenAI / Ollama / LM Studio)" },
+          {
+            value: "none",
+            label: "None for now",
+            hint: "Stay offline and key-free. Hybrid/semantic act as keyword-only until you set one.",
+          },
+          {
+            value: "openai-compatible",
+            label: "OpenAI-compatible API",
+            hint: "OpenAI / Ollama / LM Studio. API key read from env, never stored.",
+          },
         ],
         0,
       );
       if (embeddingProvider === "openai-compatible") {
         embeddingBaseUrl = await p.text("Embeddings base URL", "https://api.openai.com/v1");
         embeddingModel = await p.text("Embeddings model", "text-embedding-3-small");
-        console.log(
-          "  Set the API key in env AGENT_JULIA_EMBED_API_KEY (never stored in config).",
-        );
+        info("Set the API key in env " + c.bold("AGENT_JULIA_EMBED_API_KEY") + " (never stored in config).");
       }
     }
 
-    const contextBudget = Number.parseInt(
-      await p.text("Context budget for the injected core (tokens)", "1200"),
-      10,
-    );
+    step(7, STEPS, "Context budget");
+    hintLine("Max tokens of persona core injected into the hot path (fights context rot).");
+    const contextBudget = Number.parseInt(await p.text("Tokens", "1200"), 10);
 
+    step(8, STEPS, "Surfaces to register");
     const surfaces: Surface[] = [];
     for (const s of [
       { value: "code" as Surface, label: "Claude Code" },
@@ -125,11 +153,20 @@ export async function runWizard(): Promise<void> {
       if (await p.confirm(`Register with ${s.label}?`, true)) surfaces.push(s.value);
     }
 
+    step(9, STEPS, "Weekly review (owner judgment)");
     const weeklyMaintenance = await p.choice<WeeklyMaintenance>(
-      "Interactive weekly review (owner judgment)",
+      "How to run it",
       [
-        { value: "cowork-task", label: "Cowork scheduled task (recommended)" },
-        { value: "own-routine", label: "Wire into my own routine" },
+        {
+          value: "cowork-task",
+          label: "Cowork scheduled task",
+          hint: "A recurring Cowork task runs maintenance and reviews the digest.",
+        },
+        {
+          value: "own-routine",
+          label: "Wire into my own routine",
+          hint: "Run `agent-julia maintenance` on your own cadence (cron/Todoist).",
+        },
       ],
       0,
     );
@@ -153,18 +190,19 @@ export async function runWizard(): Promise<void> {
       weeklyMaintenance,
     });
 
-    console.log("\nSummary:");
-    console.log(`  ${config.name} (${config.pronouns}), ${config.language}, ${config.stylePreset}`);
-    console.log(`  memory: ${config.memoryDir}`);
-    console.log(`  search: ${config.search} / embeddings: ${config.embedding.provider}`);
-    console.log(`  surfaces: ${config.surfaces.join(", ") || "(none)"}`);
-    if (!(await p.confirm("\nWrite this config and initialize?", true))) {
-      console.log("Aborted. Nothing written.");
+    summaryBox("Summary", [
+      ["persona", `${config.name} (${config.pronouns}) · ${config.language} · ${config.stylePreset}`],
+      ["memory", config.memoryDir],
+      ["search", `${config.search} · embeddings: ${config.embedding.provider}`],
+      ["surfaces", config.surfaces.join(", ") || "(none)"],
+    ]);
+    if (!(await p.confirm("Write this config and initialize?", true))) {
+      info("Aborted. Nothing written.");
       return;
     }
 
     const savedPath = await saveConfig(config);
-    console.log(`\nConfig written: ${savedPath}`);
+    ok(`Config written: ${c.cyan(savedPath)}`);
 
     // Initialize the store via migrations (creates skeleton + records schemaVersion).
     await migrate(config);
@@ -176,7 +214,7 @@ export async function runWizard(): Promise<void> {
     const paths = storePaths(config.memoryDir);
     const existing = await listPageIds(paths);
     if (existing.length > 0) {
-      console.log(`Adopting existing knowledge base: ${existing.length} page(s) found.`);
+      ok(`Adopting existing knowledge base: ${c.bold(String(existing.length))} page(s) found.`);
     }
 
     // Build the index and run a first maintenance pass.
@@ -184,31 +222,39 @@ export async function runWizard(): Promise<void> {
     await runMaintenance(paths, indexer, config, "auto");
     const core = await composeCore(paths, config);
     indexer.close();
+    ok(`Memory initialized at ${c.cyan(config.memoryDir)}`);
 
     // Register the MCP server AND inject the startup persona core per surface.
+    console.log("");
     const steps = await install(config);
-    console.log("\nClient setup:");
-    for (const s of steps) console.log(`  [${s.status}] ${s.surface} — ${s.action}: ${s.detail}`);
+    for (const s of steps) {
+      const mark = s.status === "done" ? c.green("✓") : s.status === "manual" ? c.yellow("●") : c.gray("–");
+      console.log(`  ${mark} ${c.white(s.action)} ${c.gray("(" + s.surface + ")")}`);
+      console.log(`     ${c.dim(s.detail)}`);
+    }
 
     // Interactive weekly review (owner judgment) is a v0.2 feature, but the wizard
     // already captured how you want to run it — surface the next step now.
-    console.log("\nWeekly review (owner judgment — contradictions, dedup, promotions):");
+    console.log("\n  " + c.bold("Weekly review") + c.dim(" — contradictions, dedup, promotions"));
     if (config.weeklyMaintenance === "cowork-task") {
-      console.log(
-        "  Chosen: Cowork scheduled task. Create a weekly Cowork task that runs" +
-          ' `agent-julia maintenance` and reviews the digest. (Interactive digest lands in v0.2.)',
+      info(
+        "Cowork scheduled task: create a weekly task that runs " +
+          c.bold("agent-julia maintenance") +
+          " and reviews the digest. (Interactive digest lands in v0.2.)",
       );
     } else {
-      console.log(
-        "  Chosen: your own routine. Run `agent-julia maintenance` on your cadence" +
-          " (e.g. a weekly cron/Todoist task) and review the flagged items.",
+      info(
+        "Your own routine: run " +
+          c.bold("agent-julia maintenance") +
+          " on your cadence (cron/Todoist) and review the flagged items.",
       );
     }
 
+    console.log("");
     console.log(
-      `\nDone. Injected core is ~${core.tokens}/${core.budget} tokens.` +
-        `\nRestart your Claude clients to pick up the new MCP server.`,
+      `  ${c.greenBold("✓ Done.")} Injected core ~${c.bold(String(core.tokens))}/${core.budget} tokens.`,
     );
+    console.log(c.dim("  Restart your Claude clients to pick up the new MCP server.\n"));
   } finally {
     p.close();
   }

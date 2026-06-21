@@ -17,6 +17,15 @@ changes, which always ship an automatic, backup-protected data migration.
 - Wizard surfaces the next step for the chosen weekly-review mode (Cowork task vs
   own routine).
 
+### Changed
+
+- Wizard output is colorized and restructured (step counter, banner, framed
+  summary, dimmed hints); color auto-disables on non-TTY / `NO_COLOR`.
+- Language is now free-form (any code or name), not a two-option pick. Style
+  samples render in pl/en, falling back to English for other languages.
+- Search-mode and embeddings-provider options now spell out the consequences of
+  each choice (offline vs needs provider, keyword vs meaning, fallback behavior).
+
 ## [0.1.2] - 2026-06-21
 
 ### Changed
