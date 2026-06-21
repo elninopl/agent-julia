@@ -42,7 +42,23 @@ Name and gender are configurable — the default persona is "Julia" (she/her), b
 
 ## Install
 
-_TBD — published to npm at v0.1._
+```bash
+npx agent-julia init      # interactive setup wizard (persona + memory + client registration)
+```
+
+The wizard registers the MCP server with your Claude clients and injects the
+persona core. To register it manually as a stdio MCP server:
+
+```jsonc
+{
+  "mcpServers": {
+    "agent-julia": { "command": "npx", "args": ["-y", "agent-julia@latest", "serve"] }
+  }
+}
+```
+
+- `@latest` auto-propagates the newest version next session; pin (`agent-julia@0.1.1`)
+  for reproducibility. Upgrades ship automatic, backup-protected data migrations.
 
 ## License
 
