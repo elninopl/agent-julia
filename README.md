@@ -19,76 +19,30 @@ agent-julia is a local-first MCP server that gives your AI assistant a single, p
 - Persona engine: name / gender / language / style preset, plus learned voice corrections.
 - Budgeted context injection to fight context rot.
 - Automatic maintenance (re-index, dedupe, compaction) + optional interactive weekly review.
-- Zero-friction onboarding wizard that also registers the server with your Claude clients.
+- Adopts an existing markdown knowledge base (not just fresh installs).
 - Backward-compatible upgrades with automatic data migrations.
 
-## Install
+## What setup does
 
-Not yet published to npm. For local development:
+The onboarding wizard (`agent-julia init`) does three things, not one. Registering the MCP server alone is not enough — the persona and the "use your memory" instruction must be present in each surface's startup context, because the model reads those before anything else.
 
-```bash
-git clone <repo> agent-julia && cd agent-julia
-npm install
-npm run build
-node dist/index.js init      # interactive setup wizard
-```
+1. Registers the MCP server in your Claude clients:
+   - Claude Desktop "Local MCP servers" config -> covers Cowork and Dispatch.
+   - `~/.claude.json` (user scope) -> covers Claude Code.
+2. Injects a small persona + usage core into each surface's startup instructions, inside a managed, clearly marked block (backed up first, idempotent, reversible on uninstall):
+   - Claude Code: writes the block into `~/.claude/CLAUDE.md` directly.
+   - Cowork: generates the block and guides you to paste it into Settings -> Cowork -> Global instructions (this field is app-stored, not a file), and keeps an on-disk mirror so it can be audited and re-synced.
+3. Configures your persona and memory: name, gender, language, style preset (shown by example), memory directory, search mode.
 
-The wizard configures your persona (name, gender, language, style preset — picked
-by example) and memory directory, writes a versioned config to
-`~/.config/agent-julia/config.json`, initializes the markdown store as a git repo,
-and registers the MCP server with the Claude surfaces you choose.
-
-Once published, clients register it as a stdio MCP server:
-
-```jsonc
-{
-  "mcpServers": {
-    "agent-julia": { "command": "npx", "args": ["-y", "agent-julia@latest", "serve"] }
-  }
-}
-```
-
-- **`@latest`** (default): auto-propagates the newest version next session.
-- **Pinned** (`agent-julia@0.1.0`): reproducible. Upgrades always ship automatic,
-  backup-protected data migrations — no manual file fixing, no data loss.
-
-## Commands
-
-- `agent-julia serve` — start the MCP stdio server (default; used by clients).
-- `agent-julia init` — run the setup wizard.
-- `agent-julia migrate` — apply pending data migrations and exit.
-
-## MCP tools
-
-`read` · `list` · `search` (FTS + semantic) · `ingest` (schema-enforced write +
-git commit) · `correct_voice` · `maintenance` · `get_core` (budgeted persona core).
+The startup core stays tiny on purpose (persona + "use agent-julia for memory"); everything else lives in your memory base and is pulled in on demand and within a token budget.
 
 ## Configuration
 
-Name and gender are configurable — the default persona is "Julia" (she/her), but
-you define your own agent's identity, language, and style during setup. Embeddings
-default to `none` (fully offline, FTS-only) and can be switched to any
-OpenAI-compatible provider; the API key is read from the environment, never stored.
+Name and gender are configurable — the default persona is "Julia" (she/her), but you define your own agent's identity, language, and style during setup.
 
-## Releasing (maintainers)
+## Install
 
-CI runs typecheck + build + tests on every PR and push to `main` (Node 20 & 22).
-Releases are tag-driven:
-
-```bash
-npm version <patch|minor|major>   # bumps package.json + creates the vX.Y.Z tag
-git push --follow-tags
-```
-
-The `Release` workflow then verifies the tag matches `package.json`, runs the test
-suite, publishes to npm via **Trusted Publishing** (OIDC — no stored token), and
-creates a GitHub Release using the matching `CHANGELOG.md` section as notes.
-Provenance is attached automatically on the OIDC publish.
-
-One-time setup: publish `0.1.0` manually (`npm publish --access public`) to create
-the package, then on npmjs.com add a Trusted Publisher for it (GitHub Actions →
-repo `agent-julia`, workflow `release.yml`). After that, releases are fully
-hands-off. Add the new `CHANGELOG.md` section before tagging.
+_TBD — published to npm at v0.1._
 
 ## License
 
