@@ -5,37 +5,51 @@ import { StorePaths } from "../store/paths.js";
 
 export type DB = Database.Database;
 
-// Bump when the derived index's shape (tokenizer, tables) changes. The index is
-// disposable, so on a version mismatch we drop and rebuild from the markdown.
-export const INDEX_SCHEMA_VERSION = 2; // 2: porter stemming tokenizer
-const INDEX_VERSION_KEY = "index_schema_version";
+// Bump when the derived index's shape changes in a way the tokenizer signature
+// doesn't already capture. The index is disposable: on a signature mismatch we
+// drop and rebuild from the markdown.
+export const INDEX_SCHEMA_VERSION = 3;
+const INDEX_SIG_KEY = "index_signature";
 
-// Open (and lazily create) the derived index database. The index is disposable:
-// it can always be rebuilt from the canonical markdown, so we are free to drop and
-// recreate it on any schema/model mismatch.
-export function openDb(paths: StorePaths): DB {
+// Choose the FTS tokenizer from the store's primary language:
+// - CJK / Thai (no word spacing): the `trigram` tokenizer matches substrings, so
+//   search works without a word segmenter.
+// - everything else: Porter stemming + diacritics folding, so "Lodz" finds
+//   "Łódź" and "debug" finds "debugging".
+export function ftsTokenizerFor(language: string): string {
+  const l = language.trim().toLowerCase();
+  if (/^(zh|ja|ko|th|cmn|jpn|kor|tha|yue|中|日|한|ไ)/.test(l)) return "trigram";
+  return "porter unicode61 remove_diacritics 2";
+}
+
+// Open (and lazily create) the derived index database. The index is disposable
+// and rebuilt from the canonical markdown, so it can be dropped and recreated on
+// any schema/tokenizer/model mismatch.
+export function openDb(paths: StorePaths, tokenizer: string): DB {
   mkdirSync(dirname(paths.dbPath), { recursive: true });
   const db = new Database(paths.dbPath);
   db.pragma("journal_mode = WAL");
 
   db.exec("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);");
-  // On a schema bump, drop the derived tables; the next sync rebuilds them from
-  // the canonical markdown (page_meta empty => every page is re-added).
-  if (getMeta(db, INDEX_VERSION_KEY) !== String(INDEX_SCHEMA_VERSION)) {
+  // The signature folds in the schema version and the active tokenizer; if either
+  // changed, drop the derived tables and let the next sync rebuild them from the
+  // canonical markdown (page_meta empty => every page is re-added).
+  const signature = `${INDEX_SCHEMA_VERSION}:${tokenizer}`;
+  if (getMeta(db, INDEX_SIG_KEY) !== signature) {
     db.exec("DROP TABLE IF EXISTS pages_fts; DROP TABLE IF EXISTS page_meta; DROP TABLE IF EXISTS embeddings;");
   }
-  initSchema(db);
-  setMeta(db, INDEX_VERSION_KEY, String(INDEX_SCHEMA_VERSION));
+  initSchema(db, tokenizer);
+  setMeta(db, INDEX_SIG_KEY, signature);
   return db;
 }
 
-function initSchema(db: DB): void {
+function initSchema(db: DB, tokenizer: string): void {
   db.exec(`
     CREATE VIRTUAL TABLE IF NOT EXISTS pages_fts USING fts5(
       id UNINDEXED,
       title,
       body,
-      tokenize = 'porter unicode61'
+      tokenize = '${tokenizer}'
     );
 
     CREATE TABLE IF NOT EXISTS embeddings (

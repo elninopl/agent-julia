@@ -3,11 +3,13 @@ import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { basename } from "node:path";
 import matter from "gray-matter";
 import { StorePaths, pageFilePath, pageId } from "./paths.js";
+import { detectLanguage } from "./lang.js";
 
 export interface PageFrontmatter {
   title?: string;
   status?: string;
   updated?: string; // absolute date, ISO (YYYY-MM-DD)
+  lang?: string; // auto-detected output language (short code)
   tags?: string[];
   [k: string]: unknown;
 }
@@ -96,10 +98,14 @@ export async function writePage(
   // Body may have come without frontmatter; in that case parsed.content === content.
   const body = parsed.content.trim();
 
+  // Auto-detect the page language (metadata) unless the author set it explicitly.
+  const lang = fm.lang ?? detectLanguage(body);
+
   const merged: PageFrontmatter = {
     title: fm.title ?? opts.title ?? id,
     status: fm.status ?? opts.status ?? "active",
     updated: todayISO(opts.now),
+    ...(lang ? { lang } : {}),
     ...stripCoreKeys(fm),
   };
 

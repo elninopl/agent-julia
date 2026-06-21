@@ -29,23 +29,30 @@ class NoneProvider implements EmbeddingProvider {
 
 // Local, in-process embeddings via transformers.js (ONNX). No server, no API key,
 // fully offline after the first model download. Optional dependency: loaded
-// dynamically so the base install stays tiny. Model: multilingual-e5-small (384d,
-// ~118 languages) — a good fit for a multilingual memory.
-const LOCAL_MODEL = "Xenova/multilingual-e5-small";
+// dynamically so the base install stays tiny. Models are the multilingual-e5
+// family (~118 languages); the wizard offers small/base/large quality tiers.
 const LOCAL_PKG = "@huggingface/transformers";
+const DEFAULT_LOCAL_MODEL = "Xenova/multilingual-e5-small";
 
 class LocalProvider implements EmbeddingProvider {
   readonly enabled = true;
-  readonly dims = 384;
-  readonly id = `local:${LOCAL_MODEL}:384`;
+  readonly dims: number;
+  readonly id: string;
+  private readonly model: string;
   // Cache the (heavy) pipeline load.
   private pipe: Promise<(input: string[], opts: object) => Promise<{ tolist(): number[][] }>> | null = null;
+
+  constructor(cfg: EmbeddingConfig) {
+    this.model = cfg.model ?? DEFAULT_LOCAL_MODEL;
+    this.dims = cfg.dims ?? 384;
+    this.id = `local:${this.model}:${this.dims}`;
+  }
 
   private async extractor() {
     if (!this.pipe) {
       this.pipe = (async () => {
         const mod = (await import(LOCAL_PKG)) as { pipeline: (task: string, model: string) => Promise<unknown> };
-        return (await mod.pipeline("feature-extraction", LOCAL_MODEL)) as (
+        return (await mod.pipeline("feature-extraction", this.model)) as (
           input: string[],
           opts: object,
         ) => Promise<{ tolist(): number[][] }>;
@@ -91,6 +98,15 @@ export async function checkLocalEmbeddingsAvailable(): Promise<boolean> {
 
 export const LOCAL_EMBEDDINGS_PACKAGE = LOCAL_PKG;
 
+// Local model quality tiers (multilingual-e5 family). Bigger = better recall,
+// more disk/RAM, slower. Sizes are approximate quantized ONNX downloads.
+export const LOCAL_MODEL_TIERS = {
+  small: { model: "Xenova/multilingual-e5-small", dims: 384, size: "~120 MB" },
+  base: { model: "Xenova/multilingual-e5-base", dims: 768, size: "~280 MB" },
+  large: { model: "Xenova/multilingual-e5-large", dims: 1024, size: "~560 MB" },
+} as const;
+export type LocalModelTier = keyof typeof LOCAL_MODEL_TIERS;
+
 // Minimal OpenAI-compatible embeddings client (works with OpenAI, Ollama's
 // /v1/embeddings, LM Studio, etc.). API key is read from env, never persisted.
 class OpenAICompatibleProvider implements EmbeddingProvider {
@@ -135,7 +151,7 @@ class OpenAICompatibleProvider implements EmbeddingProvider {
 export function makeEmbeddingProvider(cfg: EmbeddingConfig): EmbeddingProvider {
   try {
     if (cfg.provider === "openai-compatible") return new OpenAICompatibleProvider(cfg);
-    if (cfg.provider === "local") return new LocalProvider();
+    if (cfg.provider === "local") return new LocalProvider(cfg);
   } catch (err) {
     warn("failed to init embedding provider, falling back to none:", (err as Error).message);
   }

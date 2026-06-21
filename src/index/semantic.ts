@@ -9,9 +9,9 @@ import {
 
 const MODEL_META_KEY = "embedding_model_id";
 
-// A provider can fail at embed time (e.g. the optional local model package isn't
-// installed, or an API call errors). We never want that to crash an ingest or a
-// search — degrade to keyword-only and warn once.
+// A provider can fail at embed time (the optional local package isn't installed,
+// or an API call errors). Rather than break an ingest or a search, fall back to
+// keyword-only and warn once.
 let embedWarned = false;
 function onEmbedError(err: unknown): null {
   if (!embedWarned) {

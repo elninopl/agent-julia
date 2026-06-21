@@ -10,12 +10,12 @@ export interface IngestResult {
   committed: boolean;
 }
 
-// The one write path that enforces the schema end-to-end:
-//   1. write/update the page (schema-conformant frontmatter, absolute updated date)
-//   2. refresh index.md (always-current catalog)
-//   3. append to log.md (append-only journal)
-//   4. update the derived index (FTS + embeddings) for just this page
-//   5. git commit (the canonical store is versioned)
+// Schema-enforcing write path:
+//   1. write/update the page (conformant frontmatter, absolute updated date)
+//   2. refresh index.md (the catalog)
+//   3. append to log.md (the journal)
+//   4. reindex this page (FTS + embeddings)
+//   5. commit (the store is versioned)
 export async function ingest(
   paths: StorePaths,
   indexer: Indexer,

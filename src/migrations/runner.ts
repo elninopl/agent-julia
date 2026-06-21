@@ -32,9 +32,9 @@ async function writeState(paths: StorePaths, state: MigrationState): Promise<voi
   await writeFile(paths.migrationStatePath, JSON.stringify(state, null, 2) + "\n", "utf8");
 }
 
-// HARD RULE (release gate): every upgrade is backward-compatible OR ships an
-// automatic, idempotent, backup-protected migration that runs transparently on
-// first launch. This runner enforces that contract.
+// Brings an older store up to the current schema on startup. Each step is ordered,
+// idempotent, and backed up before it touches user data, so an upgrade is either
+// backward-compatible or migrated transparently — never a manual fix.
 export async function migrate(config: Config): Promise<{ config: Config; ranAny: boolean }> {
   const paths = storePaths(config.memoryDir);
   const state = await readState(paths);

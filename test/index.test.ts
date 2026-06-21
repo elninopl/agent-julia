@@ -7,10 +7,10 @@ import { storePaths, pageFilePath } from "../src/store/paths.js";
 import { writePage } from "../src/store/markdown.js";
 import { ConfigSchema } from "../src/config/schema.js";
 
-function setup() {
+function setup(language = "en") {
   const dir = mkdtempSync(join(tmpdir(), "aj-idx-"));
   const paths = storePaths(dir);
-  const cfg = ConfigSchema.parse({ memoryDir: dir, search: "fts" });
+  const cfg = ConfigSchema.parse({ memoryDir: dir, search: "fts", language });
   const indexer = Indexer.open(paths, cfg);
   return { dir, paths, indexer };
 }
@@ -60,8 +60,25 @@ describe("incremental sync", () => {
     close = () => indexer.close();
     await writePage(paths, "gamma", "spent the night debugging asynchronous handlers", {});
     await indexer.sync();
-    // Different inflection of the same stem still matches.
     expect((await indexer.search("debug", 5)).map((h) => h.id)).toContain("gamma");
     expect((await indexer.search("handler", 5)).map((h) => h.id)).toContain("gamma");
+  });
+
+  it("folds diacritics so an unaccented query matches accented text", async () => {
+    const { paths, indexer } = setup("pl");
+    close = () => indexer.close();
+    await writePage(paths, "delta", "Konferencja w Krakowie, książka Müllera, café na rogu.", {});
+    await indexer.sync();
+    for (const q of ["krakowie", "ksiazka", "mullera", "cafe"]) {
+      expect((await indexer.search(q, 5)).map((h) => h.id)).toContain("delta");
+    }
+  });
+
+  it("uses a trigram tokenizer for CJK so substrings match", async () => {
+    const { paths, indexer } = setup("zh");
+    close = () => indexer.close();
+    await writePage(paths, "epsilon", "机器学习模型的部署与扩展", {});
+    await indexer.sync();
+    expect((await indexer.search("机器学", 5)).map((h) => h.id)).toContain("epsilon");
   });
 });

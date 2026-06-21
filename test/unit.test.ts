@@ -4,6 +4,7 @@ import { pageFilePath, pageId } from "../src/store/paths.js";
 import { extractLinks, todayISO } from "../src/store/markdown.js";
 import { presetSample } from "../src/persona/presets.js";
 import { ConfigSchema, CURRENT_SCHEMA_VERSION } from "../src/config/schema.js";
+import { detectLanguage } from "../src/store/lang.js";
 
 describe("tokens", () => {
   it("estimates and clamps to budget on a paragraph boundary", () => {
@@ -35,6 +36,14 @@ describe("persona presets", () => {
   it("renders the same utterance per language with EN fallback", () => {
     expect(presetSample("minimalist-engineer", "pl")).toContain("try/catch");
     expect(presetSample("minimalist-engineer", "xx")).toContain("try/catch"); // fallback to EN
+  });
+});
+
+describe("language detection", () => {
+  it("detects common languages and returns undefined for thin input", () => {
+    expect(detectLanguage("This is a reasonably long english sentence about software.")).toBe("en");
+    expect(detectLanguage("To jest dłuższe zdanie po polsku o oprogramowaniu i pamięci.")).toBe("pl");
+    expect(detectLanguage("hi")).toBeUndefined();
   });
 });
 

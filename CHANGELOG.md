@@ -7,6 +7,24 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-06-21
+
+### Added
+
+- Diacritics-insensitive keyword search: `cafe` matches `café`, `krakow` matches
+  `Kraków`. Covers accented letters across European languages.
+- CJK and Thai search: for languages written without spaces, the index uses a
+  trigram tokenizer so substring search works. The tokenizer is chosen from your
+  configured language.
+- Local embedding model sizes — small, base, or large (the `multilingual-e5`
+  family) — selectable in the wizard, trading download size for quality.
+- Per-page language is detected automatically and recorded in frontmatter.
+
+### Changed
+
+- Documentation rewritten; README expanded with architecture, search, persona,
+  configuration, and a full tool and command reference.
+
 ## [0.1.3] - 2026-06-21
 
 ### Added

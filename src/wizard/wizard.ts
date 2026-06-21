@@ -17,7 +17,12 @@ import { listPageIds } from "../store/markdown.js";
 import { ensureGitRepo } from "../store/git.js";
 import { allPresets, presetSample } from "../persona/presets.js";
 import { resolveSampleLang } from "../persona/samples.js";
-import { checkLocalEmbeddingsAvailable, LOCAL_EMBEDDINGS_PACKAGE } from "../index/embeddings.js";
+import {
+  checkLocalEmbeddingsAvailable,
+  LOCAL_EMBEDDINGS_PACKAGE,
+  LOCAL_MODEL_TIERS,
+  LocalModelTier,
+} from "../index/embeddings.js";
 import { composeCore } from "../persona/compose.js";
 import { runMaintenance } from "../maintenance/maintenance.js";
 import { install } from "./register.js";
@@ -123,6 +128,7 @@ export async function runWizard(): Promise<void> {
     let embeddingProvider: EmbeddingProviderKind = "none";
     let embeddingBaseUrl: string | undefined;
     let embeddingModel: string | undefined;
+    let embeddingDims: number | undefined;
     if (search !== "fts") {
       console.log("");
       info("Search-by-meaning needs something to turn text into vectors:");
@@ -145,13 +151,32 @@ export async function runWizard(): Promise<void> {
         },
       ]);
       if (embeddingProvider === "local") {
+        const tier = await p.choice<LocalModelTier>([
+          {
+            value: "small",
+            label: `Small — fast & light (${LOCAL_MODEL_TIERS.small.size})`,
+            recommended: true,
+            desc: "multilingual-e5-small, 384 dims. Great default — quick, low memory, ~118 languages.",
+          },
+          {
+            value: "base",
+            label: `Base — better quality (${LOCAL_MODEL_TIERS.base.size})`,
+            desc: "multilingual-e5-base, 768 dims. Noticeably stronger recall for a bigger download.",
+          },
+          {
+            value: "large",
+            label: `Best — highest quality (${LOCAL_MODEL_TIERS.large.size})`,
+            desc: "multilingual-e5-large, 1024 dims. Top quality; needs the most disk, RAM, and time.",
+          },
+        ]);
+        embeddingModel = LOCAL_MODEL_TIERS[tier].model;
+        embeddingDims = LOCAL_MODEL_TIERS[tier].dims;
+
         const available = await checkLocalEmbeddingsAvailable();
         if (available) {
           ok("Local model package is installed. The model downloads on first search.");
         } else {
-          note(
-            `One-time install needed for the local model — run:  npm i -g ${LOCAL_EMBEDDINGS_PACKAGE}`,
-          );
+          note(`One-time install needed for the local model — run:  npm i -g ${LOCAL_EMBEDDINGS_PACKAGE}`);
           note("Until it's installed, search runs on keywords. Everything else works now.");
         }
       }
@@ -222,6 +247,7 @@ export async function runWizard(): Promise<void> {
         provider: embeddingProvider,
         baseUrl: embeddingBaseUrl,
         model: embeddingModel,
+        dims: embeddingDims,
         apiKeyEnv: "AGENT_JULIA_EMBED_API_KEY",
       },
       contextBudget,

@@ -7,6 +7,7 @@ import {
   DB,
   allIndexedIds,
   deletePageHash,
+  ftsTokenizerFor,
   getPageHash,
   openDb,
   setPageHash,
@@ -32,7 +33,8 @@ export class Indexer {
   ) {}
 
   static open(paths: StorePaths, config: Config): Indexer {
-    return new Indexer(openDb(paths), makeEmbeddingProvider(config.embedding), paths, config);
+    const db = openDb(paths, ftsTokenizerFor(config.language));
+    return new Indexer(db, makeEmbeddingProvider(config.embedding), paths, config);
   }
 
   close(): void {
