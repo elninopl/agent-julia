@@ -7,6 +7,8 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-06-21
+
 ### Added
 
 - Local, in-process semantic search — no API, no server, no key. Optional
