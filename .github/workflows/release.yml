@@ -41,11 +41,15 @@ jobs:
       - run: npm run build
       - run: npm test
 
-      # prepublishOnly rebuilds; --provenance requires a public repo + OIDC.
-      - name: Publish to npm
-        run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      # Trusted Publishing (OIDC) needs npm >= 11.5.1; Node 22 ships an older npm.
+      - name: Update npm for OIDC trusted publishing
+        run: npm install -g npm@latest
+
+      # No token: npm exchanges a short-lived OIDC token with the registry. The
+      # package's Trusted Publisher (repo + this workflow) must be configured on
+      # npmjs first. Provenance is attached automatically on OIDC publish.
+      - name: Publish to npm (Trusted Publishing)
+        run: npm publish --access public
 
       - name: Extract release notes
         run: node scripts/changelog-extract.mjs "${GITHUB_REF_NAME}" > RELEASE_NOTES.md

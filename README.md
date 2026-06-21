@@ -81,9 +81,14 @@ git push --follow-tags
 ```
 
 The `Release` workflow then verifies the tag matches `package.json`, runs the test
-suite, publishes to npm with provenance (`--provenance`, public repo + OIDC), and
-creates a GitHub Release using the matching `CHANGELOG.md` section as notes. Set an
-`NPM_TOKEN` repository secret. Add the new section to `CHANGELOG.md` before tagging.
+suite, publishes to npm via **Trusted Publishing** (OIDC — no stored token), and
+creates a GitHub Release using the matching `CHANGELOG.md` section as notes.
+Provenance is attached automatically on the OIDC publish.
+
+One-time setup: publish `0.1.0` manually (`npm publish --access public`) to create
+the package, then on npmjs.com add a Trusted Publisher for it (GitHub Actions →
+repo `agent-julia`, workflow `release.yml`). After that, releases are fully
+hands-off. Add the new `CHANGELOG.md` section before tagging.
 
 ## License
 
