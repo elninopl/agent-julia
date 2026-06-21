@@ -15,7 +15,10 @@ agent-julia is a local-first MCP server that gives your AI assistant a single, p
 ## Features (planned v0.1)
 
 - Local-first memory: markdown + git, human-readable, portable, private.
-- Fast search: full-text (SQLite FTS5) + semantic (embeddings).
+- Fast search: full-text (SQLite FTS5, with stemming) + optional semantic search.
+- Semantic search can run **fully local and in-process** (a small multilingual
+  model via transformers.js) — no API, no server, no key — or via any
+  OpenAI-compatible endpoint. Default stays keyword-only and dependency-light.
 - Persona engine: name / gender / language / style preset, plus learned voice corrections.
 - Budgeted context injection to fight context rot.
 - Automatic maintenance (re-index, dedupe, compaction) + optional interactive weekly review.

@@ -24,7 +24,7 @@ export type WeeklyMaintenance = (typeof WEEKLY_MAINTENANCE)[number];
 
 // Embedding provider for semantic search. "none" keeps the product fully offline
 // and key-free; hybrid/semantic then degrade gracefully to FTS-only.
-export const EMBEDDING_PROVIDERS = ["none", "openai-compatible"] as const;
+export const EMBEDDING_PROVIDERS = ["none", "local", "openai-compatible"] as const;
 export type EmbeddingProviderKind = (typeof EMBEDDING_PROVIDERS)[number];
 
 export const EmbeddingConfigSchema = z.object({

@@ -5,6 +5,11 @@ import { StorePaths } from "../store/paths.js";
 
 export type DB = Database.Database;
 
+// Bump when the derived index's shape (tokenizer, tables) changes. The index is
+// disposable, so on a version mismatch we drop and rebuild from the markdown.
+export const INDEX_SCHEMA_VERSION = 2; // 2: porter stemming tokenizer
+const INDEX_VERSION_KEY = "index_schema_version";
+
 // Open (and lazily create) the derived index database. The index is disposable:
 // it can always be rebuilt from the canonical markdown, so we are free to drop and
 // recreate it on any schema/model mismatch.
@@ -12,7 +17,15 @@ export function openDb(paths: StorePaths): DB {
   mkdirSync(dirname(paths.dbPath), { recursive: true });
   const db = new Database(paths.dbPath);
   db.pragma("journal_mode = WAL");
+
+  db.exec("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);");
+  // On a schema bump, drop the derived tables; the next sync rebuilds them from
+  // the canonical markdown (page_meta empty => every page is re-added).
+  if (getMeta(db, INDEX_VERSION_KEY) !== String(INDEX_SCHEMA_VERSION)) {
+    db.exec("DROP TABLE IF EXISTS pages_fts; DROP TABLE IF EXISTS page_meta; DROP TABLE IF EXISTS embeddings;");
+  }
   initSchema(db);
+  setMeta(db, INDEX_VERSION_KEY, String(INDEX_SCHEMA_VERSION));
   return db;
 }
 
@@ -22,7 +35,7 @@ function initSchema(db: DB): void {
       id UNINDEXED,
       title,
       body,
-      tokenize = 'unicode61'
+      tokenize = 'porter unicode61'
     );
 
     CREATE TABLE IF NOT EXISTS embeddings (

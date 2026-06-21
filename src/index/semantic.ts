@@ -1,3 +1,4 @@
+import { warn } from "../util/log.js";
 import { DB, getMeta, setMeta } from "./db.js";
 import {
   EmbeddingProvider,
@@ -7,6 +8,18 @@ import {
 } from "./embeddings.js";
 
 const MODEL_META_KEY = "embedding_model_id";
+
+// A provider can fail at embed time (e.g. the optional local model package isn't
+// installed, or an API call errors). We never want that to crash an ingest or a
+// search — degrade to keyword-only and warn once.
+let embedWarned = false;
+function onEmbedError(err: unknown): null {
+  if (!embedWarned) {
+    warn("embeddings unavailable, using keyword search only:", (err as Error).message);
+    embedWarned = true;
+  }
+  return null;
+}
 
 export interface SemanticHit {
   id: string;
@@ -24,7 +37,7 @@ export async function semanticUpsert(
   text: string,
 ): Promise<void> {
   if (!provider.enabled) return;
-  const [vec] = await provider.embed([text]);
+  const vec = await provider.embed([text]).then((v) => v[0], onEmbedError);
   if (!vec) return;
   db.prepare(
     `INSERT INTO embeddings (id, model, dims, vector) VALUES (?, ?, ?, ?)
@@ -40,7 +53,7 @@ export async function semanticSearch(
   limit: number,
 ): Promise<SemanticHit[]> {
   if (!provider.enabled) return [];
-  const [q] = await provider.embed([query]);
+  const q = await provider.embedQuery(query).catch(onEmbedError);
   if (!q) return [];
   const rows = db.prepare("SELECT id, vector FROM embeddings").all() as Array<{
     id: string;

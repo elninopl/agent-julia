@@ -9,6 +9,13 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ### Added
 
+- Local, in-process semantic search — no API, no server, no key. Optional
+  `local` embeddings provider runs `multilingual-e5-small` (384d, ~118 languages)
+  via transformers.js; cross-lingual (a Polish query finds an English note). The
+  model package is an optional peer dependency (lazy-loaded), so the base install
+  stays tiny; the wizard offers it and guides the one-time install.
+- FTS now uses a Porter stemming tokenizer, so different word forms match
+  (`debug` ↔ `debugging`). The index auto-rebuilds on this tokenizer change.
 - Incremental index sync: pages are reindexed by content hash, so hand-edits to
   the markdown (outside `ingest`) are detected, new pages added, deleted pages
   dropped — without re-embedding unchanged pages (no needless embedding-API calls).

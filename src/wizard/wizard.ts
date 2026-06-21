@@ -17,6 +17,7 @@ import { listPageIds } from "../store/markdown.js";
 import { ensureGitRepo } from "../store/git.js";
 import { allPresets, presetSample } from "../persona/presets.js";
 import { resolveSampleLang } from "../persona/samples.js";
+import { checkLocalEmbeddingsAvailable, LOCAL_EMBEDDINGS_PACKAGE } from "../index/embeddings.js";
 import { composeCore } from "../persona/compose.js";
 import { runMaintenance } from "../maintenance/maintenance.js";
 import { install } from "./register.js";
@@ -124,20 +125,36 @@ export async function runWizard(): Promise<void> {
     let embeddingModel: string | undefined;
     if (search !== "fts") {
       console.log("");
-      info("Search-by-meaning needs an embeddings provider:");
+      info("Search-by-meaning needs something to turn text into vectors:");
       embeddingProvider = await p.choice<EmbeddingProviderKind>([
         {
-          value: "none",
-          label: "Not now — stay offline",
+          value: "local",
+          label: "Local model — fully offline, no API",
           recommended: true,
-          desc: "Keeps everything local and key-free. Search just matches keywords until you add a provider later (re-run setup any time).",
+          desc: "Runs a small multilingual model right here, no server or key. One extra package + a ~120 MB model download on first use; then it's private and free.",
+        },
+        {
+          value: "none",
+          label: "Not now — keywords only",
+          desc: "Stay lean and offline. Search matches keywords until you pick a model later (re-run setup any time).",
         },
         {
           value: "openai-compatible",
-          label: "Connect a provider",
-          desc: "OpenAI, or a local one like Ollama / LM Studio. Your API key is read from an environment variable, never written to disk.",
+          label: "Hosted / external API",
+          desc: "OpenAI, or a local server like Ollama / LM Studio. Your API key is read from an environment variable, never written to disk.",
         },
       ]);
+      if (embeddingProvider === "local") {
+        const available = await checkLocalEmbeddingsAvailable();
+        if (available) {
+          ok("Local model package is installed. The model downloads on first search.");
+        } else {
+          note(
+            `One-time install needed for the local model — run:  npm i -g ${LOCAL_EMBEDDINGS_PACKAGE}`,
+          );
+          note("Until it's installed, search runs on keywords. Everything else works now.");
+        }
+      }
       if (embeddingProvider === "openai-compatible") {
         embeddingBaseUrl = await p.text({ example: "https://api.openai.com/v1", def: "https://api.openai.com/v1" });
         embeddingModel = await p.text({ example: "text-embedding-3-small", def: "text-embedding-3-small" });

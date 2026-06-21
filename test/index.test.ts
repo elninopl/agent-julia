@@ -54,4 +54,14 @@ describe("incremental sync", () => {
     expect(r.removed).toBe(1);
     expect((await indexer.search("stripe", 5)).map((h) => h.id)).not.toContain("beta");
   });
+
+  it("stems with the porter tokenizer (query 'debug' matches 'debugging')", async () => {
+    const { paths, indexer } = setup();
+    close = () => indexer.close();
+    await writePage(paths, "gamma", "spent the night debugging asynchronous handlers", {});
+    await indexer.sync();
+    // Different inflection of the same stem still matches.
+    expect((await indexer.search("debug", 5)).map((h) => h.id)).toContain("gamma");
+    expect((await indexer.search("handler", 5)).map((h) => h.id)).toContain("gamma");
+  });
 });
