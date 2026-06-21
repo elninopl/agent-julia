@@ -22,13 +22,53 @@ agent-julia is a local-first MCP server that gives your AI assistant a single, p
 - Zero-friction onboarding wizard that also registers the server with your Claude clients.
 - Backward-compatible upgrades with automatic data migrations.
 
-## Configuration
-
-Name and gender are configurable — the default persona is "Julia" (she/her), but you define your own agent's identity, language, and style during setup.
-
 ## Install
 
-_TBD — published to npm at v0.1._
+Not yet published to npm. For local development:
+
+```bash
+git clone <repo> agent-julia && cd agent-julia
+npm install
+npm run build
+node dist/index.js init      # interactive setup wizard
+```
+
+The wizard configures your persona (name, gender, language, style preset — picked
+by example) and memory directory, writes a versioned config to
+`~/.config/agent-julia/config.json`, initializes the markdown store as a git repo,
+and registers the MCP server with the Claude surfaces you choose.
+
+Once published, clients register it as a stdio MCP server:
+
+```jsonc
+{
+  "mcpServers": {
+    "agent-julia": { "command": "npx", "args": ["-y", "agent-julia@latest", "serve"] }
+  }
+}
+```
+
+- **`@latest`** (default): auto-propagates the newest version next session.
+- **Pinned** (`agent-julia@0.1.0`): reproducible. Upgrades always ship automatic,
+  backup-protected data migrations — no manual file fixing, no data loss.
+
+## Commands
+
+- `agent-julia serve` — start the MCP stdio server (default; used by clients).
+- `agent-julia init` — run the setup wizard.
+- `agent-julia migrate` — apply pending data migrations and exit.
+
+## MCP tools
+
+`read` · `list` · `search` (FTS + semantic) · `ingest` (schema-enforced write +
+git commit) · `correct_voice` · `maintenance` · `get_core` (budgeted persona core).
+
+## Configuration
+
+Name and gender are configurable — the default persona is "Julia" (she/her), but
+you define your own agent's identity, language, and style during setup. Embeddings
+default to `none` (fully offline, FTS-only) and can be switched to any
+OpenAI-compatible provider; the API key is read from the environment, never stored.
 
 ## License
 

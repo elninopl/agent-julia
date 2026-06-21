@@ -1,0 +1,53 @@
+{
+  "name": "agent-julia",
+  "version": "0.1.0",
+  "description": "One brain for your AI — a local-first, owned memory and configurable persona shared across Claude Code, Cowork, and Dispatch, exposed as an MCP server.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "agent-julia": "dist/index.js"
+  },
+  "main": "dist/index.js",
+  "files": [
+    "dist",
+    "assets",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && npm run copy:assets",
+    "copy:assets": "node scripts/copy-assets.mjs",
+    "dev": "tsx src/index.ts",
+    "wizard": "tsx src/index.ts init",
+    "serve": "tsx src/index.ts serve",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "better-sqlite3": "^11.8.0",
+    "gray-matter": "^4.0.3",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.0"
+  },
+  "keywords": [
+    "mcp",
+    "memory",
+    "persona",
+    "claude",
+    "claude-code",
+    "local-first",
+    "knowledge-base"
+  ]
+}

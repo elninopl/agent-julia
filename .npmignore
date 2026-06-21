@@ -1,0 +1,11 @@
+# Source is shipped compiled in dist/
+src/
+scripts/
+_DEV/
+.idea/
+.vscode/
+coverage/
+*.tsbuildinfo
+tsconfig.json
+vitest.config.*
+.github/

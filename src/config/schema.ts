@@ -1,0 +1,77 @@
+import { z } from "zod";
+
+// Bump this whenever the on-disk shape of config OR the canonical markdown store
+// changes in a way that needs a migration. migrations/ holds the ordered steps;
+// migrate() brings any older store up to CURRENT_SCHEMA_VERSION on startup.
+export const CURRENT_SCHEMA_VERSION = 1;
+
+export const STYLE_PRESETS = [
+  "sharp-cofounder",
+  "calm-mentor",
+  "minimalist-engineer",
+  "neutral-assistant",
+] as const;
+export type StylePreset = (typeof STYLE_PRESETS)[number];
+
+export const SEARCH_MODES = ["fts", "semantic", "hybrid"] as const;
+export type SearchMode = (typeof SEARCH_MODES)[number];
+
+export const SURFACES = ["code", "cowork", "dispatch"] as const;
+export type Surface = (typeof SURFACES)[number];
+
+export const WEEKLY_MAINTENANCE = ["cowork-task", "own-routine"] as const;
+export type WeeklyMaintenance = (typeof WEEKLY_MAINTENANCE)[number];
+
+// Embedding provider for semantic search. "none" keeps the product fully offline
+// and key-free; hybrid/semantic then degrade gracefully to FTS-only.
+export const EMBEDDING_PROVIDERS = ["none", "openai-compatible"] as const;
+export type EmbeddingProviderKind = (typeof EMBEDDING_PROVIDERS)[number];
+
+export const EmbeddingConfigSchema = z.object({
+  provider: z.enum(EMBEDDING_PROVIDERS).default("none"),
+  // For openai-compatible: base URL + model. API key is read from env, never stored.
+  baseUrl: z.string().optional(),
+  model: z.string().optional(),
+  apiKeyEnv: z.string().default("AGENT_JULIA_EMBED_API_KEY"),
+  dims: z.number().int().positive().optional(),
+});
+export type EmbeddingConfig = z.infer<typeof EmbeddingConfigSchema>;
+
+export const ConfigSchema = z.object({
+  schemaVersion: z.number().int().positive().default(CURRENT_SCHEMA_VERSION),
+
+  // Persona identity (the user owns this — defaults describe "Julia").
+  name: z.string().min(1).default("Julia"),
+  gender: z.enum(["f", "m", "n"]).default("f"),
+  pronouns: z.string().default("she/her"),
+
+  // Agent OUTPUT language. Repo/code/docs language is always EN (separate concern).
+  language: z.string().default("en"),
+
+  stylePreset: z.enum(STYLE_PRESETS).default("sharp-cofounder"),
+
+  // Canonical markdown store (a git repo the user owns).
+  memoryDir: z.string().min(1),
+
+  search: z.enum(SEARCH_MODES).default("hybrid"),
+  embedding: EmbeddingConfigSchema.default({ provider: "none", apiKeyEnv: "AGENT_JULIA_EMBED_API_KEY" }),
+
+  // Max tokens for the budgeted core injected into the hot path.
+  contextBudget: z.number().int().positive().default(1200),
+
+  surfaces: z.array(z.enum(SURFACES)).default(["code", "cowork", "dispatch"]),
+  weeklyMaintenance: z.enum(WEEKLY_MAINTENANCE).default("cowork-task"),
+
+  // Categories the agent must never persist. Seeds from sensible privacy defaults.
+  privacyHardOff: z.array(z.string()).default([
+    "passwords, API keys, tokens, access secrets",
+    "card numbers, bank account numbers, IBANs, exact financial amounts",
+    "third-party private data without consent",
+  ]),
+});
+
+export type Config = z.infer<typeof ConfigSchema>;
+
+export function defaultConfig(memoryDir: string): Config {
+  return ConfigSchema.parse({ memoryDir, schemaVersion: CURRENT_SCHEMA_VERSION });
+}
