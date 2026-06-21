@@ -19,12 +19,19 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ### Changed
 
-- Wizard output is colorized and restructured (step counter, banner, framed
-  summary, dimmed hints); color auto-disables on non-TTY / `NO_COLOR`.
-- Language is now free-form (any code or name), not a two-option pick. Style
-  samples render in pl/en, falling back to English for other languages.
-- Search-mode and embeddings-provider options now spell out the consequences of
-  each choice (offline vs needs provider, keyword vs meaning, fallback behavior).
+- Wizard redesigned ("guided & warm"): warm intro, per-step "why it matters"
+  explanation, plain-language option descriptions, recommendations, concrete
+  examples, framed recap, and an encouraging next-steps closing. Colorized;
+  auto-disables on non-TTY / `NO_COLOR` (and `FORCE_COLOR=1` forces it on).
+- Style samples now ship in the 20 most widely used languages; for any other
+  language the wizard shows English samples with a clear note that they only
+  illustrate STYLE — the agent still replies in the chosen language.
+- Language is free-form (any code or name), not a two-option pick.
+- Search and embeddings-provider choices explained in plain language (offline vs
+  needs provider, keywords vs meaning, fallback behavior).
+- Persona (context) budget is now a pick of Lean / Balanced (recommended) / Rich
+  with token examples, plus a Custom option — no more bare number prompt.
+- Internal info logs are silenced during the wizard so its output stays clean.
 
 ## [0.1.2] - 2026-06-21
 

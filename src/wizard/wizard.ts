@@ -16,160 +16,182 @@ import { storePaths } from "../store/paths.js";
 import { listPageIds } from "../store/markdown.js";
 import { ensureGitRepo } from "../store/git.js";
 import { allPresets, presetSample } from "../persona/presets.js";
+import { resolveSampleLang } from "../persona/samples.js";
 import { composeCore } from "../persona/compose.js";
 import { runMaintenance } from "../maintenance/maintenance.js";
 import { install } from "./register.js";
 import { Prompter } from "./prompt.js";
 import { expandPath } from "../util/paths.js";
-import { banner, c, hintLine, info, ok, step, summaryBox } from "./ui.js";
+import { setQuiet } from "../util/log.js";
+import { c, examples, info, note, ok, step, summary, welcome } from "./ui.js";
 
 const STEPS = 9;
 
-// Pick the language to render style samples in. We ship samples in en + pl; any
-// Polish-ish input maps to pl, everything else falls back to en (the samples
-// illustrate STYLE, not language).
-function sampleLang(language: string): string {
-  return /^(pl|pol)/i.test(language.trim()) ? "pl" : "en";
-}
-
-// Zero-friction onboarding. Configures the persona by example, writes config with
-// schemaVersion, initializes the store (via migrations), builds the index, and
-// registers the MCP server with the chosen Claude surfaces.
+// Zero-friction onboarding, "guided & warm". Every step explains why it matters,
+// recommends a sensible default, and shows concrete examples — then writes the
+// config, initializes the store, and wires the agent into your Claude apps.
 export async function runWizard(): Promise<void> {
   const p = new Prompter();
+  // Keep internal info logs out of the polished wizard flow (warnings/errors stay).
+  setQuiet(true);
   try {
-    banner();
+    welcome("");
     if (configExists()) {
+      console.log("");
       const overwrite = await p.confirm(
-        `A config already exists at ${c.cyan(configPath())}. Reconfigure?`,
+        `You already have a setup at ${c.cyan(configPath())}. Start over?`,
         false,
       );
       if (!overwrite) {
-        info("Keeping existing config. Nothing changed.");
+        console.log("");
+        info("Kept your existing setup. Nothing changed.");
         return;
       }
     }
 
-    step(1, STEPS, "Agent name");
-    const name = await p.text("Name", "Julia");
+    // 1 — Name
+    step(1, STEPS, "Name", "what your agent calls itself when it talks to you");
+    const name = await p.text({ example: "Julia · Max · Ada — anything you like", def: "Julia" });
 
-    step(2, STEPS, "Gender / pronouns");
-    const gender = (await p.choice<"f" | "m" | "n">(
-      "Pronouns",
-      [
-        { value: "f", label: "she/her" },
-        { value: "m", label: "he/him" },
-        { value: "n", label: "they/them" },
-      ],
-      0,
-    )) as Config["gender"];
+    // 2 — Pronouns
+    step(2, STEPS, "Pronouns", "so the agent refers to itself naturally");
+    const gender = await p.choice<"f" | "m" | "n">([
+      { value: "f", label: "she / her" },
+      { value: "m", label: "he / him" },
+      { value: "n", label: "they / them" },
+    ]);
     const pronouns = gender === "f" ? "she/her" : gender === "m" ? "he/him" : "they/them";
 
-    step(3, STEPS, "Output language");
-    hintLine("Any language for the agent's replies — code, docs, and commits stay English.");
-    hintLine("Use a code or name, e.g. en · pl · de · es · fr · 'Português'.");
-    const language = await p.text("Language", "en");
+    // 3 — Language
+    step(3, STEPS, "Language", "the language your agent replies in");
+    note("Code, docs, and commit messages always stay in English — this is just for conversation.");
+    examples("en · pl · de · es · fr · ja — or a name like 'Português'");
+    const language = await p.text({ def: "en" });
 
-    step(4, STEPS, "Style — same message, four voices. Pick the one that sounds like your agent.");
+    // 4 — Style (by example): the SAME message in each voice is the option's desc.
+    step(4, STEPS, "Style", "the same message in four voices — pick the one that sounds like your agent");
     const presets = allPresets();
-    const lang = sampleLang(language);
-    presets.forEach((preset, i) => {
-      console.log(`    ${c.cyanBold(String(i + 1))}  ${c.bold(preset.label)}`);
-      console.log(`       ${c.italic(c.gray("“" + presetSample(preset.id, lang) + "”"))}`);
-    });
+    const resolved = resolveSampleLang(language);
+    const lang = resolved ?? "en";
+    if (!resolved) {
+      note(
+        `No samples for '${language}' yet, so these are in English to show the styles. ` +
+          `Your agent will still reply in ${language}.`,
+      );
+    }
     const stylePreset = await p.choice<StylePreset>(
-      "Style preset",
-      presets.map((pr) => ({ value: pr.id, label: pr.label })),
-      0,
+      presets.map((pr, i) => ({
+        value: pr.id,
+        label: pr.label,
+        recommended: i === 0,
+        desc: "“" + presetSample(pr.id, lang) + "”",
+      })),
     );
 
-    step(5, STEPS, "Memory directory");
-    hintLine("A git repo you own, holding your knowledge base as markdown.");
-    hintLine("An existing markdown KB here is adopted, not overwritten.");
-    const memoryDirRaw = await p.text("Path", join(homedir(), "agent-julia-memory"));
+    // 5 — Memory directory
+    step(5, STEPS, "Memory", "a folder you own where your knowledge lives, as plain markdown");
+    note("It becomes a git repo so nothing is ever lost. Point it at an existing markdown KB and it's adopted, not overwritten.");
+    const memoryDirRaw = await p.text({
+      example: "~/agent-julia-memory or an existing notes folder",
+      def: join(homedir(), "agent-julia-memory"),
+    });
     const memoryDir = expandPath(memoryDirRaw);
 
-    step(6, STEPS, "Search mode");
-    const search = await p.choice<SearchMode>(
-      "How recall works",
-      [
-        {
-          value: "hybrid",
-          label: "Hybrid — keyword + meaning",
-          hint: "Best recall. The semantic half needs an embeddings provider; without one it falls back to keyword-only.",
-        },
-        {
-          value: "fts",
-          label: "Full-text — keyword only",
-          hint: "Exact keyword match. Fully offline, zero setup, no API or model.",
-        },
-        {
-          value: "semantic",
-          label: "Semantic — meaning only",
-          hint: "Meaning-based match. Requires an embeddings provider; no keyword fallback.",
-        },
-      ],
-      0,
-    );
+    // 6 — Search
+    step(6, STEPS, "Search", "how your agent finds things in its memory");
+    const search = await p.choice<SearchMode>([
+      {
+        value: "hybrid",
+        label: "Smart — keywords + meaning",
+        recommended: true,
+        desc: "Finds the right note even when you word it differently. The 'meaning' half uses an embeddings provider (next question); until you add one, it quietly works on keywords.",
+      },
+      {
+        value: "fts",
+        label: "Keywords only",
+        desc: "Matches the exact words you type. Fully offline, nothing to set up, no account or model.",
+      },
+      {
+        value: "semantic",
+        label: "Meaning only",
+        desc: "Understands what you mean even with different words — but needs an embeddings provider, and won't match exact words on its own.",
+      },
+    ]);
 
+    // 6b — Embeddings provider (only when meaning is involved)
     let embeddingProvider: EmbeddingProviderKind = "none";
     let embeddingBaseUrl: string | undefined;
     let embeddingModel: string | undefined;
     if (search !== "fts") {
-      embeddingProvider = await p.choice<EmbeddingProviderKind>(
-        "Embeddings provider",
-        [
-          {
-            value: "none",
-            label: "None for now",
-            hint: "Stay offline and key-free. Hybrid/semantic act as keyword-only until you set one.",
-          },
-          {
-            value: "openai-compatible",
-            label: "OpenAI-compatible API",
-            hint: "OpenAI / Ollama / LM Studio. API key read from env, never stored.",
-          },
-        ],
-        0,
-      );
+      console.log("");
+      info("Search-by-meaning needs an embeddings provider:");
+      embeddingProvider = await p.choice<EmbeddingProviderKind>([
+        {
+          value: "none",
+          label: "Not now — stay offline",
+          recommended: true,
+          desc: "Keeps everything local and key-free. Search just matches keywords until you add a provider later (re-run setup any time).",
+        },
+        {
+          value: "openai-compatible",
+          label: "Connect a provider",
+          desc: "OpenAI, or a local one like Ollama / LM Studio. Your API key is read from an environment variable, never written to disk.",
+        },
+      ]);
       if (embeddingProvider === "openai-compatible") {
-        embeddingBaseUrl = await p.text("Embeddings base URL", "https://api.openai.com/v1");
-        embeddingModel = await p.text("Embeddings model", "text-embedding-3-small");
-        info("Set the API key in env " + c.bold("AGENT_JULIA_EMBED_API_KEY") + " (never stored in config).");
+        embeddingBaseUrl = await p.text({ example: "https://api.openai.com/v1", def: "https://api.openai.com/v1" });
+        embeddingModel = await p.text({ example: "text-embedding-3-small", def: "text-embedding-3-small" });
+        note("Set your key in the env var AGENT_JULIA_EMBED_API_KEY before starting the server. It's never stored in config.");
       }
     }
 
-    step(7, STEPS, "Context budget");
-    hintLine("Max tokens of persona core injected into the hot path (fights context rot).");
-    const contextBudget = Number.parseInt(await p.text("Tokens", "1200"), 10);
-
-    step(8, STEPS, "Surfaces to register");
-    const surfaces: Surface[] = [];
-    for (const s of [
-      { value: "code" as Surface, label: "Claude Code" },
-      { value: "cowork" as Surface, label: "Cowork (Claude Desktop)" },
-      { value: "dispatch" as Surface, label: "Dispatch (mobile)" },
-    ]) {
-      if (await p.confirm(`Register with ${s.label}?`, true)) surfaces.push(s.value);
+    // 7 — Context budget
+    step(7, STEPS, "Persona budget", "how much of your agent's personality rides in every message");
+    note("Identity and voice rules travel with each turn so the agent stays in character. Bigger = more personality up front, slightly more cost per message. Everything else in your memory is fetched only when needed.");
+    const budgetPick = await p.choice<string>([
+      { value: "800", label: "Lean — about 800 tokens", desc: "Name, language, and the core rules. Lowest overhead." },
+      {
+        value: "1200",
+        label: "Balanced — about 1200 tokens",
+        recommended: true,
+        desc: "Full voice rules plus your saved corrections. Small and complete — the right call for almost everyone.",
+      },
+      { value: "2000", label: "Rich — about 2000 tokens", desc: "Extra headroom as your voice corrections grow over time." },
+      { value: "custom", label: "Custom…", desc: "Type your own number of tokens." },
+    ]);
+    let contextBudget = 1200;
+    if (budgetPick === "custom") {
+      const typed = Number.parseInt(await p.text({ example: "1500", def: "1200" }), 10);
+      contextBudget = Number.isFinite(typed) ? typed : 1200;
+    } else {
+      contextBudget = Number.parseInt(budgetPick, 10);
     }
 
-    step(9, STEPS, "Weekly review (owner judgment)");
-    const weeklyMaintenance = await p.choice<WeeklyMaintenance>(
-      "How to run it",
-      [
-        {
-          value: "cowork-task",
-          label: "Cowork scheduled task",
-          hint: "A recurring Cowork task runs maintenance and reviews the digest.",
-        },
-        {
-          value: "own-routine",
-          label: "Wire into my own routine",
-          hint: "Run `agent-julia maintenance` on your own cadence (cron/Todoist).",
-        },
-      ],
-      0,
-    );
+    // 8 — Surfaces
+    step(8, STEPS, "Where to use it", "register your agent with your Claude apps");
+    note("Same memory and persona everywhere. You can add or remove surfaces later with `agent-julia sync`.");
+    console.log("");
+    const surfaces: Surface[] = [];
+    if (await p.confirm("Claude Code (the terminal CLI)?", true)) surfaces.push("code");
+    if (await p.confirm("Claude Desktop — also powers Cowork and Dispatch on mobile?", true)) {
+      surfaces.push("cowork", "dispatch");
+    }
+
+    // 9 — Weekly review
+    step(9, STEPS, "Weekly review", "a human-judgment pass — contradictions, duplicates, what to promote");
+    const weeklyMaintenance = await p.choice<WeeklyMaintenance>([
+      {
+        value: "cowork-task",
+        label: "Let Cowork run it on a schedule",
+        recommended: true,
+        desc: "A recurring Cowork task runs maintenance and shows you a digest to approve.",
+      },
+      {
+        value: "own-routine",
+        label: "I'll run it myself",
+        desc: "Run `agent-julia maintenance` on your own cadence (cron, a Todoist reminder, whatever fits).",
+      },
+    ]);
 
     const config: Config = ConfigSchema.parse({
       name,
@@ -185,77 +207,80 @@ export async function runWizard(): Promise<void> {
         model: embeddingModel,
         apiKeyEnv: "AGENT_JULIA_EMBED_API_KEY",
       },
-      contextBudget: Number.isFinite(contextBudget) ? contextBudget : 1200,
+      contextBudget,
       surfaces,
       weeklyMaintenance,
     });
 
-    summaryBox("Summary", [
-      ["persona", `${config.name} (${config.pronouns}) · ${config.language} · ${config.stylePreset}`],
+    summary("Here's your setup", [
+      ["agent", `${config.name} · ${config.pronouns} · speaks ${config.language}`],
+      ["style", presets.find((pr) => pr.id === config.stylePreset)!.label],
       ["memory", config.memoryDir],
-      ["search", `${config.search} · embeddings: ${config.embedding.provider}`],
-      ["surfaces", config.surfaces.join(", ") || "(none)"],
+      ["search", config.search === "fts" ? "keywords only" : `${config.search} · provider: ${config.embedding.provider}`],
+      ["budget", `~${config.contextBudget} tokens`],
+      ["surfaces", surfacesLabel(config.surfaces)],
     ]);
-    if (!(await p.confirm("Write this config and initialize?", true))) {
-      info("Aborted. Nothing written.");
+    console.log("");
+    if (!(await p.confirm("Looks good — create it?", true))) {
+      console.log("");
+      info("No problem. Nothing was written.");
       return;
     }
 
     const savedPath = await saveConfig(config);
-    ok(`Config written: ${c.cyan(savedPath)}`);
+    console.log("");
+    ok(`Saved your setup → ${c.cyan(savedPath)}`);
 
     // Initialize the store via migrations (creates skeleton + records schemaVersion).
     await migrate(config);
     await ensureGitRepo(config.memoryDir);
 
-    // Adopt an existing markdown knowledge base if one is already there — the
-    // maintenance pass below indexes whatever pages exist without clobbering a
-    // hand-written index.md (it owns only a managed catalog block).
+    // Adopt an existing markdown knowledge base if one is already there.
     const paths = storePaths(config.memoryDir);
     const existing = await listPageIds(paths);
     if (existing.length > 0) {
-      ok(`Adopting existing knowledge base: ${c.bold(String(existing.length))} page(s) found.`);
+      ok(`Adopted your existing knowledge base — ${c.bold(String(existing.length))} page(s).`);
     }
 
-    // Build the index and run a first maintenance pass.
     const indexer = Indexer.open(paths, config);
     await runMaintenance(paths, indexer, config, "auto");
     const core = await composeCore(paths, config);
     indexer.close();
-    ok(`Memory initialized at ${c.cyan(config.memoryDir)}`);
+    ok(`Memory ready at ${c.cyan(config.memoryDir)}`);
 
     // Register the MCP server AND inject the startup persona core per surface.
-    console.log("");
     const steps = await install(config);
     for (const s of steps) {
       const mark = s.status === "done" ? c.green("✓") : s.status === "manual" ? c.yellow("●") : c.gray("–");
       console.log(`  ${mark} ${c.white(s.action)} ${c.gray("(" + s.surface + ")")}`);
-      console.log(`     ${c.dim(s.detail)}`);
+      if (s.status === "manual") console.log("     " + c.dim(s.detail));
     }
 
-    // Interactive weekly review (owner judgment) is a v0.2 feature, but the wizard
-    // already captured how you want to run it — surface the next step now.
-    console.log("\n  " + c.bold("Weekly review") + c.dim(" — contradictions, dedup, promotions"));
+    // Closing: clear, encouraging next steps.
+    console.log("");
+    console.log("  " + c.greenBold("✓ All set.") + c.dim(`  Persona core is ~${core.tokens}/${core.budget} tokens.`));
+    console.log("");
+    console.log("  " + c.bold("Next:"));
+    console.log("  " + c.cyan("1.") + " Restart your Claude apps so they pick up the new MCP server.");
+    console.log("  " + c.cyan("2.") + ` Say hi — your agent is now ${c.bold(config.name)}, with memory that follows you.`);
     if (config.weeklyMaintenance === "cowork-task") {
-      info(
-        "Cowork scheduled task: create a weekly task that runs " +
-          c.bold("agent-julia maintenance") +
-          " and reviews the digest. (Interactive digest lands in v0.2.)",
+      console.log(
+        "  " + c.cyan("3.") + " Set up a weekly Cowork task running " + c.bold("agent-julia maintenance") + ".",
       );
     } else {
-      info(
-        "Your own routine: run " +
-          c.bold("agent-julia maintenance") +
-          " on your cadence (cron/Todoist) and review the flagged items.",
+      console.log(
+        "  " + c.cyan("3.") + " Run " + c.bold("agent-julia maintenance") + " weekly (cron/Todoist) for housekeeping.",
       );
     }
-
     console.log("");
-    console.log(
-      `  ${c.greenBold("✓ Done.")} Injected core ~${c.bold(String(core.tokens))}/${core.budget} tokens.`,
-    );
-    console.log(c.dim("  Restart your Claude clients to pick up the new MCP server.\n"));
   } finally {
     p.close();
   }
+}
+
+function surfacesLabel(surfaces: Surface[]): string {
+  const parts: string[] = [];
+  if (surfaces.includes("code")) parts.push("Claude Code");
+  if (surfaces.includes("cowork") || surfaces.includes("dispatch")) parts.push("Claude Desktop (Cowork + Dispatch)");
+  return parts.join(" · ") || "(none)";
 }

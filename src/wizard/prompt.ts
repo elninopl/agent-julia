@@ -1,53 +1,59 @@
 import { createInterface, Interface } from "node:readline/promises";
-import { c } from "./ui.js";
+import { c, wrapText } from "./ui.js";
 
 export interface ChoiceOption<T extends string> {
   value: T;
   label: string;
-  // Optional consequence/explanation line shown dimmed under the label.
-  hint?: string;
+  // A plain-language explanation, wrapped under the label.
+  desc?: string;
+  // Marks the recommended option (also becomes the default).
+  recommended?: boolean;
 }
 
-// Thin wrapper over readline so the wizard reads top-to-bottom. All prompts go to
-// stdout here (this is the interactive `init` path, not the stdio MCP server).
+const PAD = "  ";
+
+// Thin wrapper over readline, styled for the "guided & warm" wizard. All prompts
+// go to stdout (this is the interactive `init` path, not the stdio MCP server).
 export class Prompter {
   private rl: Interface;
   constructor() {
     this.rl = createInterface({ input: process.stdin, output: process.stdout });
   }
 
-  private arrow(): string {
-    return c.cyan("  › ");
+  private async ask(defaultHint?: string): Promise<string> {
+    const hint = defaultHint ? c.dim(` ${defaultHint}`) : "";
+    return (await this.rl.question(`${PAD}${c.cyanBold("❯")}${hint} `)).trim();
   }
 
-  async text(question: string, fallback?: string): Promise<string> {
-    const suffix = fallback ? c.dim(` (${fallback})`) : "";
-    console.log(`${c.bold(question)}${suffix}`);
-    const ans = (await this.rl.question(this.arrow())).trim();
-    return ans || fallback || "";
+  // Free-text input with an optional example line and default value.
+  async text(opts: { example?: string; def?: string } = {}): Promise<string> {
+    if (opts.example) console.log(PAD + c.dim("e.g. " + opts.example));
+    const ans = await this.ask(opts.def ? c.dim(`(${opts.def})`) : undefined);
+    return ans || opts.def || "";
   }
 
-  async choice<T extends string>(
-    question: string,
-    options: ChoiceOption<T>[],
-    defaultIndex = 0,
-  ): Promise<T> {
-    console.log(c.bold(question));
+  async choice<T extends string>(options: ChoiceOption<T>[]): Promise<T> {
+    const defaultIndex = Math.max(0, options.findIndex((o) => o.recommended));
+    console.log("");
     options.forEach((o, i) => {
-      const def = i === defaultIndex ? c.green(" (default)") : "";
-      console.log(`    ${c.cyanBold(String(i + 1))}  ${c.white(o.label)}${def}`);
-      if (o.hint) console.log(c.dim(`        ${o.hint}`));
+      const badge = o.recommended ? "  " + c.green("★ recommended") : "";
+      console.log(`${PAD}  ${c.cyanBold(String(i + 1))}  ${c.bold(o.label)}${badge}`);
+      if (o.desc) {
+        for (const ln of wrapText(o.desc, 58, "")) console.log(PAD + "     " + c.dim(ln));
+      }
+      console.log("");
     });
     const def = defaultIndex + 1;
-    const raw = (await this.rl.question(this.arrow() + c.dim(`1-${options.length} (${def}) `))).trim();
+    const raw = await this.ask(c.dim(`1–${options.length}, enter = ${def}`));
     const idx = raw ? Number.parseInt(raw, 10) - 1 : defaultIndex;
-    const picked = options[idx] ?? options[defaultIndex]!;
-    return picked.value;
+    return (options[idx] ?? options[defaultIndex]!).value;
   }
 
   async confirm(question: string, defaultYes = true): Promise<boolean> {
-    const hint = defaultYes ? c.dim("(Y/n)") : c.dim("(y/N)");
-    const raw = (await this.rl.question(`  ${c.cyan("›")} ${c.bold(question)} ${hint} `))
+    const hint = defaultYes ? "Y/n" : "y/N";
+    const raw = (
+      await this.rl.question(`${PAD}${c.cyanBold("❯")} ${c.white(question)} ${c.dim(hint)} `)
+    )
       .trim()
       .toLowerCase();
     if (!raw) return defaultYes;
