@@ -7,6 +7,8 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-06-21
+
 ### Added — v0.1 (initial)
 
 - Local-first memory store: markdown + git as the canonical source of truth

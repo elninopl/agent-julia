@@ -70,6 +70,21 @@ you define your own agent's identity, language, and style during setup. Embeddin
 default to `none` (fully offline, FTS-only) and can be switched to any
 OpenAI-compatible provider; the API key is read from the environment, never stored.
 
+## Releasing (maintainers)
+
+CI runs typecheck + build + tests on every PR and push to `main` (Node 20 & 22).
+Releases are tag-driven:
+
+```bash
+npm version <patch|minor|major>   # bumps package.json + creates the vX.Y.Z tag
+git push --follow-tags
+```
+
+The `Release` workflow then verifies the tag matches `package.json`, runs the test
+suite, publishes to npm with provenance (`--provenance`, public repo + OIDC), and
+creates a GitHub Release using the matching `CHANGELOG.md` section as notes. Set an
+`NPM_TOKEN` repository secret. Add the new section to `CHANGELOG.md` before tagging.
+
 ## License
 
 MIT
