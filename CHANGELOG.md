@@ -7,14 +7,18 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ## [Unreleased]
 
-## [0.1.1] - 2026-06-21
+## [0.1.2] - 2026-06-21
 
 ### Changed
 
 - README install instructions reflect the now-published npm package
   (`npm i agent-julia`, MCP registration snippet).
-- First release published through the GitHub Actions OIDC trusted-publishing
-  pipeline (provenance attached automatically).
+
+### Fixed
+
+- Add `repository` field to `package.json`, required for npm provenance
+  verification on the OIDC trusted-publishing pipeline (0.1.1 failed to publish
+  without it).
 
 ## [0.1.0] - 2026-06-21
 

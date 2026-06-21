@@ -57,7 +57,7 @@ persona core. To register it manually as a stdio MCP server:
 }
 ```
 
-- `@latest` auto-propagates the newest version next session; pin (`agent-julia@0.1.1`)
+- `@latest` auto-propagates the newest version next session; pin (`agent-julia@0.1.2`)
   for reproducibility. Upgrades ship automatic, backup-protected data migrations.
 
 ## License

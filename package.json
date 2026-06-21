@@ -8,6 +8,14 @@
     "agent-julia": "dist/index.js"
   },
   "main": "dist/index.js",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/elninopl/agent-julia.git"
+  },
+  "bugs": {
+    "url": "https://github.com/elninopl/agent-julia/issues"
+  },
+  "homepage": "https://github.com/elninopl/agent-julia#readme",
   "files": [
     "dist",
     "assets",
