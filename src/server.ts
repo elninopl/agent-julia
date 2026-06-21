@@ -3,13 +3,27 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { buildRuntime } from "./runtime.js";
 import { registerTools } from "./tools/register.js";
 import { composeCore } from "./persona/compose.js";
-import { log } from "./util/log.js";
+import { runMaintenance } from "./maintenance/maintenance.js";
+import { log, warn } from "./util/log.js";
 
 // Boot the MCP stdio server. Runs migrations, opens the index, registers tools,
 // and exposes the budgeted persona core as a resource for clients that prefer
 // resources over a tool call.
 export async function startServer(): Promise<void> {
   const rt = await buildRuntime();
+
+  // Automatic maintenance on launch ("on write + cron" — this is the cron-ish
+  // half). Incremental and non-fatal: picks up hand-edited pages, flags stale
+  // facts, refreshes the catalog, commits if anything changed. Never blocks serve.
+  try {
+    const report = await runMaintenance(rt.paths, rt.indexer, rt.config, "auto");
+    log(
+      `maintenance: +${report.indexAdded}/~${report.indexUpdated}/-${report.indexRemoved} indexed, ` +
+        `${report.staleFlagged.length} stale, ${report.orphanLinks.length} orphan link(s)`,
+    );
+  } catch (err) {
+    warn("startup maintenance failed (continuing):", (err as Error).message);
+  }
 
   const server = new McpServer({
     name: "agent-julia",

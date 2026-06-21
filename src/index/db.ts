@@ -32,11 +32,40 @@ function initSchema(db: DB): void {
       vector BLOB NOT NULL
     );
 
+    -- Content fingerprint per page, so incremental sync can detect pages changed
+    -- out-of-band (the user edits the markdown by hand) and reindex only those.
+    CREATE TABLE IF NOT EXISTS page_meta (
+      id   TEXT PRIMARY KEY,
+      hash TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS meta (
       key   TEXT PRIMARY KEY,
       value TEXT NOT NULL
     );
   `);
+}
+
+export function getPageHash(db: DB, id: string): string | undefined {
+  const row = db.prepare("SELECT hash FROM page_meta WHERE id = ?").get(id) as
+    | { hash: string }
+    | undefined;
+  return row?.hash;
+}
+
+export function setPageHash(db: DB, id: string, hash: string): void {
+  db.prepare(
+    "INSERT INTO page_meta (id, hash) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET hash = excluded.hash",
+  ).run(id, hash);
+}
+
+export function deletePageHash(db: DB, id: string): void {
+  db.prepare("DELETE FROM page_meta WHERE id = ?").run(id);
+}
+
+export function allIndexedIds(db: DB): string[] {
+  const rows = db.prepare("SELECT id FROM page_meta").all() as Array<{ id: string }>;
+  return rows.map((r) => r.id);
 }
 
 export function getMeta(db: DB, key: string): string | undefined {

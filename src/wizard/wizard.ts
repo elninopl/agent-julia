@@ -190,6 +190,21 @@ export async function runWizard(): Promise<void> {
     console.log("\nClient setup:");
     for (const s of steps) console.log(`  [${s.status}] ${s.surface} — ${s.action}: ${s.detail}`);
 
+    // Interactive weekly review (owner judgment) is a v0.2 feature, but the wizard
+    // already captured how you want to run it — surface the next step now.
+    console.log("\nWeekly review (owner judgment — contradictions, dedup, promotions):");
+    if (config.weeklyMaintenance === "cowork-task") {
+      console.log(
+        "  Chosen: Cowork scheduled task. Create a weekly Cowork task that runs" +
+          ' `agent-julia maintenance` and reviews the digest. (Interactive digest lands in v0.2.)',
+      );
+    } else {
+      console.log(
+        "  Chosen: your own routine. Run `agent-julia maintenance` on your cadence" +
+          " (e.g. a weekly cron/Todoist task) and review the flagged items.",
+      );
+    }
+
     console.log(
       `\nDone. Injected core is ~${core.tokens}/${core.budget} tokens.` +
         `\nRestart your Claude clients to pick up the new MCP server.`,

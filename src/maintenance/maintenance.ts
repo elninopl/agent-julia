@@ -8,7 +8,9 @@ import { composeCore } from "../persona/compose.js";
 
 export interface MaintenanceReport {
   mode: "auto" | "interactive";
-  reindexed: number;
+  indexAdded: number;
+  indexUpdated: number;
+  indexRemoved: number;
   reembedded: boolean;
   orphanLinks: Array<{ from: string; to: string }>;
   staleFlagged: Array<{ id: string; updated: string }>;
@@ -35,7 +37,7 @@ export async function runMaintenance(
   mode: "auto" | "interactive" = "auto",
 ): Promise<MaintenanceReport> {
   const reembedded = await indexer.reembedIfStale();
-  const reindexed = await indexer.rebuild();
+  const synced = await indexer.sync();
 
   const ids = new Set(await listPageIds(paths));
   const orphanLinks: Array<{ from: string; to: string }> = [];
@@ -59,7 +61,9 @@ export async function runMaintenance(
 
   return {
     mode,
-    reindexed,
+    indexAdded: synced.added,
+    indexUpdated: synced.updated,
+    indexRemoved: synced.removed,
     reembedded,
     orphanLinks,
     staleFlagged,

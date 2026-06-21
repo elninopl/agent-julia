@@ -7,6 +7,16 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ## [Unreleased]
 
+### Added
+
+- Incremental index sync: pages are reindexed by content hash, so hand-edits to
+  the markdown (outside `ingest`) are detected, new pages added, deleted pages
+  dropped — without re-embedding unchanged pages (no needless embedding-API calls).
+- Automatic maintenance now also runs on server startup (the "cron" half of
+  on-write + cron): non-fatal, incremental, picks up out-of-band edits and flags.
+- Wizard surfaces the next step for the chosen weekly-review mode (Cowork task vs
+  own routine).
+
 ## [0.1.2] - 2026-06-21
 
 ### Changed
