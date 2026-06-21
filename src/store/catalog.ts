@@ -1,30 +1,27 @@
-import { appendFile, writeFile } from "node:fs/promises";
+import { appendFile } from "node:fs/promises";
 import { StorePaths } from "./paths.js";
 import { PageSummary, listPages, todayISO } from "./markdown.js";
+import { upsertManagedBlock } from "../managed/block.js";
 
-// Regenerate index.md from the actual pages on disk. index.md is a derived,
-// always-current catalog — never hand-authored source of truth.
+const CATALOG_BLOCK_ID = "catalog";
+
+// Refresh the page catalog. The catalog is derived and always-current, but a user
+// adopting an existing knowledge base may already maintain index.md by hand — so
+// we only ever own a clearly-marked managed block inside it. Hand-written content
+// around the block is preserved.
 export async function refreshIndexMd(paths: StorePaths): Promise<PageSummary[]> {
   const pages = await listPages(paths);
-  const lines: string[] = [
-    "# Index",
-    "",
-    "> Auto-generated catalog of pages. Do not edit by hand — regenerated on every ingest.",
-    "",
-    `_Updated: ${todayISO()} · ${pages.length} page(s)_`,
-    "",
-  ];
+  const lines: string[] = [`_Catalog — ${todayISO()} · ${pages.length} page(s)_`, ""];
   if (pages.length === 0) {
-    lines.push("_No pages yet._", "");
+    lines.push("_No pages yet._");
   } else {
     for (const p of pages) {
       const status = p.status ? ` — \`${p.status}\`` : "";
       const updated = p.updated ? ` _(updated ${p.updated})_` : "";
       lines.push(`- [[${p.id}]] — ${p.title}${status}${updated}`);
     }
-    lines.push("");
   }
-  await writeFile(paths.indexMd, lines.join("\n"), "utf8");
+  await upsertManagedBlock(paths.indexMd, CATALOG_BLOCK_ID, lines.join("\n"));
   return pages;
 }
 

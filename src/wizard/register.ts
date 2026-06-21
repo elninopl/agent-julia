@@ -2,16 +2,17 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir, platform } from "node:os";
 import { dirname, join } from "node:path";
-import { Surface } from "../config/schema.js";
+import { Config, Surface } from "../config/schema.js";
 import { log, warn } from "../util/log.js";
+import { buildStartupCore, STARTUP_BLOCK_ID } from "../persona/startup.js";
+import { removeManagedBlock, upsertManagedBlock } from "../managed/block.js";
 
-// The MCP entry every surface gets. Floating @latest auto-propagates next session;
-// document pinning in README for reproducibility.
+// The MCP entry every surface gets. Floating @latest auto-propagates next session.
 function serverEntry(): { command: string; args: string[] } {
   return { command: "npx", args: ["-y", "agent-julia@latest", "serve"] };
 }
 
-// Claude Desktop (Cowork) config path per platform.
+// Claude Desktop config — one file that covers BOTH Cowork and Dispatch.
 function desktopConfigPath(): string | null {
   const home = homedir();
   switch (platform()) {
@@ -24,9 +25,19 @@ function desktopConfigPath(): string | null {
   }
 }
 
-// Claude Code user-scoped config.
+// Claude Code user-scoped config + startup instructions file.
 function claudeCodeConfigPath(): string {
   return join(homedir(), ".claude.json");
+}
+function claudeCodeMemoryPath(): string {
+  return join(homedir(), ".claude", "CLAUDE.md");
+}
+
+// On-disk mirror of the Cowork Global instructions block. Cowork stores that field
+// inside the app, not on disk, so we keep an auditable copy here and guide the
+// user to paste it once.
+function coworkMirrorPath(): string {
+  return join(homedir(), ".config", "agent-julia", "cowork-global-instructions.md");
 }
 
 async function mergeMcpServer(path: string, name: string): Promise<void> {
@@ -47,40 +58,108 @@ async function mergeMcpServer(path: string, name: string): Promise<void> {
   log(`registered MCP server '${name}' in ${path}`);
 }
 
-export interface RegistrationResult {
-  surface: Surface;
-  status: "registered" | "skipped" | "manual";
+async function removeMcpServer(path: string, name: string): Promise<boolean> {
+  if (!existsSync(path)) return false;
+  try {
+    const data = JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
+    const servers = data.mcpServers as Record<string, unknown> | undefined;
+    if (!servers || !(name in servers)) return false;
+    delete servers[name];
+    await writeFile(path, JSON.stringify(data, null, 2) + "\n", "utf8");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export interface InstallStep {
+  surface: Surface | "shared";
+  action: string;
+  status: "done" | "skipped" | "manual";
   detail: string;
 }
 
-// Register the server with the selected surfaces. Idempotent: re-running just
-// rewrites the same entry.
-export async function registerSurfaces(surfaces: Surface[]): Promise<RegistrationResult[]> {
-  const out: RegistrationResult[] = [];
+// Register the MCP server AND inject the startup persona core for the selected
+// surfaces. Two distinct jobs — registering the server is not enough; the persona
+// + "use your memory" instruction must be in each surface's startup context,
+// because the model reads those before anything else.
+export async function install(config: Config): Promise<InstallStep[]> {
+  const steps: InstallStep[] = [];
   const name = "agent-julia";
+  const core = buildStartupCore(config);
+  const wantCode = config.surfaces.includes("code");
+  const wantDesktop = config.surfaces.includes("cowork") || config.surfaces.includes("dispatch");
 
-  for (const surface of surfaces) {
-    if (surface === "code") {
-      const p = claudeCodeConfigPath();
+  // --- MCP registration ---
+  if (wantCode) {
+    const p = claudeCodeConfigPath();
+    await mergeMcpServer(p, name);
+    steps.push({ surface: "code", action: "register MCP", status: "done", detail: p });
+  }
+  if (wantDesktop) {
+    const p = desktopConfigPath();
+    if (p) {
       await mergeMcpServer(p, name);
-      out.push({ surface, status: "registered", detail: p });
-    } else if (surface === "cowork") {
-      const p = desktopConfigPath();
-      if (!p) {
-        out.push({ surface, status: "skipped", detail: "unsupported platform" });
-        continue;
-      }
-      await mergeMcpServer(p, name);
-      out.push({ surface, status: "registered", detail: p });
-    } else {
-      // Dispatch (mobile) has no local config to write; it shares the same memory
-      // repo once synced. Surfaced as a manual step.
-      out.push({
-        surface,
-        status: "manual",
-        detail: "Dispatch shares the same memory repo — no local file to register.",
+      steps.push({
+        surface: "cowork",
+        action: "register MCP (covers Cowork + Dispatch)",
+        status: "done",
+        detail: p,
       });
+    } else {
+      steps.push({ surface: "cowork", action: "register MCP", status: "skipped", detail: "unsupported platform" });
     }
   }
-  return out;
+
+  // --- Startup persona core injection ---
+  if (wantCode) {
+    const mem = claudeCodeMemoryPath();
+    const res = await upsertManagedBlock(mem, STARTUP_BLOCK_ID, core);
+    steps.push({
+      surface: "code",
+      action: "inject persona core",
+      status: "done",
+      detail: `${mem}${res.backedUp ? " (original backed up)" : ""}`,
+    });
+  }
+  if (config.surfaces.includes("cowork") || config.surfaces.includes("dispatch")) {
+    const mirror = coworkMirrorPath();
+    await upsertManagedBlock(mirror, STARTUP_BLOCK_ID, core);
+    steps.push({
+      surface: "cowork",
+      action: "inject persona core",
+      status: "manual",
+      detail: `Mirror written to ${mirror}. Paste its content into Settings -> Cowork -> Global instructions (app-stored, also covers Dispatch).`,
+    });
+  }
+
+  return steps;
+}
+
+// Reverse everything install() did: strip managed blocks and unregister the MCP
+// server. The one-time *.agent-julia-bak backups are left in place for recovery.
+export async function uninstall(): Promise<InstallStep[]> {
+  const steps: InstallStep[] = [];
+  const name = "agent-julia";
+
+  for (const p of [claudeCodeConfigPath(), desktopConfigPath()].filter(Boolean) as string[]) {
+    const removed = await removeMcpServer(p, name);
+    steps.push({
+      surface: "shared",
+      action: "unregister MCP",
+      status: removed ? "done" : "skipped",
+      detail: p,
+    });
+  }
+
+  for (const p of [claudeCodeMemoryPath(), coworkMirrorPath()]) {
+    const removed = await removeManagedBlock(p, STARTUP_BLOCK_ID);
+    steps.push({
+      surface: "shared",
+      action: "remove persona core",
+      status: removed ? "done" : "skipped",
+      detail: p,
+    });
+  }
+  return steps;
 }

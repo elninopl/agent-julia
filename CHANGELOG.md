@@ -7,6 +7,23 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ## [Unreleased]
 
+### Added
+
+- Setup now injects a small persona + "use your memory" core into each surface's
+  startup context, not just the MCP registration: a managed, clearly-marked block
+  in `~/.claude/CLAUDE.md` (Code) and an on-disk mirror to paste into Cowork Global
+  instructions (covers Dispatch). Backed up once, idempotent, reversible.
+- Adopts an existing markdown knowledge base: existing pages are indexed and a
+  hand-written `index.md` is never clobbered (agent-julia owns only a managed
+  catalog block within it).
+- `agent-julia sync` (re-apply registration + persona core) and
+  `agent-julia uninstall` (remove managed blocks + MCP registration) commands.
+
+### Changed
+
+- Surface mapping corrected: the Claude Desktop config covers both Cowork and
+  Dispatch; `~/.claude.json` covers Claude Code.
+
 ## [0.1.0] - 2026-06-21
 
 ### Added — v0.1 (initial)

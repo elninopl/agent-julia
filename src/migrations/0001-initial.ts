@@ -20,10 +20,12 @@ export const migration0001: Migration = {
         "utf8",
       );
     }
+    // Only seed a header on a fresh store; the catalog itself is a managed block
+    // that refreshIndexMd owns, so an adopted index.md is never clobbered.
     if (!existsSync(paths.indexMd)) {
       await writeFile(
         paths.indexMd,
-        `# Index\n\n> Auto-generated catalog of pages. Do not edit by hand.\n\n_No pages yet._\n`,
+        `# Index\n\n> Catalog of pages. The block below is maintained by agent-julia.\n`,
         "utf8",
       );
     }

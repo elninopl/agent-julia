@@ -13,11 +13,12 @@ import { configExists, configPath, saveConfig } from "../config/config.js";
 import { migrate } from "../migrations/runner.js";
 import { Indexer } from "../index/indexer.js";
 import { storePaths } from "../store/paths.js";
+import { listPageIds } from "../store/markdown.js";
 import { ensureGitRepo } from "../store/git.js";
 import { allPresets, presetSample } from "../persona/presets.js";
 import { composeCore } from "../persona/compose.js";
 import { runMaintenance } from "../maintenance/maintenance.js";
-import { registerSurfaces } from "./register.js";
+import { install } from "./register.js";
 import { Prompter } from "./prompt.js";
 import { expandPath } from "../util/paths.js";
 
@@ -169,17 +170,25 @@ export async function runWizard(): Promise<void> {
     await migrate(config);
     await ensureGitRepo(config.memoryDir);
 
-    // Build the index and run a first maintenance pass.
+    // Adopt an existing markdown knowledge base if one is already there — the
+    // maintenance pass below indexes whatever pages exist without clobbering a
+    // hand-written index.md (it owns only a managed catalog block).
     const paths = storePaths(config.memoryDir);
+    const existing = await listPageIds(paths);
+    if (existing.length > 0) {
+      console.log(`Adopting existing knowledge base: ${existing.length} page(s) found.`);
+    }
+
+    // Build the index and run a first maintenance pass.
     const indexer = Indexer.open(paths, config);
     await runMaintenance(paths, indexer, config, "auto");
     const core = await composeCore(paths, config);
     indexer.close();
 
-    // Register the MCP server with the chosen surfaces.
-    const reg = await registerSurfaces(config.surfaces);
-    console.log("\nClient registration:");
-    for (const r of reg) console.log(`  ${r.surface}: ${r.status} — ${r.detail}`);
+    // Register the MCP server AND inject the startup persona core per surface.
+    const steps = await install(config);
+    console.log("\nClient setup:");
+    for (const s of steps) console.log(`  [${s.status}] ${s.surface} — ${s.action}: ${s.detail}`);
 
     console.log(
       `\nDone. Injected core is ~${core.tokens}/${core.budget} tokens.` +

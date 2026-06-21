@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { startServer } from "./server.js";
 import { runWizard } from "./wizard/wizard.js";
+import { install, uninstall } from "./wizard/register.js";
 import { loadConfig } from "./config/config.js";
 import { migrate } from "./migrations/runner.js";
 import { logError } from "./util/log.js";
@@ -8,10 +9,12 @@ import { logError } from "./util/log.js";
 const HELP = `agent-julia — one brain for your AI
 
 Usage:
-  agent-julia serve     Start the MCP stdio server (default; used by Claude clients)
-  agent-julia init      Run the interactive setup wizard
-  agent-julia migrate   Run pending data migrations and exit
-  agent-julia --help    Show this help
+  agent-julia serve      Start the MCP stdio server (default; used by Claude clients)
+  agent-julia init       Run the interactive setup wizard
+  agent-julia sync       Re-apply MCP registration + persona core for the current config
+  agent-julia uninstall  Remove the managed persona blocks and MCP registration
+  agent-julia migrate    Run pending data migrations and exit
+  agent-julia --help     Show this help
 `;
 
 async function main(): Promise<void> {
@@ -25,6 +28,18 @@ async function main(): Promise<void> {
     case "wizard":
       await runWizard();
       break;
+    case "sync": {
+      const cfg = await loadConfig();
+      const steps = await install(cfg);
+      for (const s of steps) console.log(`[${s.status}] ${s.surface} — ${s.action}: ${s.detail}`);
+      break;
+    }
+    case "uninstall": {
+      const steps = await uninstall();
+      for (const s of steps) console.log(`[${s.status}] ${s.action}: ${s.detail}`);
+      console.log("\nManaged blocks removed. Your *.agent-julia-bak backups and memory repo are untouched.");
+      break;
+    }
     case "migrate": {
       const cfg = await loadConfig();
       const res = await migrate(cfg);
