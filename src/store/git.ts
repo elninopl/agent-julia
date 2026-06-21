@@ -32,8 +32,8 @@ export async function ensureGitRepo(root: string): Promise<void> {
   }
 }
 
-// Stage everything and commit. No-ops cleanly when there is nothing to commit, so
-// callers never have to guard. The derived index is git-ignored within the store.
+// Stage everything and commit. No-op when there is nothing to commit. The derived
+// index is git-ignored within the store.
 export async function commitAll(root: string, message: string): Promise<boolean> {
   if (!isGitRepo(root)) await ensureGitRepo(root);
   await git(root, ["add", "-A"]);

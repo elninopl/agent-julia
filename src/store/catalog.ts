@@ -5,10 +5,9 @@ import { upsertManagedBlock } from "../managed/block.js";
 
 const CATALOG_BLOCK_ID = "catalog";
 
-// Refresh the page catalog. The catalog is derived and always-current, but a user
-// adopting an existing knowledge base may already maintain index.md by hand — so
-// we only ever own a clearly-marked managed block inside it. Hand-written content
-// around the block is preserved.
+// Refresh the page catalog. The catalog is derived, but a user adopting an
+// existing knowledge base may already maintain index.md by hand, so agent-julia
+// owns only a clearly-marked block inside it and leaves the rest untouched.
 export async function refreshIndexMd(paths: StorePaths): Promise<PageSummary[]> {
   const pages = await listPages(paths);
   const lines: string[] = [`_Catalog — ${todayISO()} · ${pages.length} page(s)_`, ""];

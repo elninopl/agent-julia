@@ -34,8 +34,7 @@ function claudeCodeMemoryPath(): string {
 }
 
 // On-disk mirror of the Cowork Global instructions block. Cowork stores that field
-// inside the app, not on disk, so we keep an auditable copy here and guide the
-// user to paste it once.
+// inside the app, not on disk; this keeps an auditable copy the user can paste in.
 function coworkMirrorPath(): string {
   return join(homedir(), ".config", "agent-julia", "cowork-global-instructions.md");
 }

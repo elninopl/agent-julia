@@ -2,8 +2,8 @@ import { EmbeddingConfig } from "../config/schema.js";
 import { warn } from "../util/log.js";
 
 // A pluggable embedding backend. The "none" provider keeps agent-julia fully
-// offline and key-free; hybrid/semantic search then transparently degrade to FTS.
-// The "local" provider runs a small model in-process (no server, no API).
+// offline and key-free; hybrid/semantic search then fall back to FTS. The
+// "local" provider runs a small model in-process (no server, no API).
 export interface EmbeddingProvider {
   readonly id: string; // stable identifier stored alongside vectors (model fingerprint)
   readonly dims: number;

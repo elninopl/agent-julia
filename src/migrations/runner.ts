@@ -33,8 +33,7 @@ async function writeState(paths: StorePaths, state: MigrationState): Promise<voi
 }
 
 // Brings an older store up to the current schema on startup. Each step is ordered,
-// idempotent, and backed up before it touches user data, so an upgrade is either
-// backward-compatible or migrated transparently — never a manual fix.
+// idempotent, and backed up before it touches user data.
 export async function migrate(config: Config): Promise<{ config: Config; ranAny: boolean }> {
   const paths = storePaths(config.memoryDir);
   const state = await readState(paths);

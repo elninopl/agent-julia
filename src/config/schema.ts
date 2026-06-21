@@ -23,7 +23,7 @@ export const WEEKLY_MAINTENANCE = ["cowork-task", "own-routine"] as const;
 export type WeeklyMaintenance = (typeof WEEKLY_MAINTENANCE)[number];
 
 // Embedding provider for semantic search. "none" keeps the product fully offline
-// and key-free; hybrid/semantic then degrade gracefully to FTS-only.
+// and key-free; hybrid/semantic then fall back to FTS-only.
 export const EMBEDDING_PROVIDERS = ["none", "local", "openai-compatible"] as const;
 export type EmbeddingProviderKind = (typeof EMBEDDING_PROVIDERS)[number];
 
@@ -56,7 +56,7 @@ export const ConfigSchema = z.object({
   search: z.enum(SEARCH_MODES).default("hybrid"),
   embedding: EmbeddingConfigSchema.default({ provider: "none", apiKeyEnv: "AGENT_JULIA_EMBED_API_KEY" }),
 
-  // Max tokens for the budgeted core injected into the hot path.
+  // Max tokens for the persona core injected into context.
   contextBudget: z.number().int().positive().default(1200),
 
   surfaces: z.array(z.enum(SURFACES)).default(["code", "cowork", "dispatch"]),

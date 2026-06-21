@@ -17,7 +17,7 @@ export interface Runtime {
 export async function buildRuntime(): Promise<Runtime> {
   let config = await loadConfig();
 
-  // Migrations are the release gate: transparently bring older stores forward.
+  // Bring an older store up to the current schema before opening it.
   const migrated = await migrate(config);
   config = migrated.config;
   if (migrated.ranAny) log("migrations applied on startup");

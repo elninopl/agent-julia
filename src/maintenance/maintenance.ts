@@ -18,18 +18,18 @@ export interface MaintenanceReport {
   coreBudget: number;
   coreTruncated: boolean;
   committed: boolean;
-  // Interactive-only proposals are deferred to v0.2; surfaced empty for forward-compat.
+  // Interactive-only proposals are deferred to v0.2; empty for now.
   proposals: string[];
 }
 
 // Days after which a dated fact is FLAGGED (never auto-deleted) as possibly stale.
 const STALE_AFTER_DAYS = 270;
 
-// Automatic maintenance: structured note-taking + compaction, in code.
-// - rebuild/refresh the derived index (and re-embed if the model changed)
+// Automatic maintenance:
+// - sync the derived index (and re-embed if the model changed)
 // - flag (not delete) orphan cross-links and stale-dated facts
 // - refresh index.md, recompact the budgeted core
-// - git commit any markdown changes
+// - commit any markdown changes
 export async function runMaintenance(
   paths: StorePaths,
   indexer: Indexer,

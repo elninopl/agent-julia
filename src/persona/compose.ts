@@ -21,10 +21,9 @@ export interface ComposedCore {
   truncated: boolean;
 }
 
-// Build the budgeted persona core injected into the hot path. Precedence is
-// encoded by ordering AND by an explicit precedence note: L3 (corrections) >
-// L1 (universal core) > L2 (style preset). The full KB stays on disk; only this
-// compacted core hits the model's context, fighting context rot.
+// Build the budgeted persona core for injection. Precedence is set by ordering and
+// stated explicitly: L3 (corrections) > L1 (universal core) > L2 (style preset).
+// The full knowledge base stays on disk; only this compact core enters context.
 export async function composeCore(paths: StorePaths, config: Config): Promise<ComposedCore> {
   const preset = PRESETS[config.stylePreset];
   const coreVoice = await loadCoreVoice();

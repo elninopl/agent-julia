@@ -13,7 +13,7 @@ export interface SearchResult {
 }
 
 // Reciprocal-rank-style fusion of FTS and semantic results. When semantic is
-// disabled (provider "none"), hybrid transparently becomes FTS-only.
+// disabled (provider "none"), hybrid is FTS-only.
 export async function search(
   db: DB,
   provider: EmbeddingProvider,
