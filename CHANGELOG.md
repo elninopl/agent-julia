@@ -7,6 +7,12 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-06-21
+
+### Changed
+
+- The compiled package no longer ships source comments.
+
 ## [0.1.4] - 2026-06-21
 
 ### Added
