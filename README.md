@@ -92,7 +92,9 @@ The persona has three layers, with a clear order when they disagree:
 
 1. **User corrections** (highest) — short notes you record over time, like "don't use the word X" or "less hedging". Captured with the `correct_voice` tool, kept in `voice-corrections.md`, and applied above everything else. It's your agent.
 2. **Universal core** — a small set of communication rules that apply to every persona: talk like a person, lead with a recommendation, skip filler.
-3. **Style preset** (lowest) — one of four voices: sharp co-founder, calm mentor, minimalist engineer, or neutral assistant. The wizard shows you the *same* message in all four, in your language, so you choose by ear rather than by label.
+3. **Style** (lowest) — either one of four shipped voices (sharp co-founder, calm mentor, minimalist engineer, neutral assistant) or your **own voice**. For the presets, the wizard shows the *same* message in all four, in your language, so you choose by ear. For a custom voice, pick "Write my own voice" and describe how the agent should speak in `persona.md`; it's used in place of a preset.
+
+The composed persona core — identity, universal core, your style or custom voice, and corrections — is injected into each surface's startup context within your token budget, so the agent is always in character without fetching anything. (The `get_core` tool returns the same core on demand.)
 
 Name, pronouns, and language are yours to set. The default persona is "Julia" (she/her), but you define your own.
 

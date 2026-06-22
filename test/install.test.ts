@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { upsertManagedBlock, removeManagedBlock, hasManagedBlock } from "../src/managed/block.js";
-import { buildStartupCore, STARTUP_BLOCK_ID } from "../src/persona/startup.js";
+import { buildInjectedCore, STARTUP_BLOCK_ID } from "../src/persona/startup.js";
 import { refreshIndexMd } from "../src/store/catalog.js";
 import { writePage } from "../src/store/markdown.js";
 import { storePaths } from "../src/store/paths.js";
@@ -41,14 +41,27 @@ describe("managed block", () => {
   });
 });
 
-describe("startup core", () => {
-  it("names the agent and points at agent-julia for memory", () => {
-    const cfg = ConfigSchema.parse({ memoryDir: "/tmp/m", name: "Julia", language: "pl" });
-    const core = buildStartupCore(cfg);
+describe("injected core", () => {
+  it("carries the persona and the memory instruction", async () => {
+    const dir = tmp();
+    const cfg = ConfigSchema.parse({ memoryDir: dir, name: "Julia", language: "pl" });
+    const core = await buildInjectedCore(storePaths(dir), cfg);
     expect(core).toContain("Julia");
     expect(core).toContain("ingest");
     expect(core).toContain("search");
     expect(STARTUP_BLOCK_ID).toBe("persona-core");
+  });
+
+  it("uses a custom voice from persona.md instead of a preset", async () => {
+    const dir = tmp();
+    const paths = storePaths(dir);
+    writeFileSync(paths.personaFile, "- Always answer in haiku.\n- Never apologize.\n", "utf8");
+    const cfg = ConfigSchema.parse({ memoryDir: dir, name: "Nova", stylePreset: "custom" });
+    const core = await buildInjectedCore(paths, cfg);
+    expect(core).toContain("answer in haiku");
+    expect(core).toContain("Custom voice");
+    // none of the built-in preset voices leak in
+    expect(core).not.toContain("Licensed to tease");
   });
 });
 

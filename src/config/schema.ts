@@ -5,11 +5,14 @@ import { z } from "zod";
 // migrate() brings any older store up to CURRENT_SCHEMA_VERSION on startup.
 export const CURRENT_SCHEMA_VERSION = 1;
 
+// The four shipped presets, plus "custom" — a voice you write yourself in
+// persona.md, used in place of a preset.
 export const STYLE_PRESETS = [
   "sharp-cofounder",
   "calm-mentor",
   "minimalist-engineer",
   "neutral-assistant",
+  "custom",
 ] as const;
 export type StylePreset = (typeof STYLE_PRESETS)[number];
 

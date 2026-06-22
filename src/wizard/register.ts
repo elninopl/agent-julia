@@ -4,7 +4,8 @@ import { homedir, platform } from "node:os";
 import { dirname, join } from "node:path";
 import { Config, Surface } from "../config/schema.js";
 import { log, warn } from "../util/log.js";
-import { buildStartupCore, STARTUP_BLOCK_ID } from "../persona/startup.js";
+import { buildInjectedCore, STARTUP_BLOCK_ID } from "../persona/startup.js";
+import { storePaths } from "../store/paths.js";
 import { removeManagedBlock, upsertManagedBlock } from "../managed/block.js";
 
 // The MCP entry every surface gets. Floating @latest auto-propagates next session.
@@ -85,7 +86,7 @@ export interface InstallStep {
 export async function install(config: Config): Promise<InstallStep[]> {
   const steps: InstallStep[] = [];
   const name = "agent-julia";
-  const core = buildStartupCore(config);
+  const core = await buildInjectedCore(storePaths(config.memoryDir), config);
   const wantCode = config.surfaces.includes("code");
   const wantDesktop = config.surfaces.includes("cowork") || config.surfaces.includes("dispatch");
 
@@ -142,8 +143,8 @@ function mcpSnippet(): string {
 
 // Produce a manual setup guide instead of writing the files, for users who prefer
 // to change their own Claude config. Lists exactly what to add and where.
-export function buildInstructions(config: Config): string {
-  const core = buildStartupCore(config);
+export async function buildInstructions(config: Config): Promise<string> {
+  const core = await buildInjectedCore(storePaths(config.memoryDir), config);
   const out: string[] = [];
   const wantCode = config.surfaces.includes("code");
   const wantDesktop = config.surfaces.includes("cowork") || config.surfaces.includes("dispatch");

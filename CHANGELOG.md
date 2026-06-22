@@ -7,6 +7,20 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ## [Unreleased]
 
+## [0.1.10] - 2026-06-22
+
+### Added
+
+- Custom voice: pick "Write my own voice" in the wizard and describe how the agent
+  should speak in `persona.md`, used in place of a preset.
+
+### Changed
+
+- The full persona core (identity + universal core + style/custom voice +
+  corrections + privacy) is now injected into each surface's startup context
+  within the token budget, so the agent is always in character — instead of a
+  minimal stub that deferred the voice to a `get_core` tool call.
+
 ## [0.1.9] - 2026-06-22
 
 ### Changed

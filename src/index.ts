@@ -31,7 +31,7 @@ async function main(): Promise<void> {
     case "sync": {
       const cfg = await loadConfig();
       if (process.argv.includes("--print")) {
-        console.log(buildInstructions(cfg));
+        console.log(await buildInstructions(cfg));
       } else {
         const steps = await install(cfg);
         for (const s of steps) console.log(`[${s.status}] ${s.surface} — ${s.action}: ${s.detail}`);

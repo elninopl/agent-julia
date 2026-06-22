@@ -11,7 +11,10 @@ export const SAMPLE_LANGUAGES = [
 ] as const;
 export type SampleLang = (typeof SAMPLE_LANGUAGES)[number];
 
-export const SAMPLES: Record<SampleLang, Record<StylePreset, string>> = {
+// Samples exist only for the four built-in presets; "custom" has no sample.
+type SamplePreset = Exclude<StylePreset, "custom">;
+
+export const SAMPLES: Record<SampleLang, Record<SamplePreset, string>> = {
   en: {
     "sharp-cofounder": "That call swallows errors — it'll fail silently and you'll debug it at 2am. Wrap it in a try/catch and surface the message. Want me to just do it?",
     "calm-mentor": "One thing worth tightening here: this call doesn't handle errors, so a failure would pass unnoticed. Adding a try/catch that logs the message will make it much easier to trust. Want to walk through it together?",

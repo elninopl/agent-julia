@@ -18,6 +18,8 @@ export interface StorePaths {
   backupsDir: string;
   // Persona L3 corrections live in the store so they travel with the user's data.
   voiceCorrections: string;
+  // Optional custom voice (L2) — used when stylePreset is "custom".
+  personaFile: string;
 }
 
 export function storePaths(root: string): StorePaths {
@@ -33,6 +35,7 @@ export function storePaths(root: string): StorePaths {
     migrationStatePath: join(internalDir, "migrations.json"),
     backupsDir: join(internalDir, "backups"),
     voiceCorrections: join(root, "voice-corrections.md"),
+    personaFile: join(root, "persona.md"),
   };
 }
 

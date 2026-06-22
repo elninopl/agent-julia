@@ -15,8 +15,9 @@ import { Indexer } from "../index/indexer.js";
 import { storePaths } from "../store/paths.js";
 import { listPageIds } from "../store/markdown.js";
 import { ensureGitRepo } from "../store/git.js";
-import { allPresets, presetSample } from "../persona/presets.js";
+import { allPresets, presetSample, styleLabel } from "../persona/presets.js";
 import { resolveSampleLang } from "../persona/samples.js";
+import { seedPersonaTemplate } from "../persona/custom.js";
 import {
   checkLocalEmbeddingsAvailable,
   LOCAL_EMBEDDINGS_PACKAGE,
@@ -86,14 +87,19 @@ export async function runWizard(): Promise<void> {
           `Your agent will still reply in ${language}.`,
       );
     }
-    const stylePreset = await p.choice<StylePreset>(
-      presets.map((pr, i) => ({
-        value: pr.id,
+    const stylePreset = await p.choice<StylePreset>([
+      ...presets.map((pr, i) => ({
+        value: pr.id as StylePreset,
         label: pr.label,
         recommended: i === 0,
         desc: "“" + presetSample(pr.id, lang) + "”",
       })),
-    );
+      {
+        value: "custom" as StylePreset,
+        label: "Write my own voice",
+        desc: "Define your own style in persona.md — used instead of a preset and injected on every surface. Best if you already have a voice you like.",
+      },
+    ]);
 
     // 5 — Memory directory
     step(5, STEPS, "Memory", "a folder you own where your knowledge lives, as plain markdown");
@@ -281,7 +287,7 @@ export async function runWizard(): Promise<void> {
 
     summary("Here's your setup", [
       ["agent", `${config.name} · ${config.pronouns} · speaks ${config.language}`],
-      ["style", presets.find((pr) => pr.id === config.stylePreset)!.label],
+      ["style", styleLabel(config.stylePreset)],
       ["memory", `${config.memoryDir}${config.git ? " (git)" : " (no git)"}`],
       ["search", config.search === "fts" ? "keywords only" : `${config.search} · provider: ${config.embedding.provider}`],
       ["budget", `~${config.contextBudget} tokens`],
@@ -309,6 +315,11 @@ export async function runWizard(): Promise<void> {
       ok(`Adopted your existing knowledge base — ${c.bold(String(existing.length))} page(s).`);
     }
 
+    // A custom voice needs a persona.md to live in — seed a template to edit.
+    if (config.stylePreset === "custom" && (await seedPersonaTemplate(paths))) {
+      ok(`Seeded a voice template → ${c.cyan(paths.personaFile)} (edit it, then \`agent-julia sync\`)`);
+    }
+
     const indexer = Indexer.open(paths, config);
     await runMaintenance(paths, indexer, config, "auto");
     const core = await composeCore(paths, config);
@@ -327,7 +338,7 @@ export async function runWizard(): Promise<void> {
       console.log("");
       console.log("  " + c.bold("Add these to your Claude apps yourself:"));
       console.log("");
-      console.log(buildInstructions(config).replace(/^/gm, "  "));
+      console.log((await buildInstructions(config)).replace(/^/gm, "  "));
     }
 
     // Closing: clear, encouraging next steps.

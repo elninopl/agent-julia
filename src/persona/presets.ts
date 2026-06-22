@@ -1,14 +1,16 @@
 import { StylePreset } from "../config/schema.js";
 import { SAMPLES, resolveSampleLang } from "./samples.js";
 
+export type BuiltinPreset = Exclude<StylePreset, "custom">;
+
 export interface PresetDef {
-  id: StylePreset;
+  id: BuiltinPreset;
   label: string;
   // The flavor layer (L2) injected over the universal core.
   voice: string;
 }
 
-export const PRESETS: Record<StylePreset, PresetDef> = {
+export const PRESETS: Record<BuiltinPreset, PresetDef> = {
   "sharp-cofounder": {
     id: "sharp-cofounder",
     label: "Sharp co-founder",
@@ -38,11 +40,16 @@ export const PRESETS: Record<StylePreset, PresetDef> = {
 
 // The same utterance in the requested preset + language. Falls back to English
 // when we don't ship samples for that language (samples illustrate STYLE only).
-export function presetSample(preset: StylePreset, language: string): string {
+export function presetSample(preset: BuiltinPreset, language: string): string {
   const lang = resolveSampleLang(language) ?? "en";
   return SAMPLES[lang][preset];
 }
 
 export function allPresets(): PresetDef[] {
   return Object.values(PRESETS);
+}
+
+// Human label for any style, including "custom".
+export function styleLabel(preset: StylePreset): string {
+  return preset === "custom" ? "Custom voice" : PRESETS[preset].label;
 }

@@ -1,29 +1,27 @@
 import { Config } from "../config/schema.js";
-import { PRESETS } from "./presets.js";
+import { StorePaths } from "../store/paths.js";
+import { composeCore } from "./compose.js";
 
-// The startup core is the tiny block injected into each surface's startup context
-// (CLAUDE.md / Cowork Global instructions). It is intentionally minimal: who the
-// agent is + the instruction to USE agent-julia for memory. Everything else (full
-// voice rules, knowledge) is pulled on demand via the MCP tools, within budget.
-export function buildStartupCore(config: Config): string {
-  const preset = PRESETS[config.stylePreset];
-  const langNote =
-    config.language === "en"
-      ? "Respond in English."
-      : `Respond in ${config.language}. Code, docs, and commit messages stay in English.`;
-
+// The instruction half of the injected block: where memory lives and how to use
+// it. The persona half is the budgeted core (composeCore), so the full voice —
+// preset or custom — is always present, not fetched on demand.
+function memoryInstruction(): string {
   return [
-    `# ${config.name} — persona (managed by agent-julia)`,
-    "",
-    `You are ${config.name} (${config.pronouns}). ${langNote}`,
-    `Style: ${preset.label}. Full voice rules and precedence come from the \`get_core\` tool.`,
-    "",
-    "Memory lives in agent-julia (an MCP server), not in this file:",
-    "- Before answering anything that may depend on prior context, `search` / `read` your memory.",
+    "## Memory (agent-julia)",
+    "Your memory lives in agent-julia, an MCP server — not in this file:",
+    "- Before answering anything that may depend on prior context, `search` / `read` it.",
     "- When a durable new fact appears, persist it with `ingest`.",
     "- Record voice/style corrections with `correct_voice`.",
-    "- This block stays tiny on purpose; the full knowledge base is fetched on demand within a token budget.",
+    "- Only this persona core is kept in context; the knowledge base is fetched on demand.",
   ].join("\n");
+}
+
+// The full managed block injected into a surface's startup context: the budgeted
+// persona core (identity + universal core + style/custom voice + corrections +
+// privacy) followed by the memory instruction.
+export async function buildInjectedCore(paths: StorePaths, config: Config): Promise<string> {
+  const core = await composeCore(paths, config);
+  return `${core.text}\n\n${memoryInstruction()}`;
 }
 
 // Stable id for the managed block across all surfaces.

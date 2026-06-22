@@ -1,10 +1,11 @@
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Config } from "../config/schema.js";
 import { StorePaths } from "../store/paths.js";
 import { clampToBudget, estimateTokens } from "../util/tokens.js";
-import { PRESETS } from "./presets.js";
+import { PRESETS, styleLabel } from "./presets.js";
 import { readCorrections } from "./corrections.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -12,6 +13,19 @@ const here = dirname(fileURLToPath(import.meta.url));
 async function loadCoreVoice(): Promise<string> {
   // assets/ is copied next to the compiled module by the build step.
   return (await readFile(join(here, "assets", "core-voice.md"), "utf8")).trim();
+}
+
+// The L2 voice: a custom voice from persona.md when stylePreset is "custom",
+// otherwise the chosen preset's voice.
+async function loadVoice(paths: StorePaths, config: Config): Promise<string> {
+  if (config.stylePreset === "custom") {
+    if (existsSync(paths.personaFile)) {
+      const text = (await readFile(paths.personaFile, "utf8")).trim();
+      if (text) return text;
+    }
+    return "Custom voice — define it in persona.md.";
+  }
+  return PRESETS[config.stylePreset].voice;
 }
 
 export interface ComposedCore {
@@ -25,8 +39,9 @@ export interface ComposedCore {
 // stated explicitly: L3 (corrections) > L1 (universal core) > L2 (style preset).
 // The full knowledge base stays on disk; only this compact core enters context.
 export async function composeCore(paths: StorePaths, config: Config): Promise<ComposedCore> {
-  const preset = PRESETS[config.stylePreset];
+  const label = styleLabel(config.stylePreset);
   const coreVoice = await loadCoreVoice();
+  const voice = await loadVoice(paths, config);
   const corrections = await readCorrections(paths);
 
   const sections: string[] = [];
@@ -36,15 +51,15 @@ export async function composeCore(paths: StorePaths, config: Config): Promise<Co
       `- Name: ${config.name}\n` +
       `- Gender/pronouns: ${config.gender} (${config.pronouns})\n` +
       `- Output language: ${config.language} (code, docs, and commits stay in English)\n` +
-      `- Style preset: ${preset.label}\n` +
-      `- Precedence when rules conflict: user voice corrections > universal core > style preset`,
+      `- Style: ${label}\n` +
+      `- Precedence when rules conflict: user voice corrections > universal core > style`,
   );
 
   // L1 — universal core (above presets).
   sections.push(`## Universal core (always on)\n${coreVoice}`);
 
-  // L2 — style preset flavor.
-  sections.push(`## Style: ${preset.label}\n${preset.voice}`);
+  // L2 — style: a preset, or a custom voice from persona.md.
+  sections.push(`## Style: ${label}\n${voice}`);
 
   // L3 — user corrections (highest precedence). Placed last and labeled as
   // overriding, so the model reads them as the final word.
