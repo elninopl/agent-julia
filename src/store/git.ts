@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
+import { mkdir, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { warn } from "../util/log.js";
@@ -9,6 +10,48 @@ const exec = promisify(execFile);
 async function git(root: string, args: string[]): Promise<string> {
   const { stdout } = await exec("git", ["-C", root, ...args], { encoding: "utf8" });
   return stdout.trim();
+}
+
+const delay = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+const LOCK_STALE_MS = 30_000;
+const LOCK_WAIT_MS = 15_000;
+
+// Serialize git operations across processes. Every Claude surface runs its own
+// server, and two `git commit`s racing on .git/index.lock leave a write silently
+// uncommitted. An atomic mkdir is the mutex; a stale lock (crashed holder) is
+// reclaimed after LOCK_STALE_MS.
+async function withGitLock<T>(root: string, fn: () => Promise<T>): Promise<T> {
+  const internal = join(root, ".agent-julia");
+  const lockDir = join(internal, "git.lock");
+  await mkdir(internal, { recursive: true });
+  const deadline = Date.now() + LOCK_WAIT_MS;
+  for (;;) {
+    try {
+      await mkdir(lockDir);
+      break;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+      try {
+        const st = await stat(lockDir);
+        if (Date.now() - st.mtimeMs > LOCK_STALE_MS) {
+          await rm(lockDir, { recursive: true, force: true });
+          continue;
+        }
+      } catch {
+        // lock vanished between EEXIST and stat — just retry
+      }
+      if (Date.now() > deadline) {
+        warn("git lock busy, proceeding without it");
+        return fn();
+      }
+      await delay(100);
+    }
+  }
+  try {
+    return await fn();
+  } finally {
+    await rm(lockDir, { recursive: true, force: true });
+  }
 }
 
 export function isGitRepo(root: string): boolean {
@@ -71,31 +114,40 @@ export async function verifyRemote(root: string): Promise<{ ok: boolean; error?:
 export async function pushToRemote(root: string): Promise<boolean> {
   if (!isGitRepo(root)) return false;
   if (!(await getRemoteUrl(root))) return false;
-  try {
-    const branch = await git(root, ["rev-parse", "--abbrev-ref", "HEAD"]);
-    await exec("git", ["-C", root, "push", "-u", "origin", branch], {
-      encoding: "utf8",
-      env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
-    });
-    return true;
-  } catch (err) {
-    warn("git push failed (continuing):", (err as Error).message);
-    return false;
-  }
+  return withGitLock(root, async () => {
+    try {
+      const branch = await git(root, ["rev-parse", "--abbrev-ref", "HEAD"]);
+      await exec("git", ["-C", root, "push", "-u", "origin", branch], {
+        encoding: "utf8",
+        env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+      });
+      return true;
+    } catch (err) {
+      const msg = (err as Error).message.split("\n").find((l) => l.trim()) ?? "";
+      if (/non-fast-forward|fetch first|rejected|behind/i.test(msg)) {
+        warn("git push rejected — the remote has commits this machine doesn't. Pull/rebase, then push:", msg);
+      } else {
+        warn("git push failed (continuing):", msg);
+      }
+      return false;
+    }
+  });
 }
 
 // Stage everything and commit. No-op when there is nothing to commit. The derived
 // index is git-ignored within the store.
 export async function commitAll(root: string, message: string): Promise<boolean> {
   if (!isGitRepo(root)) await ensureGitRepo(root);
-  await git(root, ["add", "-A"]);
-  try {
-    const status = await git(root, ["status", "--porcelain"]);
-    if (!status) return false;
-    await git(root, ["commit", "-q", "-m", message]);
-    return true;
-  } catch (err) {
-    warn("git commit failed:", (err as Error).message);
-    return false;
-  }
+  return withGitLock(root, async () => {
+    await git(root, ["add", "-A"]);
+    try {
+      const status = await git(root, ["status", "--porcelain"]);
+      if (!status) return false;
+      await git(root, ["commit", "-q", "-m", message]);
+      return true;
+    } catch (err) {
+      warn("git commit failed:", (err as Error).message);
+      return false;
+    }
+  });
 }

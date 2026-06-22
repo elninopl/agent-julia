@@ -60,6 +60,9 @@ export function openDb(paths: StorePaths, tokenizer: string): DB {
   const DatabaseSync = loadDatabaseSync();
   const db = new DatabaseSync(paths.dbPath);
   db.exec("PRAGMA journal_mode = WAL;");
+  // Multiple Claude surfaces each open their own handle on this file. Wait for a
+  // concurrent writer's lock instead of throwing SQLITE_BUSY on the first clash.
+  db.exec("PRAGMA busy_timeout = 5000;");
 
   db.exec("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);");
   // The signature folds in the schema version and the active tokenizer; if either

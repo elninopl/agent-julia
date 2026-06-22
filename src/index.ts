@@ -20,7 +20,21 @@ Usage:
   agent-julia --help     Show this help
 `;
 
+// Fail fast on an unsupported Node before any command writes config or touches
+// the store. node:sqlite (the index engine) is built in from Node 24.
+function assertNodeVersion(): void {
+  const major = Number(process.versions.node.split(".")[0]);
+  if (major < 24) {
+    console.error(
+      `agent-julia needs Node.js 24+ (it uses the built-in node:sqlite). Current: ${process.version}.\n` +
+        "Upgrade Node (e.g. via nvm: `nvm install 24 && nvm use 24`), then re-run.",
+    );
+    process.exit(1);
+  }
+}
+
 async function main(): Promise<void> {
+  assertNodeVersion();
   const cmd = process.argv[2] ?? "serve";
 
   switch (cmd) {
