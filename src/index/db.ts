@@ -1,9 +1,29 @@
 import { mkdirSync } from "node:fs";
+import { createRequire } from "node:module";
 import { dirname } from "node:path";
-import Database from "better-sqlite3";
+import type BetterSqlite3 from "better-sqlite3";
 import { StorePaths } from "../store/paths.js";
 
-export type DB = Database.Database;
+export type DB = BetterSqlite3.Database;
+
+// better-sqlite3 is a native module loaded on demand, so a missing or unbuilt
+// binary surfaces as a clear, actionable message instead of a raw stack trace.
+const require = createRequire(import.meta.url);
+let DatabaseCtor: typeof BetterSqlite3 | null = null;
+function loadDatabaseCtor(): typeof BetterSqlite3 {
+  if (DatabaseCtor) return DatabaseCtor;
+  try {
+    DatabaseCtor = require("better-sqlite3") as typeof BetterSqlite3;
+    return DatabaseCtor;
+  } catch (err) {
+    throw new Error(
+      "agent-julia could not load its search engine (the native better-sqlite3 module). " +
+        "This usually means no prebuilt binary exists for your Node version or platform. " +
+        "Try `npm rebuild better-sqlite3`, or reinstall on a supported Node LTS (20 or 22).\n" +
+        `Original error: ${(err as Error).message}`,
+    );
+  }
+}
 
 // Bump when the derived index's shape changes in a way the tokenizer signature
 // doesn't already capture. The index is disposable: on a signature mismatch we
@@ -27,6 +47,7 @@ export function ftsTokenizerFor(language: string): string {
 // any schema/tokenizer/model mismatch.
 export function openDb(paths: StorePaths, tokenizer: string): DB {
   mkdirSync(dirname(paths.dbPath), { recursive: true });
+  const Database = loadDatabaseCtor();
   const db = new Database(paths.dbPath);
   db.pragma("journal_mode = WAL");
 

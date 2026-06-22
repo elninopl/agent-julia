@@ -7,6 +7,14 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ## [Unreleased]
 
+## [0.1.9] - 2026-06-22
+
+### Changed
+
+- If the native SQLite engine can't load, the error now explains why and how to
+  fix it (rebuild, or use a supported Node LTS) instead of printing a raw stack.
+- Added an `author` field to the package metadata.
+
 ## [0.1.8] - 2026-06-22
 
 ### Changed
