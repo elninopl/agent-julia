@@ -22,6 +22,7 @@ function desktopConfigPath(): string | null {
     case "win32":
       return join(process.env.APPDATA ?? join(home, "AppData", "Roaming"), "Claude", "claude_desktop_config.json");
     default:
+      // Best-guess for other platforms; verify it matches your Claude install.
       return join(home, ".config", "Claude", "claude_desktop_config.json");
   }
 }

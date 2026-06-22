@@ -25,7 +25,8 @@ export async function ingest(
   opts: { status?: string; title?: string; git?: boolean; autoPush?: boolean } = {},
 ): Promise<IngestResult> {
   const id = pageId(page);
-  const path = await writePage(paths, id, content, opts);
+  // writePage only cares about status/title; git/autoPush are handled below.
+  const path = await writePage(paths, id, content, { status: opts.status, title: opts.title });
   await refreshIndexMd(paths);
   await appendLog(paths, `ingest \`${id}\``);
   await indexer.indexPage(id);
