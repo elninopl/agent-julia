@@ -22,7 +22,7 @@ export async function buildRuntime(): Promise<Runtime> {
   config = migrated.config;
   if (migrated.ranAny) log("migrations applied on startup");
 
-  await ensureGitRepo(config.memoryDir);
+  if (config.git) await ensureGitRepo(config.memoryDir);
 
   const paths = storePaths(config.memoryDir);
   const indexer = Indexer.open(paths, config);

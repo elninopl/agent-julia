@@ -3,6 +3,7 @@ import { z } from "zod";
 import { Runtime } from "../runtime.js";
 import { listPages, readPage } from "../store/markdown.js";
 import { ingest } from "../store/ingest.js";
+import { commitAll } from "../store/git.js";
 import { appendCorrection } from "../persona/corrections.js";
 import { composeCore } from "../persona/compose.js";
 import { runMaintenance } from "../maintenance/maintenance.js";
@@ -87,7 +88,7 @@ export function registerTools(server: McpServer, rt: Runtime): void {
       },
     },
     async ({ page, content, title, status }) => {
-      const res = await ingest(paths, indexer, page, content, { title, status });
+      const res = await ingest(paths, indexer, page, content, { title, status, git: config.git });
       return json({ ok: true, ...res });
     },
   );
@@ -102,6 +103,7 @@ export function registerTools(server: McpServer, rt: Runtime): void {
     },
     async ({ note }) => {
       await appendCorrection(paths, note);
+      if (config.git) await commitAll(paths.root, "Update memory: voice correction");
       return text(`Recorded voice correction: ${note}`);
     },
   );

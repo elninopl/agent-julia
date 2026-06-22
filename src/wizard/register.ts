@@ -135,6 +135,44 @@ export async function install(config: Config): Promise<InstallStep[]> {
   return steps;
 }
 
+// The mcpServers snippet to add to a Claude client config, as pretty JSON.
+function mcpSnippet(): string {
+  return JSON.stringify({ mcpServers: { "agent-julia": serverEntry() } }, null, 2);
+}
+
+// Produce a manual setup guide instead of writing the files, for users who prefer
+// to change their own Claude config. Lists exactly what to add and where.
+export function buildInstructions(config: Config): string {
+  const core = buildStartupCore(config);
+  const out: string[] = [];
+  const wantCode = config.surfaces.includes("code");
+  const wantDesktop = config.surfaces.includes("cowork") || config.surfaces.includes("dispatch");
+
+  if (wantCode) {
+    out.push(
+      "Claude Code",
+      `  1. In ${claudeCodeConfigPath()}, merge this into the top-level object:`,
+      mcpSnippet().replace(/^/gm, "     "),
+      `  2. Append this block to ${claudeCodeMemoryPath()}:`,
+      core.replace(/^/gm, "     "),
+      "",
+    );
+  }
+  if (wantDesktop) {
+    const desktop = desktopConfigPath();
+    out.push(
+      "Claude Desktop (covers Cowork + Dispatch)",
+      `  1. In ${desktop ?? "<Claude Desktop config>"}, merge this into the top-level object:`,
+      mcpSnippet().replace(/^/gm, "     "),
+      "  2. Paste this block into Settings → Cowork → Global instructions:",
+      core.replace(/^/gm, "     "),
+      "",
+    );
+  }
+  out.push("Restart your Claude apps afterwards.");
+  return out.join("\n");
+}
+
 // Reverse everything install() did: strip managed blocks and unregister the MCP
 // server. The one-time *.agent-julia-bak backups are left in place for recovery.
 export async function uninstall(): Promise<InstallStep[]> {

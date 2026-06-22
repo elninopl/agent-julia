@@ -7,7 +7,21 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ## [Unreleased]
 
-## [0.1.6] - 2026-06-22
+## [0.1.7] - 2026-06-22
+
+### Added
+
+- Setup offers a choice for changes to your Claude config: have the wizard apply
+  them, or print the exact edits to make by hand. `agent-julia sync --print`
+  shows them any time.
+- Git versioning of the memory store is now a wizard option (on by default). With
+  it off, the store stays plain, unversioned markdown.
+
+### Changed
+
+- Recording a voice correction now commits, like every other write.
+- The local-model suggestion considers CPU cores as well as RAM, since a larger
+  model's main cost is slower CPU inference per query.
 
 ### Changed
 

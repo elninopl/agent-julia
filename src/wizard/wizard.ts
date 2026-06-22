@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { homedir, totalmem } from "node:os";
+import { cpus, homedir, totalmem } from "node:os";
 import {
   Config,
   ConfigSchema,
@@ -26,7 +26,7 @@ import {
 } from "../index/embeddings.js";
 import { composeCore } from "../persona/compose.js";
 import { runMaintenance } from "../maintenance/maintenance.js";
-import { install } from "./register.js";
+import { buildInstructions, install } from "./register.js";
 import { Prompter } from "./prompt.js";
 import { expandPath } from "../util/paths.js";
 import { setQuiet } from "../util/log.js";
@@ -103,6 +103,11 @@ export async function runWizard(): Promise<void> {
       def: join(homedir(), "agent-julia-memory"),
     });
     const memoryDir = expandPath(memoryDirRaw);
+    console.log("");
+    const useGit = await p.confirm(
+      "Version it with git? Every change is committed, so nothing is lost and you can roll back.",
+      true,
+    );
 
     // 6 — Search
     step(6, STEPS, "Search", "how your agent finds things in its memory");
@@ -153,11 +158,12 @@ export async function runWizard(): Promise<void> {
       ]);
       if (embeddingProvider === "local") {
         const ramGB = Math.round(totalmem() / 2 ** 30);
-        const rec = recommendLocalTier(ramGB);
+        const cores = cpus().length;
+        const rec = recommendLocalTier(ramGB, cores);
         info(
-          `Each model is a one-time download (cached on disk) and loads into RAM when search runs — ` +
-            `RAM use is roughly the download size plus a little. This machine has ~${ramGB} GB RAM, ` +
-            `so even the largest fits comfortably; the real trade-off is download size and speed vs quality.`,
+          `Each model is a one-time download cached on disk, and loads into RAM (~the download size plus a little) ` +
+            `while search runs. This machine has ~${ramGB} GB RAM and ${cores} CPU cores — RAM fits any tier easily, ` +
+            `so the suggestion leans on cores, since a bigger model is mainly slower per query on the CPU.`,
         );
         const tier = await p.choice<LocalModelTier>([
           {
@@ -251,6 +257,7 @@ export async function runWizard(): Promise<void> {
       language,
       stylePreset,
       memoryDir,
+      git: useGit,
       search,
       embedding: {
         provider: embeddingProvider,
@@ -264,13 +271,21 @@ export async function runWizard(): Promise<void> {
       weeklyMaintenance,
     });
 
+    // How to apply the changes to your Claude apps: do it for you, or print the
+    // exact edits to make by hand.
+    console.log("");
+    const applyAuto = await p.confirm(
+      "Set up your Claude apps for you? (No = I'll print the exact changes for you to make.)",
+      true,
+    );
+
     summary("Here's your setup", [
       ["agent", `${config.name} · ${config.pronouns} · speaks ${config.language}`],
       ["style", presets.find((pr) => pr.id === config.stylePreset)!.label],
-      ["memory", config.memoryDir],
+      ["memory", `${config.memoryDir}${config.git ? " (git)" : " (no git)"}`],
       ["search", config.search === "fts" ? "keywords only" : `${config.search} · provider: ${config.embedding.provider}`],
       ["budget", `~${config.contextBudget} tokens`],
-      ["surfaces", surfacesLabel(config.surfaces)],
+      ["surfaces", `${surfacesLabel(config.surfaces)} · ${applyAuto ? "auto setup" : "manual setup"}`],
     ]);
     console.log("");
     if (!(await p.confirm("Looks good — create it?", true))) {
@@ -285,7 +300,7 @@ export async function runWizard(): Promise<void> {
 
     // Initialize the store via migrations (creates skeleton + records schemaVersion).
     await migrate(config);
-    await ensureGitRepo(config.memoryDir);
+    if (config.git) await ensureGitRepo(config.memoryDir);
 
     // Adopt an existing markdown knowledge base if one is already there.
     const paths = storePaths(config.memoryDir);
@@ -300,12 +315,19 @@ export async function runWizard(): Promise<void> {
     indexer.close();
     ok(`Memory ready at ${c.cyan(config.memoryDir)}`);
 
-    // Register the MCP server AND inject the startup persona core per surface.
-    const steps = await install(config);
-    for (const s of steps) {
-      const mark = s.status === "done" ? c.green("✓") : s.status === "manual" ? c.yellow("●") : c.gray("–");
-      console.log(`  ${mark} ${c.white(s.action)} ${c.gray("(" + s.surface + ")")}`);
-      if (s.status === "manual") console.log("     " + c.dim(s.detail));
+    // Register the MCP server and inject the persona core — or print the steps.
+    if (applyAuto) {
+      const steps = await install(config);
+      for (const s of steps) {
+        const mark = s.status === "done" ? c.green("✓") : s.status === "manual" ? c.yellow("●") : c.gray("–");
+        console.log(`  ${mark} ${c.white(s.action)} ${c.gray("(" + s.surface + ")")}`);
+        if (s.status === "manual") console.log("     " + c.dim(s.detail));
+      }
+    } else {
+      console.log("");
+      console.log("  " + c.bold("Add these to your Claude apps yourself:"));
+      console.log("");
+      console.log(buildInstructions(config).replace(/^/gm, "  "));
     }
 
     // Closing: clear, encouraging next steps.

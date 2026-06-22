@@ -108,12 +108,13 @@ export const LOCAL_MODEL_TIERS = {
 } as const;
 export type LocalModelTier = keyof typeof LOCAL_MODEL_TIERS;
 
-// Suggest a tier from total system RAM. RAM rarely binds (even large needs only
-// ~1.3 GB), so this stays conservative: small on constrained machines, base when
-// there's clear headroom. Large is left as a deliberate opt-in.
-export function recommendLocalTier(totalRamGB: number): LocalModelTier {
-  if (totalRamGB < 8) return "small";
-  if (totalRamGB >= 16) return "base";
+// Suggest a tier from the machine's RAM and CPU cores. RAM rarely binds (even
+// large needs only ~1.3 GB); the bigger model's real cost is slower CPU inference
+// per query, so cores matter more. Stay conservative — large stays a deliberate
+// opt-in rather than an automatic recommendation.
+export function recommendLocalTier(totalRamGB: number, cpuCores: number): LocalModelTier {
+  if (totalRamGB < 8 || cpuCores < 4) return "small";
+  if (totalRamGB >= 16 && cpuCores >= 8) return "base";
   return "small";
 }
 

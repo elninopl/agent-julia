@@ -58,7 +58,7 @@ export async function migrate(config: Config): Promise<{ config: Config; ranAny:
     paths,
     config,
     backup: (label) => backupStore(paths, label),
-    commit: (message) => commitAll(paths.root, message),
+    commit: (message) => (config.git ? commitAll(paths.root, message) : Promise.resolve(false)),
   };
 
   for (const m of pending) {

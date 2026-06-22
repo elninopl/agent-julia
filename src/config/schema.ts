@@ -53,6 +53,10 @@ export const ConfigSchema = z.object({
   // Canonical markdown store (a git repo the user owns).
   memoryDir: z.string().min(1),
 
+  // Version the memory directory with git and commit after every write. On by
+  // default; turn off to keep the store as plain, unversioned markdown.
+  git: z.boolean().default(true),
+
   search: z.enum(SEARCH_MODES).default("hybrid"),
   embedding: EmbeddingConfigSchema.default({ provider: "none", apiKeyEnv: "AGENT_JULIA_EMBED_API_KEY" }),
 

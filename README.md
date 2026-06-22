@@ -32,7 +32,7 @@ agent-julia fixes both. Your knowledge lives in one markdown repository you own.
 npx agent-julia init
 ```
 
-The setup wizard walks you through your agent's name, pronouns, language, and voice; picks where your memory lives; configures search; and registers the server with the Claude apps you use. It writes a small persona block into each app's startup context so the agent shows up as itself everywhere — backed up first, clearly marked, and reversible.
+The setup wizard walks you through your agent's name, pronouns, language, and voice; picks where your memory lives and whether to version it with git; configures search; and registers the server with the Claude apps you use. It can write a small persona block into each app's startup context — or print the exact changes for you to make by hand. When it does it for you, each file is backed up first, written inside a marked block, and fully reversible.
 
 When you're done, restart your Claude apps so they pick up the new MCP server.
 
@@ -46,7 +46,29 @@ To register the server by hand instead:
 }
 ```
 
-`@latest` picks up new versions automatically next session; pin a version (e.g. `agent-julia@0.1.4`) if you want it fixed. Either way, upgrades run automatic, backup-protected migrations — they never lose data or ask you to hand-edit files.
+`@latest` picks up new versions automatically next session; pin a version (e.g. `agent-julia@0.1.6`) if you want it fixed. Either way, upgrades run automatic, backup-protected migrations — they never lose data or ask you to hand-edit files.
+
+## Manual setup
+
+The wizard can write the Claude config changes for you, or print the exact edits so you make them yourself — it asks which you prefer, and never touches a Claude file without that choice. To see the steps any time:
+
+```bash
+agent-julia sync --print
+```
+
+What it adds:
+
+**Claude Code** — in `~/.claude.json`, add the server under `mcpServers`:
+
+```jsonc
+{ "mcpServers": { "agent-julia": { "command": "npx", "args": ["-y", "agent-julia@latest", "serve"] } } }
+```
+
+Then append the persona block (printed by the command) to `~/.claude/CLAUDE.md`.
+
+**Claude Desktop (covers Cowork and Dispatch)** — add the same `mcpServers` entry to the Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS), and paste the persona block into **Settings → Cowork → Global instructions**. Dispatch shares the desktop account, so it's covered too.
+
+The persona block is small on purpose — identity plus an instruction to use agent-julia for memory. Everything else is fetched on demand. When the wizard does this for you, it backs up each file first, writes inside a marked block, and `agent-julia uninstall` removes it cleanly.
 
 ## Search
 
@@ -121,7 +143,8 @@ Settings live in `~/.config/agent-julia/config.json` and carry a `schemaVersion`
 | `name`, `gender`, `pronouns` | Persona identity |
 | `language` | The agent's reply language (any code or name) |
 | `stylePreset` | One of the four voices |
-| `memoryDir` | Your markdown git repo |
+| `memoryDir` | Your markdown store |
+| `git` | Version the store with git and commit after every write (default on) |
 | `search` | `hybrid`, `fts`, or `semantic` |
 | `embedding` | Provider (`none`, `local`, `openai-compatible`), model, and dimensions |
 | `contextBudget` | Token ceiling for the injected persona core |

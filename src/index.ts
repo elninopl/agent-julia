@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { startServer } from "./server.js";
 import { runWizard } from "./wizard/wizard.js";
-import { install, uninstall } from "./wizard/register.js";
+import { buildInstructions, install, uninstall } from "./wizard/register.js";
 import { loadConfig } from "./config/config.js";
 import { migrate } from "./migrations/runner.js";
 import { logError } from "./util/log.js";
@@ -11,7 +11,7 @@ const HELP = `agent-julia — one brain for your AI
 Usage:
   agent-julia serve      Start the MCP stdio server (default; used by Claude clients)
   agent-julia init       Run the interactive setup wizard
-  agent-julia sync       Re-apply MCP registration + persona core for the current config
+  agent-julia sync       Re-apply MCP registration + persona core (add --print to show the steps instead)
   agent-julia uninstall  Remove the managed persona blocks and MCP registration
   agent-julia migrate    Run pending data migrations and exit
   agent-julia --help     Show this help
@@ -30,8 +30,12 @@ async function main(): Promise<void> {
       break;
     case "sync": {
       const cfg = await loadConfig();
-      const steps = await install(cfg);
-      for (const s of steps) console.log(`[${s.status}] ${s.surface} — ${s.action}: ${s.detail}`);
+      if (process.argv.includes("--print")) {
+        console.log(buildInstructions(cfg));
+      } else {
+        const steps = await install(cfg);
+        for (const s of steps) console.log(`[${s.status}] ${s.surface} — ${s.action}: ${s.detail}`);
+      }
       break;
     }
     case "uninstall": {

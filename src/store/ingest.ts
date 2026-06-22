@@ -21,13 +21,13 @@ export async function ingest(
   indexer: Indexer,
   page: string,
   content: string,
-  opts: { status?: string; title?: string } = {},
+  opts: { status?: string; title?: string; git?: boolean } = {},
 ): Promise<IngestResult> {
   const id = pageId(page);
   const path = await writePage(paths, id, content, opts);
   await refreshIndexMd(paths);
   await appendLog(paths, `ingest \`${id}\``);
   await indexer.indexPage(id);
-  const committed = await commitAll(paths.root, `chore(memory): ingest ${id}`);
+  const committed = opts.git === false ? false : await commitAll(paths.root, `Update memory: ${id}`);
   return { id, path, committed };
 }

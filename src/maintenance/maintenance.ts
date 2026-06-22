@@ -57,7 +57,9 @@ export async function runMaintenance(
   await refreshIndexMd(paths);
   const core = await composeCore(paths, config);
 
-  const committed = await commitAll(paths.root, "chore(maintenance): auto reindex + refresh catalog");
+  const committed = config.git
+    ? await commitAll(paths.root, "Maintain memory: reindex and refresh catalog")
+    : false;
 
   return {
     mode,

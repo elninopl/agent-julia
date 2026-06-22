@@ -49,11 +49,12 @@ describe("language detection", () => {
 });
 
 describe("local model tier recommendation", () => {
-  it("scales with total RAM, staying conservative", () => {
-    expect(recommendLocalTier(4)).toBe("small");
-    expect(recommendLocalTier(8)).toBe("small");
-    expect(recommendLocalTier(16)).toBe("base");
-    expect(recommendLocalTier(64)).toBe("base");
+  it("considers both RAM and CPU cores, staying conservative", () => {
+    expect(recommendLocalTier(4, 8)).toBe("small"); // low RAM
+    expect(recommendLocalTier(32, 2)).toBe("small"); // too few cores
+    expect(recommendLocalTier(16, 8)).toBe("base"); // ample both
+    expect(recommendLocalTier(16, 4)).toBe("small"); // cores below bar
+    expect(recommendLocalTier(64, 16)).toBe("base");
   });
 });
 
