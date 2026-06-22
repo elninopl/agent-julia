@@ -7,6 +7,13 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ## [Unreleased]
 
+### Fixed
+
+- The test suite no longer writes to the real `~/.config/agent-julia/config.json`.
+  `migrate()` persists via `saveConfig()`, so tests now pin `AGENT_JULIA_CONFIG`
+  to a throwaway path; previously running the suite could overwrite a developer's
+  actual config. Test-only — the published package is unchanged.
+
 ## [0.1.13] - 2026-06-22
 
 ### Changed
