@@ -53,7 +53,9 @@ export async function setRemoteUrl(root: string, url: string): Promise<void> {
 export async function verifyRemote(root: string): Promise<{ ok: boolean; error?: string }> {
   if (!(await getRemoteUrl(root))) return { ok: false, error: "no remote configured" };
   try {
-    await exec("git", ["-C", root, "ls-remote", "--exit-code", "origin"], {
+    // No --exit-code: an empty but reachable+authenticated repo (no refs yet) is
+    // fine to push to; we only care that the connection and auth succeed.
+    await exec("git", ["-C", root, "ls-remote", "origin"], {
       encoding: "utf8",
       env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
     });

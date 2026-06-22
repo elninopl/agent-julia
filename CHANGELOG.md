@@ -7,6 +7,14 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ## [Unreleased]
 
+## [0.1.18] - 2026-06-22
+
+### Fixed
+
+- `verifyRemote` no longer reports an empty but reachable remote as unreachable
+  (dropped `git ls-remote --exit-code`, which treats a fresh repo with no refs as
+  a failure). Setup against a new empty backup repo now passes.
+
 ## [0.1.17] - 2026-06-22
 
 ### Changed
