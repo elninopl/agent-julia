@@ -338,10 +338,11 @@ export async function runWizard(): Promise<void> {
     // A custom voice needs a persona.md to live in — seed a template to edit.
     if (config.stylePreset === "custom") {
       await seedPersonaTemplate(paths);
-      note(
-        `Your custom voice lives in ${paths.personaFile} — it's a starter template right now. ` +
-          "Write your voice there, then run `agent-julia sync` to apply it on every surface.",
-      );
+      console.log("");
+      console.log("  " + c.bold("Your custom voice:"));
+      console.log("    " + c.cyan(paths.personaFile));
+      console.log("    " + c.dim("It's a starter template now. Write your voice in that file,"));
+      console.log("    " + c.dim("then run `agent-julia sync` to apply it on every surface."));
     }
 
     const indexer = Indexer.open(paths, config);
@@ -356,7 +357,7 @@ export async function runWizard(): Promise<void> {
       for (const s of steps) {
         if (s.status === "manual") {
           console.log(`  ${c.yellow("▸ action needed")} ${c.gray("(" + s.surface + ")")} — ${c.white(s.action)}`);
-          console.log("     " + c.dim(s.detail));
+          for (const line of s.detail.split("\n")) console.log("     " + c.dim(line));
         } else {
           const mark = s.status === "done" ? c.green("✓") : c.gray("–");
           console.log(`  ${mark} ${c.white(s.action)} ${c.gray("(" + s.surface + ")")}`);

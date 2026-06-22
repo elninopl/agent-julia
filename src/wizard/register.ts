@@ -127,9 +127,15 @@ export async function install(config: Config): Promise<InstallStep[]> {
     await upsertManagedBlock(mirror, STARTUP_BLOCK_ID, core);
     steps.push({
       surface: "cowork",
-      action: "paste the persona core into Cowork",
+      action: "paste the persona core into Cowork (covers Dispatch too)",
       status: "manual",
-      detail: `Open ${mirror} and paste its contents into Settings → Cowork → Global instructions (covers Dispatch too). Cowork stores that field in-app, so this one step is manual.`,
+      // Multi-line: rendered line by line so the file path stays on its own line.
+      detail: [
+        "Cowork keeps Global instructions inside the app, so paste it once:",
+        `  1. open this file:  ${mirror}`,
+        "  2. copy everything in it",
+        "  3. in Claude Desktop: Settings → Cowork → Global instructions → paste",
+      ].join("\n"),
     });
   }
 

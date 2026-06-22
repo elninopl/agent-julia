@@ -7,12 +7,23 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ## [Unreleased]
 
+## [0.1.14] - 2026-06-22
+
+### Changed
+
+- The universal core voice now bakes in concrete "signs of AI writing" rules to
+  avoid (inflated significance, superficial -ing tails, AI vocabulary, vague
+  attributions, negative parallelism, em-dash overuse, …) instead of pointing at
+  an external repo. Credited in the file and the README.
+- The wizard shows the `persona.md` path on its own line and gives step-by-step
+  instructions (with the file path) for pasting the persona core into Cowork.
+
 ### Fixed
 
 - The test suite no longer writes to the real `~/.config/agent-julia/config.json`.
   `migrate()` persists via `saveConfig()`, so tests now pin `AGENT_JULIA_CONFIG`
   to a throwaway path; previously running the suite could overwrite a developer's
-  actual config. Test-only — the published package is unchanged.
+  actual config.
 
 ## [0.1.13] - 2026-06-22
 

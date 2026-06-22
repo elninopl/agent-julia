@@ -183,6 +183,13 @@ git push --follow-tags
 
 A `vX.Y.Z` tag triggers the release workflow: it checks the tag against `package.json`, runs the tests, publishes to npm via Trusted Publishing (OIDC — no stored token, provenance attached automatically), and cuts a GitHub release from the matching CHANGELOG section.
 
+## Credits
+
+The persona's "avoid the tells of AI writing" rules are adapted from the
+[humanizer](https://github.com/blader/humanizer) skill by Siqi Chen (MIT),
+itself based on Wikipedia's "Signs of AI writing" (WikiProject AI Cleanup,
+CC BY-SA).
+
 ## License
 
 MIT.
