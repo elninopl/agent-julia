@@ -55,4 +55,21 @@ describe("git gating on ingest", () => {
     const log = execFileSync("git", ["-C", bare, "log", "--oneline"], { encoding: "utf8" });
     expect(log.trim().length).toBeGreaterThan(0);
   });
+
+  it("auto-pushes on ingest when enabled", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "aj-git-"));
+    const bare = mkdtempSync(join(tmpdir(), "aj-bare-"));
+    execFileSync("git", ["init", "--bare", "-q", bare]);
+    const cfg = ConfigSchema.parse({ memoryDir: dir, git: true, search: "fts" });
+    await migrate(cfg);
+    const paths = storePaths(dir);
+    const indexer = Indexer.open(paths, cfg);
+    close = () => indexer.close();
+    await setRemoteUrl(dir, bare);
+
+    const res = await ingest(paths, indexer, "note", "a durable fact", { git: true, autoPush: true });
+    expect(res.pushed).toBe(true);
+    const log = execFileSync("git", ["-C", bare, "log", "--oneline"], { encoding: "utf8" });
+    expect(log).toContain("Update memory: note");
+  });
 });

@@ -120,6 +120,14 @@ export async function runWizard(): Promise<void> {
       const r = (await p.text({ example: "git@github.com:you/agent-julia-memory.git" })).trim();
       if (r) gitRemote = r;
     }
+    let gitAutoPush = false;
+    if (gitRemote) {
+      console.log("");
+      gitAutoPush = await p.confirm(
+        "Push after every change? (Yes = immediate off-machine backup; No = sync on maintenance.)",
+        false,
+      );
+    }
 
     // 6 — Search
     step(6, STEPS, "Search", "how your agent finds things in its memory");
@@ -271,6 +279,7 @@ export async function runWizard(): Promise<void> {
       memoryDir,
       git: useGit,
       gitRemote,
+      gitAutoPush,
       search,
       embedding: {
         provider: embeddingProvider,
@@ -295,7 +304,7 @@ export async function runWizard(): Promise<void> {
     summary("Here's your setup", [
       ["agent", `${config.name} · ${config.pronouns} · speaks ${config.language}`],
       ["style", styleLabel(config.stylePreset)],
-      ["memory", `${config.memoryDir}${config.git ? " (git)" : " (no git)"}${config.gitRemote ? " → " + config.gitRemote : ""}`],
+      ["memory", `${config.memoryDir}${config.git ? " (git)" : " (no git)"}${config.gitRemote ? ` → ${config.gitRemote}${config.gitAutoPush ? " (auto-push)" : ""}` : ""}`],
       ["search", config.search === "fts" ? "keywords only" : `${config.search} · provider: ${config.embedding.provider}`],
       ["budget", `~${config.contextBudget} tokens`],
       ["surfaces", `${surfacesLabel(config.surfaces)} · ${applyAuto ? "auto setup" : "manual setup"}`],

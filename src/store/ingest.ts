@@ -2,12 +2,13 @@ import { Indexer } from "../index/indexer.js";
 import { StorePaths, pageId } from "./paths.js";
 import { writePage } from "./markdown.js";
 import { appendLog, refreshIndexMd } from "./catalog.js";
-import { commitAll } from "./git.js";
+import { commitAll, pushToRemote } from "./git.js";
 
 export interface IngestResult {
   id: string;
   path: string;
   committed: boolean;
+  pushed: boolean;
 }
 
 // Schema-enforcing write path:
@@ -21,7 +22,7 @@ export async function ingest(
   indexer: Indexer,
   page: string,
   content: string,
-  opts: { status?: string; title?: string; git?: boolean } = {},
+  opts: { status?: string; title?: string; git?: boolean; autoPush?: boolean } = {},
 ): Promise<IngestResult> {
   const id = pageId(page);
   const path = await writePage(paths, id, content, opts);
@@ -29,5 +30,6 @@ export async function ingest(
   await appendLog(paths, `ingest \`${id}\``);
   await indexer.indexPage(id);
   const committed = opts.git === false ? false : await commitAll(paths.root, `Update memory: ${id}`);
-  return { id, path, committed };
+  const pushed = committed && opts.autoPush ? await pushToRemote(paths.root) : false;
+  return { id, path, committed, pushed };
 }

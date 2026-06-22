@@ -7,6 +7,14 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ## [Unreleased]
 
+## [0.1.12] - 2026-06-22
+
+### Added
+
+- `gitAutoPush` (default off): push after every write, not just on maintenance —
+  immediate off-machine backup at the cost of a network round-trip per write. The
+  wizard offers it when a remote is configured.
+
 ## [0.1.11] - 2026-06-22
 
 ### Added

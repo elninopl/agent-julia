@@ -64,6 +64,10 @@ export const ConfigSchema = z.object({
   // When set, maintenance pushes to it best-effort. Requires git on.
   gitRemote: z.string().optional(),
 
+  // Push after every write, not just on maintenance. Off by default: immediate
+  // off-machine backup at the cost of a network round-trip per write.
+  gitAutoPush: z.boolean().default(false),
+
   search: z.enum(SEARCH_MODES).default("hybrid"),
   embedding: EmbeddingConfigSchema.default({ provider: "none", apiKeyEnv: "AGENT_JULIA_EMBED_API_KEY" }),
 
