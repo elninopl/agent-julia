@@ -248,7 +248,11 @@ export async function runWizard(): Promise<void> {
     let contextBudget = 1200;
     if (budgetPick === "custom") {
       const typed = Number.parseInt(await p.text({ example: "1500", def: "1200" }), 10);
-      contextBudget = Number.isFinite(typed) ? typed : 1200;
+      const wanted = Number.isFinite(typed) ? typed : 1200;
+      // Keep it sane: too small truncates the persona to nothing; too large
+      // defeats the point of a budgeted core.
+      contextBudget = Math.min(8000, Math.max(400, wanted));
+      if (contextBudget !== wanted) note(`Using ${contextBudget} tokens (kept within 400–8000).`);
     } else {
       contextBudget = Number.parseInt(budgetPick, 10);
     }
@@ -306,7 +310,7 @@ export async function runWizard(): Promise<void> {
     // exact edits to make by hand.
     console.log("");
     const applyAuto = await p.confirm(
-      "Set up your Claude apps for you? (No = I'll print the exact changes for you to make.)",
+      "Set up your Claude apps for you? (No = print the exact changes to make.) Your memory and config are created either way.",
       true,
     );
 

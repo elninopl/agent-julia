@@ -17,7 +17,7 @@ Every Claude surface remembers you differently. Claude Code reads `~/.claude/CLA
 
 At the same time, anything you put in those startup files is a tax. It loads before every turn, in every session, and long context measurably degrades output — the model gets worse as the window fills, well before it's full.
 
-agent-julia fixes both. Your knowledge lives in one markdown repository you own. Only a small, budgeted slice of it — the persona and a "use your memory" instruction — is injected into each surface's startup context. Everything else is pulled on demand through search, and never weighs down the conversation.
+agent-julia fixes both. Your knowledge lives in one markdown repository you own. Only a small, budgeted slice of it — the persona and a "use your memory" instruction — is injected into each surface's startup context. Everything else is pulled on demand through search, and the rest never rides along.
 
 ## How it works
 
@@ -48,7 +48,7 @@ To register the server by hand instead:
 }
 ```
 
-`@latest` picks up new versions automatically next session; pin a version (e.g. `agent-julia@0.1.6`) if you want it fixed. Either way, upgrades run automatic, backup-protected migrations — they never lose data or ask you to hand-edit files.
+`@latest` picks up new versions automatically next session; pin an exact version (`agent-julia@<version>`) if you want it fixed. Either way, upgrades run automatic, backup-protected migrations — they never lose data or ask you to hand-edit files.
 
 ## Manual setup
 

@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { Migration } from "./types.js";
 import { todayISO } from "../store/markdown.js";
 
@@ -29,9 +30,11 @@ export const migration0001: Migration = {
         "utf8",
       );
     }
-    // Keep the derived index out of version control; it is rebuildable.
-    const gitignore = `${paths.internalDir.replace(paths.root + "/", "")}/\n*.sqlite\n*.sqlite-*\n`;
-    const gitignorePath = `${paths.root}/.gitignore`;
+    // Keep the derived index out of version control; it is rebuildable. The
+    // internal dir name is fixed (storePaths), so hardcode it rather than deriving
+    // it by stripping the root prefix (which breaks on a trailing slash).
+    const gitignore = ".agent-julia/\n*.sqlite\n*.sqlite-*\n";
+    const gitignorePath = join(paths.root, ".gitignore");
     if (!existsSync(gitignorePath)) {
       await writeFile(gitignorePath, gitignore, "utf8");
     }

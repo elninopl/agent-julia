@@ -7,6 +7,37 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ## [Unreleased]
 
+### Fixed
+
+- Concurrent surfaces no longer corrupt the store. SQLite waits on a busy
+  writer (`busy_timeout`) instead of failing, and git commit/push run under a
+  cross-process lock, so two surfaces committing at once can't race on
+  `.git/index.lock` and silently drop a write.
+- A page's FTS row, embedding, and content hash are now written in a single
+  transaction, so a crash can't record a hash for a page whose embedding never
+  landed (which would leave it permanently unsearchable by meaning).
+- Switching the embedding provider from `none` to `local` (or adding one to an
+  existing store) now embeds the pages that were indexed before — previously
+  semantic search returned nothing for them until each was re-saved by hand.
+- Stored vectors are read through an aligned buffer, fixing a latent
+  `RangeError` that could crash semantic search depending on memory layout.
+- A store written by a newer agent-julia is refused with a clear upgrade
+  message instead of being silently downgraded.
+- Setup aborts when stdin isn't an interactive terminal, instead of racing
+  through the wizard on defaults and editing Claude config files unattended.
+- MCP registration reports a manual step when a Claude config file isn't valid
+  JSON, instead of showing a success it didn't perform.
+- `git push` rejection (remote ahead of local) is reported distinctly so a
+  backup that isn't actually happening doesn't look fine.
+
+### Changed
+
+- Hybrid search uses reciprocal-rank fusion and gives semantic-only hits their
+  real title; multi-word keyword queries are matched with AND for precision.
+- Custom persona budget is clamped to 400–8000 tokens.
+- Invalid menu input in the wizard re-prompts instead of snapping to the default.
+- Migration backups now include `persona.md`.
+
 ## [0.1.18] - 2026-06-22
 
 ### Fixed

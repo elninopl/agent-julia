@@ -37,6 +37,17 @@ async function writeState(paths: StorePaths, state: MigrationState): Promise<voi
 export async function migrate(config: Config): Promise<{ config: Config; ranAny: boolean }> {
   const paths = storePaths(config.memoryDir);
   const state = await readState(paths);
+
+  // Refuse to operate a store written by a newer agent-julia: a forward migration
+  // may have reshaped the markdown, and this older binary would silently corrupt
+  // it (and downgrade the recorded schemaVersion). Upgrade instead.
+  if (state.schemaVersion > CURRENT_SCHEMA_VERSION) {
+    throw new Error(
+      `This memory store was written by a newer agent-julia (store schema v${state.schemaVersion}, ` +
+        `this version supports v${CURRENT_SCHEMA_VERSION}). Upgrade: npm i -g agent-julia@latest`,
+    );
+  }
+
   const fromVersion = Math.max(state.schemaVersion, 0);
 
   const pending = MIGRATIONS.filter(
@@ -82,7 +93,7 @@ export async function migrate(config: Config): Promise<{ config: Config; ranAny:
 async function backupStore(paths: StorePaths, label: string): Promise<string> {
   const dest = join(paths.backupsDir, `${todayISO()}-${label}`);
   await mkdir(dest, { recursive: true });
-  for (const name of ["index.md", "log.md", "voice-corrections.md", "pages", "archive"]) {
+  for (const name of ["index.md", "log.md", "voice-corrections.md", "persona.md", "pages", "archive"]) {
     const src = join(paths.root, name);
     if (existsSync(src)) await cp(src, join(dest, name), { recursive: true });
   }
