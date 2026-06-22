@@ -17,9 +17,11 @@ import { ftsDelete, ftsUpsert } from "./fts.js";
 import { SearchResult, search } from "./search.js";
 import {
   clearEmbeddings,
+  embedPassage,
+  embeddingCount,
   embeddingsAreStale,
   semanticDelete,
-  semanticUpsert,
+  semanticStore,
 } from "./semantic.js";
 
 // Facade over the derived index (FTS + embeddings). Owns the DB handle and the
@@ -48,9 +50,20 @@ export class Indexer {
       return;
     }
     const title = page.frontmatter.title ?? id;
-    ftsUpsert(this.db, id, title, page.body);
-    await semanticUpsert(this.db, this.provider, id, `${title}\n\n${page.body}`);
-    setPageHash(this.db, id, hashPage(title, page.body));
+    // Embed first (async, no lock held), then write FTS row, vector, and hash in
+    // one transaction so a crash can't leave a recorded hash for a page whose
+    // embedding never landed (which sync() would never re-embed).
+    const vector = await embedPassage(this.provider, `${title}\n\n${page.body}`);
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      ftsUpsert(this.db, id, title, page.body);
+      if (vector) semanticStore(this.db, this.provider, id, vector);
+      setPageHash(this.db, id, hashPage(title, page.body));
+      this.db.exec("COMMIT");
+    } catch (err) {
+      this.db.exec("ROLLBACK");
+      throw err;
+    }
   }
 
   removePage(id: string): void {
@@ -99,10 +112,16 @@ export class Indexer {
     return ids.length;
   }
 
-  // If the embedding model changed, stored vectors are stale — drop + re-embed.
+  // Re-embed when stored vectors can't be trusted: the model changed, OR the
+  // provider is enabled but pages are unembedded (e.g. the store was built with
+  // provider "none" and the user just switched it on — sync() alone wouldn't fix
+  // it, since the page hashes are unchanged).
   async reembedIfStale(): Promise<boolean> {
-    if (!embeddingsAreStale(this.db, this.provider)) return false;
-    log("embedding model changed — re-embedding all pages");
+    if (!this.provider.enabled) return false;
+    const stale = embeddingsAreStale(this.db, this.provider);
+    const missing = embeddingCount(this.db) < allIndexedIds(this.db).length;
+    if (!stale && !missing) return false;
+    log(stale ? "embedding model changed — re-embedding all pages" : "embeddings missing — embedding all pages");
     clearEmbeddings(this.db);
     for (const id of await listPageIds(this.paths)) await this.indexPage(id);
     return true;

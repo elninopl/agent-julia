@@ -30,20 +30,34 @@ export function semanticDelete(db: DB, id: string): void {
   db.prepare("DELETE FROM embeddings WHERE id = ?").run(id);
 }
 
-export async function semanticUpsert(
+// Embed a passage. Async (model/network), so callers run it BEFORE opening a
+// write transaction — never hold a DB lock across an embed.
+export async function embedPassage(
+  provider: EmbeddingProvider,
+  text: string,
+): Promise<number[] | null> {
+  if (!provider.enabled) return null;
+  return provider.embed([text]).then((v) => v[0] ?? null, onEmbedError);
+}
+
+// Store a precomputed vector. Synchronous, so it composes into a transaction
+// with the FTS upsert and page-hash write.
+export function semanticStore(
   db: DB,
   provider: EmbeddingProvider,
   id: string,
-  text: string,
-): Promise<void> {
-  if (!provider.enabled) return;
-  const vec = await provider.embed([text]).then((v) => v[0], onEmbedError);
-  if (!vec) return;
+  vec: number[],
+): void {
   db.prepare(
     `INSERT INTO embeddings (id, model, dims, vector) VALUES (?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET model = excluded.model, dims = excluded.dims, vector = excluded.vector`,
   ).run(id, provider.id, provider.dims, vectorToBlob(vec));
   setMeta(db, MODEL_META_KEY, provider.id);
+}
+
+export function embeddingCount(db: DB): number {
+  const row = db.prepare("SELECT COUNT(*) AS n FROM embeddings").get() as { n: number } | undefined;
+  return row?.n ?? 0;
 }
 
 export async function semanticSearch(
@@ -59,7 +73,12 @@ export async function semanticSearch(
     id: string;
     vector: Buffer;
   }>;
-  const scored = rows.map((r) => ({ id: r.id, score: cosineSimilarity(q, blobToVector(r.vector)) }));
+  const scored = rows
+    .map((r) => ({ id: r.id, vec: blobToVector(r.vector) }))
+    // Skip vectors whose dimensionality doesn't match the query model (e.g. a
+    // leftover from a different model) — a prefix cosine would be meaningless.
+    .filter((r) => r.vec.length === q.length)
+    .map((r) => ({ id: r.id, score: cosineSimilarity(q, r.vec) }));
   scored.sort((a, b) => b.score - a.score);
   return scored.slice(0, limit);
 }

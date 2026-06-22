@@ -1,7 +1,7 @@
 import { SearchMode } from "../config/schema.js";
 import { DB } from "./db.js";
 import { EmbeddingProvider } from "./embeddings.js";
-import { ftsSearch } from "./fts.js";
+import { ftsSearch, ftsTitle } from "./fts.js";
 import { semanticSearch } from "./semantic.js";
 
 export interface SearchResult {
@@ -37,35 +37,37 @@ export async function search(
     const byId = new Map(fts.map((f) => [f.id, f]));
     return sem.slice(0, limit).map((h) => ({
       id: h.id,
-      title: byId.get(h.id)?.title ?? h.id,
+      title: byId.get(h.id)?.title ?? ftsTitle(db, h.id) ?? h.id,
       score: h.score,
       snippet: byId.get(h.id)?.snippet,
       via: "semantic" as const,
     }));
   }
 
-  // Hybrid: weighted blend of normalized scores from both signals.
+  // Hybrid: reciprocal-rank fusion of both signals.
   const merged = new Map<string, SearchResult>();
   fts.forEach((h, i) => {
     merged.set(h.id, {
       id: h.id,
       title: h.title,
       snippet: h.snippet,
-      score: 0.5 * rankWeight(i, fts.length),
+      score: 0.5 * rrf(i),
       via: "hybrid",
     });
   });
   sem.forEach((h, i) => {
     const existing = merged.get(h.id);
-    const add = 0.5 * rankWeight(i, sem.length);
+    const add = 0.5 * rrf(i);
     if (existing) existing.score += add;
-    else merged.set(h.id, { id: h.id, title: h.id, score: add, via: "hybrid" });
+    else merged.set(h.id, { id: h.id, title: ftsTitle(db, h.id) ?? h.id, score: add, via: "hybrid" });
   });
 
   return [...merged.values()].sort((a, b) => b.score - a.score).slice(0, limit);
 }
 
-function rankWeight(index: number, total: number): number {
-  if (total <= 0) return 0;
-  return (total - index) / total;
+// Reciprocal-rank fusion weight: 1/(k+rank), k=60 (the standard RRF constant).
+// Rank position drives the score, so two ranked lists fuse without needing their
+// raw scores to be comparable.
+function rrf(index: number): number {
+  return 1 / (60 + index);
 }

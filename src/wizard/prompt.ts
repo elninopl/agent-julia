@@ -16,11 +16,18 @@ const PAD = "  ";
 // go to stdout (this is the interactive `init` path, not the stdio MCP server).
 export class Prompter {
   private rl: Interface;
+  private closed = false;
   constructor() {
     this.rl = createInterface({ input: process.stdin, output: process.stdout });
+    // If the input stream closes mid-wizard (Ctrl-D, piped EOF), stop rather than
+    // racing through every remaining prompt on its default.
+    this.rl.on("close", () => {
+      this.closed = true;
+    });
   }
 
   private async ask(defaultHint?: string): Promise<string> {
+    if (this.closed) throw new Error("input stream closed — setup aborted");
     const hint = defaultHint ? c.dim(` ${defaultHint}`) : "";
     return (await this.rl.question(`${PAD}${c.cyanBold("❯")}${hint} `)).trim();
   }
@@ -44,9 +51,13 @@ export class Prompter {
       console.log("");
     });
     const def = defaultIndex + 1;
-    const raw = await this.ask(c.dim(`1–${options.length}, enter = ${def}`));
-    const idx = raw ? Number.parseInt(raw, 10) - 1 : defaultIndex;
-    return (options[idx] ?? options[defaultIndex]!).value;
+    for (;;) {
+      const raw = await this.ask(c.dim(`1–${options.length}, enter = ${def}`));
+      if (!raw) return options[defaultIndex]!.value;
+      const idx = Number.parseInt(raw, 10) - 1;
+      if (Number.isInteger(idx) && idx >= 0 && idx < options.length) return options[idx]!.value;
+      console.log(PAD + c.dim(`Please enter a number between 1 and ${options.length}.`));
+    }
   }
 
   async confirm(question: string, defaultYes = true): Promise<boolean> {

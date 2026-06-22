@@ -176,7 +176,12 @@ export function vectorToBlob(vec: number[]): Buffer {
 }
 
 export function blobToVector(buf: Buffer): Float32Array {
-  return new Float32Array(buf.buffer, buf.byteOffset, buf.byteLength / 4);
+  // SQLite BLOB Buffers are views into a shared, often 4-byte-unaligned pool, and
+  // Float32Array requires an aligned offset — wrapping the raw buffer throws
+  // RangeError. Copy into a fresh, aligned ArrayBuffer.
+  const copy = new Uint8Array(buf.byteLength);
+  copy.set(buf);
+  return new Float32Array(copy.buffer);
 }
 
 export function cosineSimilarity(a: ArrayLike<number>, b: ArrayLike<number>): number {

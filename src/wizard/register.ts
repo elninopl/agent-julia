@@ -40,7 +40,9 @@ function coworkMirrorPath(): string {
   return join(homedir(), ".config", "agent-julia", "cowork-global-instructions.md");
 }
 
-async function mergeMcpServer(path: string, name: string): Promise<void> {
+// Returns false (without throwing) if the file exists but isn't valid JSON, so
+// the caller can fall back to a manual step instead of reporting a false success.
+async function mergeMcpServer(path: string, name: string): Promise<boolean> {
   await mkdir(dirname(path), { recursive: true });
   let data: Record<string, unknown> = {};
   if (existsSync(path)) {
@@ -48,7 +50,7 @@ async function mergeMcpServer(path: string, name: string): Promise<void> {
       data = JSON.parse(await readFile(path, "utf8"));
     } catch (err) {
       warn(`could not parse ${path}, leaving it untouched:`, (err as Error).message);
-      return;
+      return false;
     }
   }
   const servers = (data.mcpServers as Record<string, unknown>) ?? {};
@@ -56,6 +58,20 @@ async function mergeMcpServer(path: string, name: string): Promise<void> {
   data.mcpServers = servers;
   await writeFile(path, JSON.stringify(data, null, 2) + "\n", "utf8");
   log(`registered MCP server '${name}' in ${path}`);
+  return true;
+}
+
+// The manual fallback when we can't safely write a Claude config file.
+function manualMcpStep(surface: Surface, action: string, path: string): InstallStep {
+  return {
+    surface,
+    action,
+    status: "manual",
+    detail: [
+      `Couldn't safely edit ${path} (it isn't valid JSON). Add this yourself, under the top-level object:`,
+      mcpSnippet(),
+    ].join("\n"),
+  };
 }
 
 async function removeMcpServer(path: string, name: string): Promise<boolean> {
@@ -93,19 +109,27 @@ export async function install(config: Config): Promise<InstallStep[]> {
   // --- MCP registration ---
   if (wantCode) {
     const p = claudeCodeConfigPath();
-    await mergeMcpServer(p, name);
-    steps.push({ surface: "code", action: "register MCP", status: "done", detail: p });
+    const wrote = await mergeMcpServer(p, name);
+    steps.push(
+      wrote
+        ? { surface: "code", action: "register MCP", status: "done", detail: p }
+        : manualMcpStep("code", "register MCP", p),
+    );
   }
   if (wantDesktop) {
     const p = desktopConfigPath();
     if (p) {
-      await mergeMcpServer(p, name);
-      steps.push({
-        surface: "cowork",
-        action: "register MCP (covers Cowork + Dispatch)",
-        status: "done",
-        detail: p,
-      });
+      const wrote = await mergeMcpServer(p, name);
+      steps.push(
+        wrote
+          ? {
+              surface: "cowork",
+              action: "register MCP (covers Cowork + Dispatch)",
+              status: "done",
+              detail: p,
+            }
+          : manualMcpStep("cowork", "register MCP (covers Cowork + Dispatch)", p),
+      );
     } else {
       steps.push({ surface: "cowork", action: "register MCP", status: "skipped", detail: "unsupported platform" });
     }

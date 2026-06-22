@@ -39,6 +39,15 @@ const STEPS = 9;
 // recommends a sensible default, and shows concrete examples — then writes the
 // config, initializes the store, and wires the agent into your Claude apps.
 export async function runWizard(): Promise<void> {
+  // The wizard is interactive: without a TTY, readline returns "" on every prompt
+  // (EOF) and we'd silently provision a default setup and edit Claude config files.
+  if (!process.stdin.isTTY) {
+    console.error(
+      "agent-julia init needs an interactive terminal. Run it directly, or use `agent-julia sync --print` to see the manual setup.",
+    );
+    process.exitCode = 1;
+    return;
+  }
   const p = new Prompter();
   // Keep internal info logs out of the polished wizard flow (warnings/errors stay).
   setQuiet(true);
