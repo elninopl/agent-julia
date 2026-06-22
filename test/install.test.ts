@@ -49,6 +49,9 @@ describe("injected core", () => {
     expect(core).toContain("Julia");
     expect(core).toContain("ingest");
     expect(core).toContain("search");
+    // Attribution stays out of the injected hot path.
+    expect(core).not.toContain("Credits");
+    expect(core).not.toContain("github.com/blader/humanizer");
     expect(STARTUP_BLOCK_ID).toBe("persona-core");
   });
 

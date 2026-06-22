@@ -11,8 +11,16 @@ import { readCorrections } from "./corrections.js";
 const here = dirname(fileURLToPath(import.meta.url));
 
 async function loadCoreVoice(): Promise<string> {
-  // assets/ is copied next to the compiled module by the build step.
-  return (await readFile(join(here, "assets", "core-voice.md"), "utf8")).trim();
+  // assets/ is copied next to the compiled module by the build step. Only the
+  // rules are injected: drop the credits below the "---", the H1 title (composeCore
+  // adds its own header), and any HTML comments — attribution stays out of the
+  // hot path.
+  const raw = await readFile(join(here, "assets", "core-voice.md"), "utf8");
+  return raw
+    .split(/\n-{3,}\n/)[0]!
+    .replace(/^#[^\n]*\n/, "")
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .trim();
 }
 
 // The L2 voice: a custom voice from persona.md when stylePreset is "custom",

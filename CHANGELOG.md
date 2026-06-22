@@ -7,6 +7,14 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ## [Unreleased]
 
+## [0.1.15] - 2026-06-22
+
+### Changed
+
+- The injected persona core no longer carries the core-voice credits/attribution
+  or its title — only the rules. Attribution stays in the source file and README,
+  out of the always-on context.
+
 ## [0.1.14] - 2026-06-22
 
 ### Changed
