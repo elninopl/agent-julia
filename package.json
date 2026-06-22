@@ -1,6 +1,6 @@
 {
   "name": "agent-julia",
-  "version": "0.1.16",
+  "version": "0.1.17",
   "description": "One brain for your AI — a local-first, owned memory and configurable persona shared across Claude Code, Cowork, and Dispatch, exposed as an MCP server.",
   "author": "Paweł Gniadkowski (elniño) <el@elnino.pl>",
   "license": "MIT",
