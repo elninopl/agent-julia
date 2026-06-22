@@ -13,9 +13,11 @@ npx agent-julia init
 
 ## The problem
 
-Every Claude surface remembers you differently. Claude Code reads `~/.claude/CLAUDE.md` and a project file. Claude Desktop has its own global instructions. Mobile Dispatch has another store again. They drift. The same person ends up with a different assistant on every device, and a durable fact written in one place never reaches the others.
+Your AI has no brain of its own. Each session starts from nothing, and each surface keeps its own scraps. Claude Code reads `~/.claude/CLAUDE.md` and a project file. Claude Desktop has its own global instructions. Mobile Dispatch has another store again. Nothing connects them — what one learns, the others never hear. The same person ends up with a different, slightly amnesiac assistant on every device.
 
-At the same time, anything you put in those startup files is a tax. It loads before every turn, in every session, and long context measurably degrades output — the model gets worse as the window fills, well before it's full.
+And the workaround makes it worse. The more you cram into those startup files to fight the forgetting, the more you pay: they load before every turn, in every session, and long context measurably degrades output — the model gets worse as the window fills, well before it's full. So you're stuck between an AI that forgets and an AI that's dulled by everything you told it to remember.
+
+A brain solves this differently: it holds everything, but only a little is *in mind* at any moment — the rest is recalled when it's relevant. That's the shape Agent Julia gives your AI.
 
 ### What that looks like day to day
 
@@ -34,7 +36,7 @@ At the same time, anything you put in those startup files is a tax. It loads bef
 - *Before* — all of it loads on every turn of every session, and the answer degrades as the window fills with things this task doesn't need.
 - *After* — about 1,200 tokens of persona ride each turn; the 500 lines live in your memory, and only the page you actually need is pulled in when you ask.
 
-Agent Julia fixes both the drift and the tax. Your knowledge lives in one markdown repository you own. Only a small, budgeted slice of it — the persona and a "use your memory" instruction — is injected into each surface's startup context. Everything else is pulled on demand through search, and the rest never rides along.
+That's the brain. Your knowledge lives in one markdown repository you own — the long-term memory, shared by every surface. Only a small, budgeted slice — the persona and a "use your memory" instruction — stays *in mind*, injected into each surface's startup context. Everything else is recalled on demand through search, so the AI knows what it knows without dragging all of it through every turn.
 
 ## How it works
 
