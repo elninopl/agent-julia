@@ -4,7 +4,7 @@
 
 # Agent Julia
 
-**One brain for your AI.** A memory and persona that stay the same across Claude Code, Claude Desktop (Cowork), and Dispatch — owned by you, stored as plain markdown in a git repo, and kept small in the model's context. Installed and run as the `agent-julia` command.
+**One brain for your AI.** A memory and persona that stay the same across Claude Code and Claude Desktop (Cowork) — owned by you, stored as plain markdown in a git repo, and kept small in the model's context. Installed and run as the `agent-julia` command.
 
 [![npm](https://img.shields.io/npm/v/agent-julia.svg)](https://www.npmjs.com/package/agent-julia)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
@@ -17,7 +17,7 @@ npx agent-julia init
 
 ## The problem
 
-Your AI has no brain of its own. Each session starts from nothing, and each surface keeps its own scraps. Claude Code reads `~/.claude/CLAUDE.md` and a project file. Claude Desktop has its own global instructions. Mobile Dispatch has another store again. Nothing connects them — what one learns, the others never hear. The same person ends up with a different, slightly amnesiac assistant on every device.
+Your AI has no brain of its own. Each session starts from nothing, and each surface keeps its own scraps. Claude Code reads `~/.claude/CLAUDE.md` and a project file. Claude Desktop has its own global instructions. Nothing connects them — what one learns, the other never hears. The same person ends up with a different, slightly amnesiac assistant on each surface.
 
 And the workaround makes it worse. The more you cram into those startup files to fight the forgetting, the more you pay: they load before every turn, in every session, and long context measurably degrades output — the model gets worse as the window fills, well before it's full. So you're stuck between an AI that forgets and an AI that's dulled by everything you told it to remember.
 
@@ -28,12 +28,12 @@ A brain solves this differently: it holds everything, but only a little is *in m
 **A preference you keep re-teaching.** You tell Claude Code to skip the "Great question!" preamble and reply in Polish.
 
 - *Before* — tomorrow, in Cowork on your laptop, the preamble is back and it answers in English. You correct it again. And again.
-- *After* — you record it once with `correct_voice`; Code, Cowork, and Dispatch all read the same correction from the next turn on.
+- *After* — you record it once with `correct_voice`; Code and Cowork both read the same correction from the next turn on.
 
-**A decision that doesn't travel.** On the train, in a long Dispatch thread, you settle the auth design: magic links, no passwords.
+**A decision that doesn't travel.** In a Cowork chat you settle the auth design: magic links, no passwords.
 
-- *Before* — a week later Claude Code scaffolds a password form, because it never saw that thread.
-- *After* — you `ingest` the decision as a page; any surface surfaces it by search the moment it's relevant.
+- *Before* — a week later Claude Code scaffolds a password form, because it never saw that conversation.
+- *After* — you `ingest` the decision as a page; the next Claude Code session surfaces it by search the moment it's relevant.
 
 **The `CLAUDE.md` tax.** Your `~/.claude/CLAUDE.md` has grown to 500 lines — every project, every preference, every person.
 
@@ -91,7 +91,9 @@ What it adds:
 
 Then append the persona block (printed by the command) to `~/.claude/CLAUDE.md`.
 
-**Claude Desktop (covers Cowork and Dispatch)** — add the same `mcpServers` entry to the Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS), and paste the persona block into **Settings → Cowork → Global instructions**. Cowork keeps that field inside the app, so it can't be written for you — but `agent-julia init` and `agent-julia sync` copy the block to your clipboard, so it's a single paste. Dispatch shares the desktop account, so pasting once covers it too. (Dispatch runs on mobile and can't reach the local MCP server, so it gets the persona, not live memory search.)
+**Claude Desktop (Cowork)** — add the same `mcpServers` entry to the Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS), and paste the persona block into **Settings → Cowork → Global instructions**. Cowork keeps that field inside the app, so it can't be written for you — but `agent-julia init` and `agent-julia sync` copy the block to your clipboard, so it's a single paste.
+
+> **Dispatch (mobile) isn't supported.** It can't run or reach the local stdio MCP server, and it doesn't read Cowork's Global instructions — so neither the memory tools nor the persona reach it in a local-first setup. Covering Dispatch would need the server hosted remotely, which is out of scope here.
 
 The persona block is small on purpose — identity plus an instruction to use agent-julia for memory. Everything else is fetched on demand. When the wizard does this for you, it backs up each file first, writes inside a marked block, and `agent-julia uninstall` removes it cleanly.
 

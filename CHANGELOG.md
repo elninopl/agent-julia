@@ -7,6 +7,21 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ## [Unreleased]
 
+## [0.1.23] - 2026-06-23
+
+### Changed
+
+- Scope is now Claude Code and Cowork (Claude Desktop). Dispatch is no longer
+  offered as a surface: it runs on mobile, can't reach the local stdio MCP
+  server, and doesn't read Cowork's Global instructions — so a local-first setup
+  can't deliver memory or persona there. Covering it would need a remotely hosted
+  server. The wizard, README, and package description no longer claim Dispatch.
+
+### Compatibility
+
+- `dispatch` is still accepted in an existing config's `surfaces` (treated as
+  Cowork), so older installs keep working without a migration.
+
 ## [0.1.22] - 2026-06-22
 
 ### Changed

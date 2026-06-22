@@ -263,9 +263,7 @@ export async function runWizard(): Promise<void> {
     console.log("");
     const surfaces: Surface[] = [];
     if (await p.confirm("Claude Code (the terminal CLI)?", true)) surfaces.push("code");
-    if (await p.confirm("Claude Desktop — also powers Cowork and Dispatch on mobile?", true)) {
-      surfaces.push("cowork", "dispatch");
-    }
+    if (await p.confirm("Claude Desktop (Cowork)?", true)) surfaces.push("cowork");
 
     // 9 — Weekly review
     step(9, STEPS, "Weekly review", "a human-judgment pass — contradictions, duplicates, what to promote");
@@ -399,7 +397,7 @@ export async function runWizard(): Promise<void> {
       next.push(`Write your voice in ${c.bold("persona.md")}, then run ${c.bold("agent-julia sync")} to apply it.`);
     }
     if (applyAuto && wantDesktop) {
-      next.push("Finish the Cowork paste shown above (it's on your clipboard) so Cowork and Dispatch pick up the persona.");
+      next.push("Finish the Cowork paste shown above (it's on your clipboard) so Cowork picks up the persona.");
     }
     next.push("Restart your Claude apps so they pick up the new MCP server.");
     next.push(`Say hi — your agent is now ${c.bold(config.name)}, with memory that follows you.`);
@@ -423,6 +421,6 @@ export async function runWizard(): Promise<void> {
 function surfacesLabel(surfaces: Surface[]): string {
   const parts: string[] = [];
   if (surfaces.includes("code")) parts.push("Claude Code");
-  if (surfaces.includes("cowork") || surfaces.includes("dispatch")) parts.push("Claude Desktop (Cowork + Dispatch)");
+  if (surfaces.includes("cowork") || surfaces.includes("dispatch")) parts.push("Claude Desktop (Cowork)");
   return parts.join(" · ") || "(none)";
 }

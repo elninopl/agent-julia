@@ -19,6 +19,9 @@ export type StylePreset = (typeof STYLE_PRESETS)[number];
 export const SEARCH_MODES = ["fts", "semantic", "hybrid"] as const;
 export type SearchMode = (typeof SEARCH_MODES)[number];
 
+// "dispatch" is retained only so older configs still parse; it's no longer an
+// offered surface. Dispatch runs on mobile and can't reach the local stdio MCP
+// server, so agent-julia supports Claude Code and Cowork (Claude Desktop).
 export const SURFACES = ["code", "cowork", "dispatch"] as const;
 export type Surface = (typeof SURFACES)[number];
 
@@ -74,7 +77,7 @@ export const ConfigSchema = z.object({
   // Max tokens for the persona core injected into context.
   contextBudget: z.number().int().positive().default(1200),
 
-  surfaces: z.array(z.enum(SURFACES)).default(["code", "cowork", "dispatch"]),
+  surfaces: z.array(z.enum(SURFACES)).default(["code", "cowork"]),
   weeklyMaintenance: z.enum(WEEKLY_MAINTENANCE).default("cowork-task"),
 
   // Categories the agent must never persist. Seeds from sensible privacy defaults.

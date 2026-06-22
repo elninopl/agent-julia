@@ -14,7 +14,7 @@ function serverEntry(): { command: string; args: string[] } {
   return { command: "npx", args: ["-y", "agent-julia@latest", "serve"] };
 }
 
-// Claude Desktop config — one file that covers BOTH Cowork and Dispatch.
+// Claude Desktop config — the file that registers the MCP server for Cowork.
 function desktopConfigPath(): string | null {
   const home = homedir();
   switch (platform()) {
@@ -126,11 +126,11 @@ export async function install(config: Config): Promise<InstallStep[]> {
         wrote
           ? {
               surface: "cowork",
-              action: "register MCP (covers Cowork + Dispatch)",
+              action: "register MCP (Cowork)",
               status: "done",
               detail: p,
             }
-          : manualMcpStep("cowork", "register MCP (covers Cowork + Dispatch)", p),
+          : manualMcpStep("cowork", "register MCP (Cowork)", p),
       );
     } else {
       steps.push({ surface: "cowork", action: "register MCP", status: "skipped", detail: "unsupported platform" });
@@ -157,7 +157,7 @@ export async function install(config: Config): Promise<InstallStep[]> {
     const copied = await copyToClipboard(await readFile(mirror, "utf8"));
     const detail = copied
       ? [
-          "Copied to your clipboard — paste it once (covers Dispatch via your account):",
+          "Copied to your clipboard — paste it once:",
           "  1. Claude Desktop → Settings → Cowork → Global instructions",
           "  2. paste (⌘V / Ctrl-V) and save",
           "  3. restart Claude Desktop",
@@ -170,7 +170,7 @@ export async function install(config: Config): Promise<InstallStep[]> {
         ];
     steps.push({
       surface: "cowork",
-      action: "paste the persona core into Cowork (covers Dispatch too)",
+      action: "paste the persona core into Cowork",
       status: "manual",
       detail: detail.join("\n"),
     });
@@ -205,7 +205,7 @@ export async function buildInstructions(config: Config): Promise<string> {
   if (wantDesktop) {
     const desktop = desktopConfigPath();
     out.push(
-      "Claude Desktop (covers Cowork + Dispatch)",
+      "Claude Desktop (Cowork)",
       `  1. In ${desktop ?? "<Claude Desktop config>"}, merge this into the top-level object:`,
       mcpSnippet().replace(/^/gm, "     "),
       "  2. Paste this block into Settings → Cowork → Global instructions:",
