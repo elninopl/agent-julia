@@ -399,7 +399,7 @@ export async function runWizard(): Promise<void> {
       next.push(`Write your voice in ${c.bold("persona.md")}, then run ${c.bold("agent-julia sync")} to apply it.`);
     }
     if (applyAuto && wantDesktop) {
-      next.push("Paste the Cowork persona core (the mirror file above) into Settings → Cowork → Global instructions.");
+      next.push("Finish the Cowork paste shown above (it's on your clipboard) so Cowork and Dispatch pick up the persona.");
     }
     next.push("Restart your Claude apps so they pick up the new MCP server.");
     next.push(`Say hi — your agent is now ${c.bold(config.name)}, with memory that follows you.`);

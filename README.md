@@ -91,7 +91,7 @@ What it adds:
 
 Then append the persona block (printed by the command) to `~/.claude/CLAUDE.md`.
 
-**Claude Desktop (covers Cowork and Dispatch)** — add the same `mcpServers` entry to the Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS), and paste the persona block into **Settings → Cowork → Global instructions**. Dispatch shares the desktop account, so it's covered too.
+**Claude Desktop (covers Cowork and Dispatch)** — add the same `mcpServers` entry to the Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS), and paste the persona block into **Settings → Cowork → Global instructions**. Cowork keeps that field inside the app, so it can't be written for you — but `agent-julia init` and `agent-julia sync` copy the block to your clipboard, so it's a single paste. Dispatch shares the desktop account, so pasting once covers it too. (Dispatch runs on mobile and can't reach the local MCP server, so it gets the persona, not live memory search.)
 
 The persona block is small on purpose — identity plus an instruction to use agent-julia for memory. Everything else is fetched on demand. When the wizard does this for you, it backs up each file first, writes inside a marked block, and `agent-julia uninstall` removes it cleanly.
 

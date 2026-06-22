@@ -7,6 +7,17 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ## [Unreleased]
 
+## [0.1.22] - 2026-06-22
+
+### Changed
+
+- `init` and `sync` copy the Cowork persona block to the clipboard and print a
+  1-2-3 paste instruction, instead of just pointing at the mirror file. Cowork's
+  Global instructions can't be written programmatically, so this makes the one
+  manual step a single paste — and harder to forget (a forgotten paste is why a
+  surface like Dispatch can end up without the persona). Best-effort: falls back
+  to the file path when no clipboard tool is available.
+
 ## [0.1.21] - 2026-06-22
 
 ### Changed

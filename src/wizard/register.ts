@@ -4,6 +4,7 @@ import { homedir, platform } from "node:os";
 import { dirname, join } from "node:path";
 import { Config, Surface } from "../config/schema.js";
 import { log, warn } from "../util/log.js";
+import { copyToClipboard } from "../util/clipboard.js";
 import { buildInjectedCore, STARTUP_BLOCK_ID } from "../persona/startup.js";
 import { storePaths } from "../store/paths.js";
 import { removeManagedBlock, upsertManagedBlock } from "../managed/block.js";
@@ -150,17 +151,28 @@ export async function install(config: Config): Promise<InstallStep[]> {
   if (config.surfaces.includes("cowork") || config.surfaces.includes("dispatch")) {
     const mirror = coworkMirrorPath();
     await upsertManagedBlock(mirror, STARTUP_BLOCK_ID, core);
+    // Cowork keeps Global instructions inside the app — we can't write that field,
+    // so the user pastes it. Put it on the clipboard to make that one action, not
+    // a file hunt. Best-effort: if there's no clipboard, fall back to the path.
+    const copied = await copyToClipboard(await readFile(mirror, "utf8"));
+    const detail = copied
+      ? [
+          "Copied to your clipboard — paste it once (covers Dispatch via your account):",
+          "  1. Claude Desktop → Settings → Cowork → Global instructions",
+          "  2. paste (⌘V / Ctrl-V) and save",
+          "  3. restart Claude Desktop",
+        ]
+      : [
+          "Cowork keeps Global instructions inside the app, so paste it once:",
+          `  1. open this file:  ${mirror}`,
+          "  2. copy everything in it",
+          "  3. in Claude Desktop: Settings → Cowork → Global instructions → paste",
+        ];
     steps.push({
       surface: "cowork",
       action: "paste the persona core into Cowork (covers Dispatch too)",
       status: "manual",
-      // Multi-line: rendered line by line so the file path stays on its own line.
-      detail: [
-        "Cowork keeps Global instructions inside the app, so paste it once:",
-        `  1. open this file:  ${mirror}`,
-        "  2. copy everything in it",
-        "  3. in Claude Desktop: Settings → Cowork → Global instructions → paste",
-      ].join("\n"),
+      detail: detail.join("\n"),
     });
   }
 
