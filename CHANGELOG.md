@@ -7,6 +7,17 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ## [Unreleased]
 
+## [0.1.20] - 2026-06-22
+
+### Changed
+
+- README: the problem section now leads with the core idea — your AI has no
+  persistent brain, each surface keeps amnesiac scraps — and carries the brain
+  metaphor through to the fix, with before/after examples. Uses "Agent Julia" as
+  the display name; "agent-julia" stays the package and command.
+- CI/release run on `actions/checkout@v5` and `actions/setup-node@v5` (Node 24
+  runtime; the v4 actions used the deprecated Node 20).
+
 ## [0.1.19] - 2026-06-22
 
 ### Fixed
