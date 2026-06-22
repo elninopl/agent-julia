@@ -7,6 +7,12 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ## [Unreleased]
 
+## [0.1.21] - 2026-06-22
+
+### Changed
+
+- README: add a banner image at the top.
+
 ## [0.1.20] - 2026-06-22
 
 ### Changed

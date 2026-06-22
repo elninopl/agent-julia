@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="https://raw.githubusercontent.com/elninopl/agent-julia/main/scripts/AgentJulia.png" alt="Agent Julia — one brain for Claude Code and Claude Cowork" width="540">
+</p>
+
 # Agent Julia
 
 **One brain for your AI.** A memory and persona that stay the same across Claude Code, Claude Desktop (Cowork), and Dispatch — owned by you, stored as plain markdown in a git repo, and kept small in the model's context. Installed and run as the `agent-julia` command.
