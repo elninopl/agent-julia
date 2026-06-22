@@ -5,6 +5,7 @@ import { extractLinks, todayISO } from "../src/store/markdown.js";
 import { presetSample } from "../src/persona/presets.js";
 import { ConfigSchema, CURRENT_SCHEMA_VERSION } from "../src/config/schema.js";
 import { detectLanguage } from "../src/store/lang.js";
+import { recommendLocalTier } from "../src/index/embeddings.js";
 
 describe("tokens", () => {
   it("estimates and clamps to budget on a paragraph boundary", () => {
@@ -44,6 +45,15 @@ describe("language detection", () => {
     expect(detectLanguage("This is a reasonably long english sentence about software.")).toBe("en");
     expect(detectLanguage("To jest dłuższe zdanie po polsku o oprogramowaniu i pamięci.")).toBe("pl");
     expect(detectLanguage("hi")).toBeUndefined();
+  });
+});
+
+describe("local model tier recommendation", () => {
+  it("scales with total RAM, staying conservative", () => {
+    expect(recommendLocalTier(4)).toBe("small");
+    expect(recommendLocalTier(8)).toBe("small");
+    expect(recommendLocalTier(16)).toBe("base");
+    expect(recommendLocalTier(64)).toBe("base");
   });
 });
 

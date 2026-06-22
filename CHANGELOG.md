@@ -7,6 +7,13 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-06-22
+
+### Changed
+
+- The local-model picker now shows each tier's download size and RAM use
+  separately, reads the machine's total RAM, and suggests a tier from it.
+
 ## [0.1.5] - 2026-06-21
 
 ### Changed

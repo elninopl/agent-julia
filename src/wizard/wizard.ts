@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { homedir, totalmem } from "node:os";
 import {
   Config,
   ConfigSchema,
@@ -22,6 +22,7 @@ import {
   LOCAL_EMBEDDINGS_PACKAGE,
   LOCAL_MODEL_TIERS,
   LocalModelTier,
+  recommendLocalTier,
 } from "../index/embeddings.js";
 import { composeCore } from "../persona/compose.js";
 import { runMaintenance } from "../maintenance/maintenance.js";
@@ -151,22 +152,30 @@ export async function runWizard(): Promise<void> {
         },
       ]);
       if (embeddingProvider === "local") {
+        const ramGB = Math.round(totalmem() / 2 ** 30);
+        const rec = recommendLocalTier(ramGB);
+        info(
+          `Each model is a one-time download (cached on disk) and loads into RAM when search runs — ` +
+            `RAM use is roughly the download size plus a little. This machine has ~${ramGB} GB RAM, ` +
+            `so even the largest fits comfortably; the real trade-off is download size and speed vs quality.`,
+        );
         const tier = await p.choice<LocalModelTier>([
           {
             value: "small",
-            label: `Small — fast & light (${LOCAL_MODEL_TIERS.small.size})`,
-            recommended: true,
-            desc: "multilingual-e5-small, 384 dims. Great default — quick, low memory, ~118 languages.",
+            label: `Small — fast & light (${LOCAL_MODEL_TIERS.small.disk} disk, ${LOCAL_MODEL_TIERS.small.ram} RAM)`,
+            recommended: rec === "small",
+            desc: "multilingual-e5-small, 384 dims. Quick on any machine, ~118 languages. The safe default.",
           },
           {
             value: "base",
-            label: `Base — better quality (${LOCAL_MODEL_TIERS.base.size})`,
-            desc: "multilingual-e5-base, 768 dims. Noticeably stronger recall for a bigger download.",
+            label: `Base — better quality (${LOCAL_MODEL_TIERS.base.disk} disk, ${LOCAL_MODEL_TIERS.base.ram} RAM)`,
+            recommended: rec === "base",
+            desc: "multilingual-e5-base, 768 dims. Noticeably stronger recall; bigger download, a bit slower.",
           },
           {
             value: "large",
-            label: `Best — highest quality (${LOCAL_MODEL_TIERS.large.size})`,
-            desc: "multilingual-e5-large, 1024 dims. Top quality; needs the most disk, RAM, and time.",
+            label: `Best — highest quality (${LOCAL_MODEL_TIERS.large.disk} disk, ${LOCAL_MODEL_TIERS.large.ram} RAM)`,
+            desc: "multilingual-e5-large, 1024 dims. Top quality; largest download and slowest per query.",
           },
         ]);
         embeddingModel = LOCAL_MODEL_TIERS[tier].model;

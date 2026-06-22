@@ -99,13 +99,23 @@ export async function checkLocalEmbeddingsAvailable(): Promise<boolean> {
 export const LOCAL_EMBEDDINGS_PACKAGE = LOCAL_PKG;
 
 // Local model quality tiers (multilingual-e5 family). Bigger = better recall,
-// more disk/RAM, slower. Sizes are approximate quantized ONNX downloads.
+// more disk and RAM, slower per query. `disk` is the one-time quantized ONNX
+// download (cached); `ram` is the rough working-set when the model is loaded.
 export const LOCAL_MODEL_TIERS = {
-  small: { model: "Xenova/multilingual-e5-small", dims: 384, size: "~120 MB" },
-  base: { model: "Xenova/multilingual-e5-base", dims: 768, size: "~280 MB" },
-  large: { model: "Xenova/multilingual-e5-large", dims: 1024, size: "~560 MB" },
+  small: { model: "Xenova/multilingual-e5-small", dims: 384, disk: "~120 MB", ram: "~0.3 GB" },
+  base: { model: "Xenova/multilingual-e5-base", dims: 768, disk: "~280 MB", ram: "~0.6 GB" },
+  large: { model: "Xenova/multilingual-e5-large", dims: 1024, disk: "~560 MB", ram: "~1.3 GB" },
 } as const;
 export type LocalModelTier = keyof typeof LOCAL_MODEL_TIERS;
+
+// Suggest a tier from total system RAM. RAM rarely binds (even large needs only
+// ~1.3 GB), so this stays conservative: small on constrained machines, base when
+// there's clear headroom. Large is left as a deliberate opt-in.
+export function recommendLocalTier(totalRamGB: number): LocalModelTier {
+  if (totalRamGB < 8) return "small";
+  if (totalRamGB >= 16) return "base";
+  return "small";
+}
 
 // Minimal OpenAI-compatible embeddings client (works with OpenAI, Ollama's
 // /v1/embeddings, LM Studio, etc.). API key is read from env, never persisted.
