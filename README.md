@@ -1,6 +1,6 @@
-# agent-julia
+# Agent Julia
 
-**One brain for your AI.** A memory and persona that stay the same across Claude Code, Claude Desktop (Cowork), and Dispatch — owned by you, stored as plain markdown in a git repo, and kept small in the model's context.
+**One brain for your AI.** A memory and persona that stay the same across Claude Code, Claude Desktop (Cowork), and Dispatch — owned by you, stored as plain markdown in a git repo, and kept small in the model's context. Installed and run as the `agent-julia` command.
 
 [![npm](https://img.shields.io/npm/v/agent-julia.svg)](https://www.npmjs.com/package/agent-julia)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
@@ -17,7 +17,24 @@ Every Claude surface remembers you differently. Claude Code reads `~/.claude/CLA
 
 At the same time, anything you put in those startup files is a tax. It loads before every turn, in every session, and long context measurably degrades output — the model gets worse as the window fills, well before it's full.
 
-agent-julia fixes both. Your knowledge lives in one markdown repository you own. Only a small, budgeted slice of it — the persona and a "use your memory" instruction — is injected into each surface's startup context. Everything else is pulled on demand through search, and the rest never rides along.
+### What that looks like day to day
+
+**A preference you keep re-teaching.** You tell Claude Code to skip the "Great question!" preamble and reply in Polish.
+
+- *Before* — tomorrow, in Cowork on your laptop, the preamble is back and it answers in English. You correct it again. And again.
+- *After* — you record it once with `correct_voice`; Code, Cowork, and Dispatch all read the same correction from the next turn on.
+
+**A decision that doesn't travel.** On the train, in a long Dispatch thread, you settle the auth design: magic links, no passwords.
+
+- *Before* — a week later Claude Code scaffolds a password form, because it never saw that thread.
+- *After* — you `ingest` the decision as a page; any surface surfaces it by search the moment it's relevant.
+
+**The `CLAUDE.md` tax.** Your `~/.claude/CLAUDE.md` has grown to 500 lines — every project, every preference, every person.
+
+- *Before* — all of it loads on every turn of every session, and the answer degrades as the window fills with things this task doesn't need.
+- *After* — about 1,200 tokens of persona ride each turn; the 500 lines live in your memory, and only the page you actually need is pulled in when you ask.
+
+Agent Julia fixes both the drift and the tax. Your knowledge lives in one markdown repository you own. Only a small, budgeted slice of it — the persona and a "use your memory" instruction — is injected into each surface's startup context. Everything else is pulled on demand through search, and the rest never rides along.
 
 ## How it works
 
@@ -76,7 +93,7 @@ The persona block is small on purpose — identity plus an instruction to use ag
 
 Two layers work together, and both run locally.
 
-**Keyword (always on).** SQLite FTS5 with Porter stemming, so `debug` matches `debugging`, and diacritics folding, so `cafe` matches `café` and `krakow` matches `Kraków`. For languages without spaces between words — Chinese, Japanese, Korean, Thai — agent-julia switches to a trigram tokenizer so substring search still works. The tokenizer is chosen from your configured language.
+**Keyword (always on).** SQLite FTS5 with Porter stemming, so `debug` matches `debugging`, and diacritics folding, so `cafe` matches `café` and `krakow` matches `Kraków`. For languages without spaces between words — Chinese, Japanese, Korean, Thai — Agent Julia switches to a trigram tokenizer so substring search still works. The tokenizer is chosen from your configured language.
 
 **Meaning (optional).** Turn on semantic search to find a note even when you phrase it differently, and across languages — a question in Polish can surface an English note. You choose how it runs:
 
@@ -112,7 +129,7 @@ your-memory/
 
 Pages carry light frontmatter — title, status, last-updated date, and an auto-detected language — and link to each other with `[[wiki-links]]`. Writing always goes through the `ingest` tool, which updates the page, refreshes the catalog, appends the journal, reindexes, and commits to git in one step.
 
-Point the wizard at an existing markdown knowledge base and agent-julia adopts it: your pages are indexed and a hand-written `index.md` is left alone — agent-julia only manages a clearly marked block inside it.
+Point the wizard at an existing markdown knowledge base and Agent Julia adopts it: your pages are indexed and a hand-written `index.md` is left alone — Agent Julia only manages a clearly marked block inside it.
 
 Optionally back the store with a git remote — a private GitHub repo, say — set in the wizard or later with `agent-julia remote <url>`. By default it syncs on maintenance (and server startup), best-effort, so an offline moment or a missing credential never blocks a write; it just pushes on the next run. Turn on `gitAutoPush` to push after every write instead, trading a network round-trip per write for immediate off-machine backup. `agent-julia push` syncs on demand.
 
@@ -163,7 +180,7 @@ Settings live in `~/.config/agent-julia/config.json` and carry a `schemaVersion`
 
 ## Maintenance
 
-Housekeeping runs on its own. On every write, and again when the server starts, agent-julia reindexes changed pages, picks up files you edited by hand, flags stale-dated notes and broken links, refreshes the catalog, recompacts the persona core, and commits. Nothing is deleted without you — stale items are flagged, not removed.
+Housekeeping runs on its own. On every write, and again when the server starts, Agent Julia reindexes changed pages, picks up files you edited by hand, flags stale-dated notes and broken links, refreshes the catalog, recompacts the persona core, and commits. Nothing is deleted without you — stale items are flagged, not removed.
 
 A heavier weekly pass — for contradictions, duplicates, and deciding what to promote — is owner's-judgment work. Run `agent-julia maintenance` on whatever cadence suits you, or schedule it as a Claude Desktop task.
 
