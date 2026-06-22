@@ -15,9 +15,9 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
@@ -41,7 +41,7 @@ jobs:
       - run: npm run build
       - run: npm test
 
-      # Trusted Publishing (OIDC) needs npm >= 11.5.1; Node 22 ships an older npm.
+      # Trusted Publishing (OIDC) needs npm >= 11.5.1; the bundled npm may be older.
       - name: Update npm for OIDC trusted publishing
         run: npm install -g npm@latest
 

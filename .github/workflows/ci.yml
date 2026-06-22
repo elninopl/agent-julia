@@ -17,15 +17,14 @@ jobs:
       matrix:
         node: [24]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: ${{ matrix.node }}
           cache: npm
 
-      # better-sqlite3 is a native module; npm ci compiles it (build tools are
-      # preinstalled on ubuntu-latest).
+      # No native modules to compile — the index uses the built-in node:sqlite.
       - run: npm ci
 
       - run: npm run typecheck
