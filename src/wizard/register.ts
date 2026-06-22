@@ -127,9 +127,9 @@ export async function install(config: Config): Promise<InstallStep[]> {
     await upsertManagedBlock(mirror, STARTUP_BLOCK_ID, core);
     steps.push({
       surface: "cowork",
-      action: "inject persona core",
+      action: "paste the persona core into Cowork",
       status: "manual",
-      detail: `Mirror written to ${mirror}. Paste its content into Settings -> Cowork -> Global instructions (app-stored, also covers Dispatch).`,
+      detail: `Open ${mirror} and paste its contents into Settings → Cowork → Global instructions (covers Dispatch too). Cowork stores that field in-app, so this one step is manual.`,
     });
   }
 

@@ -336,8 +336,12 @@ export async function runWizard(): Promise<void> {
     }
 
     // A custom voice needs a persona.md to live in — seed a template to edit.
-    if (config.stylePreset === "custom" && (await seedPersonaTemplate(paths))) {
-      ok(`Seeded a voice template → ${c.cyan(paths.personaFile)} (edit it, then \`agent-julia sync\`)`);
+    if (config.stylePreset === "custom") {
+      await seedPersonaTemplate(paths);
+      note(
+        `Your custom voice lives in ${paths.personaFile} — it's a starter template right now. ` +
+          "Write your voice there, then run `agent-julia sync` to apply it on every surface.",
+      );
     }
 
     const indexer = Indexer.open(paths, config);
@@ -350,9 +354,13 @@ export async function runWizard(): Promise<void> {
     if (applyAuto) {
       const steps = await install(config);
       for (const s of steps) {
-        const mark = s.status === "done" ? c.green("✓") : s.status === "manual" ? c.yellow("●") : c.gray("–");
-        console.log(`  ${mark} ${c.white(s.action)} ${c.gray("(" + s.surface + ")")}`);
-        if (s.status === "manual") console.log("     " + c.dim(s.detail));
+        if (s.status === "manual") {
+          console.log(`  ${c.yellow("▸ action needed")} ${c.gray("(" + s.surface + ")")} — ${c.white(s.action)}`);
+          console.log("     " + c.dim(s.detail));
+        } else {
+          const mark = s.status === "done" ? c.green("✓") : c.gray("–");
+          console.log(`  ${mark} ${c.white(s.action)} ${c.gray("(" + s.surface + ")")}`);
+        }
       }
     } else {
       console.log("");
@@ -361,22 +369,28 @@ export async function runWizard(): Promise<void> {
       console.log((await buildInstructions(config)).replace(/^/gm, "  "));
     }
 
-    // Closing: clear, encouraging next steps.
+    // Closing: clear, encouraging next steps — only the ones that apply.
+    const wantDesktop = config.surfaces.includes("cowork") || config.surfaces.includes("dispatch");
+    const next: string[] = [];
+    if (config.stylePreset === "custom") {
+      next.push(`Write your voice in ${c.bold("persona.md")}, then run ${c.bold("agent-julia sync")} to apply it.`);
+    }
+    if (applyAuto && wantDesktop) {
+      next.push("Paste the Cowork persona core (the mirror file above) into Settings → Cowork → Global instructions.");
+    }
+    next.push("Restart your Claude apps so they pick up the new MCP server.");
+    next.push(`Say hi — your agent is now ${c.bold(config.name)}, with memory that follows you.`);
+    next.push(
+      config.weeklyMaintenance === "cowork-task"
+        ? `Set up a weekly Cowork task running ${c.bold("agent-julia maintenance")}.`
+        : `Run ${c.bold("agent-julia maintenance")} weekly (cron/Todoist) for housekeeping.`,
+    );
+
     console.log("");
     console.log("  " + c.greenBold("✓ All set.") + c.dim(`  Persona core is ~${core.tokens}/${core.budget} tokens.`));
     console.log("");
     console.log("  " + c.bold("Next:"));
-    console.log("  " + c.cyan("1.") + " Restart your Claude apps so they pick up the new MCP server.");
-    console.log("  " + c.cyan("2.") + ` Say hi — your agent is now ${c.bold(config.name)}, with memory that follows you.`);
-    if (config.weeklyMaintenance === "cowork-task") {
-      console.log(
-        "  " + c.cyan("3.") + " Set up a weekly Cowork task running " + c.bold("agent-julia maintenance") + ".",
-      );
-    } else {
-      console.log(
-        "  " + c.cyan("3.") + " Run " + c.bold("agent-julia maintenance") + " weekly (cron/Todoist) for housekeeping.",
-      );
-    }
+    next.forEach((line, i) => console.log("  " + c.cyan(`${i + 1}.`) + " " + line));
     console.log("");
   } finally {
     p.close();

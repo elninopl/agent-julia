@@ -7,7 +7,15 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ## [Unreleased]
 
-## [0.1.12] - 2026-06-22
+## [0.1.13] - 2026-06-22
+
+### Changed
+
+- Wizard makes the custom-voice flow explicit: it points you to `persona.md` and
+  tells you to run `agent-julia sync` after writing your voice.
+- The Cowork step now reads as an action ("action needed — paste the persona core
+  into Cowork") instead of an ambiguous status, and the closing "Next" list only
+  shows the steps that actually apply (custom voice, Cowork paste, restart, …).
 
 ### Added
 
