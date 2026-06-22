@@ -32,6 +32,8 @@ agent-julia fixes both. Your knowledge lives in one markdown repository you own.
 npx agent-julia init
 ```
 
+There's no separate install step: `npx` fetches agent-julia into its own cache and runs the setup in one go (the first run also builds the native SQLite binding, so it takes a little longer). Nothing is added to a project or installed globally — run `npm i -g agent-julia` only if you'd rather keep it installed permanently. The MCP server is launched the same way (`npx -y agent-julia@latest serve`), so it stays current automatically.
+
 The setup wizard walks you through your agent's name, pronouns, language, and voice; picks where your memory lives and whether to version it with git; configures search; and registers the server with the Claude apps you use. It can write a small persona block into each app's startup context — or print the exact changes for you to make by hand. When it does it for you, each file is backed up first, written inside a marked block, and fully reversible.
 
 When you're done, restart your Claude apps so they pick up the new MCP server.
@@ -78,7 +80,7 @@ Two layers work together, and both run locally.
 
 **Meaning (optional).** Turn on semantic search to find a note even when you phrase it differently, and across languages — a question in Polish can surface an English note. You choose how it runs:
 
-- **Local model** — a multilingual model (the `multilingual-e5` family, ~118 languages) runs in-process. No server, no API key, fully offline after a one-time model download. Pick a size in the wizard: small (~120 MB download, ~0.3 GB RAM), base (~280 MB, ~0.6 GB), or large (~560 MB, ~1.3 GB). The size is a one-time download cached on disk; the model also loads into RAM while search runs. The wizard reads your machine's RAM and suggests a tier, though even the largest fits comfortably on a typical machine — the real trade-off is download size and speed against quality. Needs one extra package, `@huggingface/transformers`, which stays optional so the base install is tiny.
+- **Local model** — a multilingual model (the `multilingual-e5` family, ~118 languages) runs in-process. No server, no API key, fully offline after a one-time model download. Pick a size in the wizard: small (~120 MB download, ~0.3 GB RAM), base (~280 MB, ~0.6 GB), or large (~560 MB, ~1.3 GB). The size is a one-time download cached on disk; the model also loads into RAM while search runs. The wizard reads your machine's RAM and CPU cores and suggests a tier. RAM is rarely the limit — even the largest model needs only ~1.3 GB — so the suggestion leans on cores, since a bigger model's main cost is slower CPU inference per query. The real trade-off is download size and speed against quality. Needs one extra package, `@huggingface/transformers`, which stays optional so the base install is tiny.
 - **Hosted API** — any OpenAI-compatible endpoint (OpenAI, or a local server like Ollama or LM Studio). Your key is read from an environment variable and never written to disk.
 - **None** — stay keyword-only. The default, and completely dependency-free.
 

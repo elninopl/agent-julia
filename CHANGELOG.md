@@ -7,6 +7,14 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ## [Unreleased]
 
+## [0.1.8] - 2026-06-22
+
+### Changed
+
+- README: clarify that `npx agent-julia init` fetches and runs in one step (no
+  separate install), and note that the model suggestion uses CPU cores as well as
+  RAM.
+
 ## [0.1.7] - 2026-06-22
 
 ### Added
