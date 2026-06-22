@@ -7,7 +7,16 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ## [Unreleased]
 
-## [0.1.15] - 2026-06-22
+## [0.1.16] - 2026-06-22
+
+### Changed
+
+- Switched the search index from the native `better-sqlite3` module to Node's
+  built-in `node:sqlite`. No native module to compile, prebuild, or rebuild — so
+  `npx agent-julia@latest serve` works regardless of Node version or a stale npx
+  cache (the previous setup could crash with a NODE_MODULE_VERSION ABI mismatch
+  after a Node upgrade). **Requires Node.js 24+** (raised from 20).
+- CI and release now run on Node 24.
 
 ### Changed
 

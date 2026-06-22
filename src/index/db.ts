@@ -1,26 +1,36 @@
 import { mkdirSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname } from "node:path";
-import type BetterSqlite3 from "better-sqlite3";
 import { StorePaths } from "../store/paths.js";
 
-export type DB = BetterSqlite3.Database;
+// Minimal structural types over node:sqlite, so the code doesn't depend on a
+// particular @types/node version exposing the (still-experimental) sqlite types.
+interface Stmt {
+  run(...params: unknown[]): unknown;
+  get(...params: unknown[]): Record<string, unknown> | undefined;
+  all(...params: unknown[]): Array<Record<string, unknown>>;
+}
+export interface DB {
+  exec(sql: string): void;
+  prepare(sql: string): Stmt;
+  close(): void;
+}
 
-// better-sqlite3 is a native module loaded on demand, so a missing or unbuilt
-// binary surfaces as a clear, actionable message instead of a raw stack trace.
+// SQLite is Node's built-in node:sqlite (no native module to compile or ship).
+// Loaded lazily so a Node older than 24 gets a clear message instead of a raw
+// "Cannot find module 'node:sqlite'".
 const require = createRequire(import.meta.url);
-let DatabaseCtor: typeof BetterSqlite3 | null = null;
-function loadDatabaseCtor(): typeof BetterSqlite3 {
-  if (DatabaseCtor) return DatabaseCtor;
+let DatabaseSyncCtor: (new (path: string) => DB) | null = null;
+function loadDatabaseSync(): new (path: string) => DB {
+  if (DatabaseSyncCtor) return DatabaseSyncCtor;
   try {
-    DatabaseCtor = require("better-sqlite3") as typeof BetterSqlite3;
-    return DatabaseCtor;
+    DatabaseSyncCtor = (require("node:sqlite") as { DatabaseSync: new (path: string) => DB })
+      .DatabaseSync;
+    return DatabaseSyncCtor;
   } catch (err) {
     throw new Error(
-      "agent-julia could not load its search engine (the native better-sqlite3 module). " +
-        "This usually means no prebuilt binary exists for your Node version or platform. " +
-        "Try `npm rebuild better-sqlite3`, or reinstall on a supported Node LTS (20 or 22).\n" +
-        `Original error: ${(err as Error).message}`,
+      "agent-julia needs Node.js 24+ (it uses the built-in node:sqlite). " +
+        `Current: ${process.version}. Original error: ${(err as Error).message}`,
     );
   }
 }
@@ -47,9 +57,9 @@ export function ftsTokenizerFor(language: string): string {
 // any schema/tokenizer/model mismatch.
 export function openDb(paths: StorePaths, tokenizer: string): DB {
   mkdirSync(dirname(paths.dbPath), { recursive: true });
-  const Database = loadDatabaseCtor();
-  const db = new Database(paths.dbPath);
-  db.pragma("journal_mode = WAL");
+  const DatabaseSync = loadDatabaseSync();
+  const db = new DatabaseSync(paths.dbPath);
+  db.exec("PRAGMA journal_mode = WAL;");
 
   db.exec("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);");
   // The signature folds in the schema version and the active tokenizer; if either

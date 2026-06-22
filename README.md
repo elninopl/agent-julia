@@ -22,7 +22,7 @@ agent-julia fixes both. Your knowledge lives in one markdown repository you own.
 ## How it works
 
 - **Canonical store** — plain markdown in a git repo. Human-readable, portable, versioned, private. This is the source of truth, not a database.
-- **Derived index** — SQLite (FTS5 full-text + optional vector embeddings) built from the markdown. It's disposable: delete it and it rebuilds itself from your files.
+- **Derived index** — SQLite (FTS5 full-text + optional vector embeddings) built from the markdown, via Node's built-in `node:sqlite` (no native module to compile). It's disposable: delete it and it rebuilds itself from your files.
 - **Budgeted core** — a compact persona block is injected into Claude Code's `CLAUDE.md` and Claude Desktop's global instructions. It stays within a token budget you set, so it never crowds out the conversation.
 - **One MCP server** — every surface talks to the same `agent-julia` server over stdio, so they share one memory and one persona.
 
@@ -32,7 +32,7 @@ agent-julia fixes both. Your knowledge lives in one markdown repository you own.
 npx agent-julia init
 ```
 
-There's no separate install step: `npx` fetches agent-julia into its own cache and runs the setup in one go (the first run also builds the native SQLite binding, so it takes a little longer). Nothing is added to a project or installed globally — run `npm i -g agent-julia` only if you'd rather keep it installed permanently. The MCP server is launched the same way (`npx -y agent-julia@latest serve`), so it stays current automatically.
+Requires **Node.js 24+** (it uses the built-in `node:sqlite` — no native module to compile or rebuild). There's no separate install step: `npx` fetches agent-julia into its own cache and runs the setup in one go. Nothing is added to a project or installed globally — run `npm i -g agent-julia` only if you'd rather keep it installed permanently. The MCP server is launched the same way (`npx -y agent-julia@latest serve`), so it stays current automatically.
 
 The setup wizard walks you through your agent's name, pronouns, language, and voice; picks where your memory lives and whether to version it with git; configures search; and registers the server with the Claude apps you use. It can write a small persona block into each app's startup context — or print the exact changes for you to make by hand. When it does it for you, each file is backed up first, written inside a marked block, and fully reversible.
 
@@ -173,7 +173,7 @@ Releases are backward-compatible, or they ship an automatic migration that runs 
 
 ## Releasing (maintainers)
 
-CI runs typecheck, build, and tests on every pull request and push to `main` (Node 20 and 22). Releases are tag-driven:
+CI runs typecheck, build, and tests on every pull request and push to `main` (Node 24). Releases are tag-driven:
 
 ```bash
 # add the new section to CHANGELOG.md, then:
