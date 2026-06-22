@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -5,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { Indexer } from "../src/index/indexer.js";
 import { storePaths } from "../src/store/paths.js";
 import { ingest } from "../src/store/ingest.js";
+import { pushToRemote, setRemoteUrl } from "../src/store/git.js";
 import { migrate } from "../src/migrations/runner.js";
 import { ConfigSchema } from "../src/config/schema.js";
 
@@ -35,5 +37,22 @@ describe("git gating on ingest", () => {
     expect(existsSync(join(dir, ".git"))).toBe(false);
     // the page is still written
     expect(existsSync(join(dir, "pages", "note.md"))).toBe(true);
+  });
+
+  it("pushes commits to a configured remote", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "aj-git-"));
+    const bare = mkdtempSync(join(tmpdir(), "aj-bare-"));
+    execFileSync("git", ["init", "--bare", "-q", bare]);
+    const cfg = ConfigSchema.parse({ memoryDir: dir, git: true, search: "fts" });
+    await migrate(cfg);
+    const paths = storePaths(dir);
+    const indexer = Indexer.open(paths, cfg);
+    close = () => indexer.close();
+    await ingest(paths, indexer, "note", "a durable fact", { git: true });
+
+    await setRemoteUrl(dir, bare);
+    expect(await pushToRemote(dir)).toBe(true);
+    const log = execFileSync("git", ["-C", bare, "log", "--oneline"], { encoding: "utf8" });
+    expect(log.trim().length).toBeGreaterThan(0);
   });
 });

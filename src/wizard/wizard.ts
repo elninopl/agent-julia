@@ -14,7 +14,7 @@ import { migrate } from "../migrations/runner.js";
 import { Indexer } from "../index/indexer.js";
 import { storePaths } from "../store/paths.js";
 import { listPageIds } from "../store/markdown.js";
-import { ensureGitRepo } from "../store/git.js";
+import { ensureGitRepo, setRemoteUrl } from "../store/git.js";
 import { allPresets, presetSample, styleLabel } from "../persona/presets.js";
 import { resolveSampleLang } from "../persona/samples.js";
 import { seedPersonaTemplate } from "../persona/custom.js";
@@ -114,6 +114,12 @@ export async function runWizard(): Promise<void> {
       "Version it with git? Every change is committed, so nothing is lost and you can roll back.",
       true,
     );
+    let gitRemote: string | undefined;
+    if (useGit) {
+      note("Optional remote (e.g. a private GitHub repo) to back up your memory off-machine. Create the empty repo first, paste its URL, or leave blank to skip.");
+      const r = (await p.text({ example: "git@github.com:you/agent-julia-memory.git" })).trim();
+      if (r) gitRemote = r;
+    }
 
     // 6 — Search
     step(6, STEPS, "Search", "how your agent finds things in its memory");
@@ -264,6 +270,7 @@ export async function runWizard(): Promise<void> {
       stylePreset,
       memoryDir,
       git: useGit,
+      gitRemote,
       search,
       embedding: {
         provider: embeddingProvider,
@@ -288,7 +295,7 @@ export async function runWizard(): Promise<void> {
     summary("Here's your setup", [
       ["agent", `${config.name} · ${config.pronouns} · speaks ${config.language}`],
       ["style", styleLabel(config.stylePreset)],
-      ["memory", `${config.memoryDir}${config.git ? " (git)" : " (no git)"}`],
+      ["memory", `${config.memoryDir}${config.git ? " (git)" : " (no git)"}${config.gitRemote ? " → " + config.gitRemote : ""}`],
       ["search", config.search === "fts" ? "keywords only" : `${config.search} · provider: ${config.embedding.provider}`],
       ["budget", `~${config.contextBudget} tokens`],
       ["surfaces", `${surfacesLabel(config.surfaces)} · ${applyAuto ? "auto setup" : "manual setup"}`],
@@ -307,6 +314,10 @@ export async function runWizard(): Promise<void> {
     // Initialize the store via migrations (creates skeleton + records schemaVersion).
     await migrate(config);
     if (config.git) await ensureGitRepo(config.memoryDir);
+    if (config.git && config.gitRemote) {
+      await setRemoteUrl(config.memoryDir, config.gitRemote);
+      ok(`Remote backup set → ${c.cyan(config.gitRemote)} (pushed on maintenance)`);
+    }
 
     // Adopt an existing markdown knowledge base if one is already there.
     const paths = storePaths(config.memoryDir);

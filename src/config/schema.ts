@@ -60,6 +60,10 @@ export const ConfigSchema = z.object({
   // default; turn off to keep the store as plain, unversioned markdown.
   git: z.boolean().default(true),
 
+  // Optional git remote (e.g. a private GitHub repo) to back up / sync the store.
+  // When set, maintenance pushes to it best-effort. Requires git on.
+  gitRemote: z.string().optional(),
+
   search: z.enum(SEARCH_MODES).default("hybrid"),
   embedding: EmbeddingConfigSchema.default({ provider: "none", apiKeyEnv: "AGENT_JULIA_EMBED_API_KEY" }),
 

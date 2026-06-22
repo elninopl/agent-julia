@@ -3,7 +3,7 @@ import { Indexer } from "../index/indexer.js";
 import { StorePaths } from "../store/paths.js";
 import { extractLinks, listPageIds, listPages, readPage } from "../store/markdown.js";
 import { refreshIndexMd } from "../store/catalog.js";
-import { commitAll } from "../store/git.js";
+import { commitAll, pushToRemote } from "../store/git.js";
 import { composeCore } from "../persona/compose.js";
 
 export interface MaintenanceReport {
@@ -18,6 +18,7 @@ export interface MaintenanceReport {
   coreBudget: number;
   coreTruncated: boolean;
   committed: boolean;
+  pushed: boolean;
   // Interactive-only proposals are deferred to v0.2; empty for now.
   proposals: string[];
 }
@@ -61,6 +62,9 @@ export async function runMaintenance(
     ? await commitAll(paths.root, "Maintain memory: reindex and refresh catalog")
     : false;
 
+  // Sync to the remote backup if one is configured (best-effort).
+  const pushed = config.git && config.gitRemote ? await pushToRemote(paths.root) : false;
+
   return {
     mode,
     indexAdded: synced.added,
@@ -73,6 +77,7 @@ export async function runMaintenance(
     coreBudget: core.budget,
     coreTruncated: core.truncated,
     committed,
+    pushed,
     proposals: [],
   };
 }

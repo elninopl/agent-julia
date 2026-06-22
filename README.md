@@ -114,6 +114,8 @@ Pages carry light frontmatter — title, status, last-updated date, and an auto-
 
 Point the wizard at an existing markdown knowledge base and agent-julia adopts it: your pages are indexed and a hand-written `index.md` is left alone — agent-julia only manages a clearly marked block inside it.
 
+Optionally back the store with a git remote — a private GitHub repo, say — set in the wizard or later with `agent-julia remote <url>`. Maintenance (and server startup) then pushes to it best-effort, so an offline moment or a missing credential never blocks a write; it just syncs on the next run. `agent-julia push` syncs on demand.
+
 ## MCP tools
 
 | Tool | What it does |
@@ -136,6 +138,8 @@ The persona core is also exposed as a resource (`agent-julia://core`) for client
 | `agent-julia init` | Run the setup wizard |
 | `agent-julia sync` | Re-apply registration and the persona block for the current config |
 | `agent-julia uninstall` | Remove the managed blocks and registration (backups are kept) |
+| `agent-julia remote [url]` | Show or set a git remote to back up your memory |
+| `agent-julia push` | Push the memory store to its remote now |
 | `agent-julia migrate` | Apply pending data migrations and exit |
 
 ## Configuration
@@ -149,6 +153,7 @@ Settings live in `~/.config/agent-julia/config.json` and carry a `schemaVersion`
 | `stylePreset` | One of the four voices |
 | `memoryDir` | Your markdown store |
 | `git` | Version the store with git and commit after every write (default on) |
+| `gitRemote` | Optional git remote (e.g. a private GitHub repo) to back up / sync the store |
 | `search` | `hybrid`, `fts`, or `semantic` |
 | `embedding` | Provider (`none`, `local`, `openai-compatible`), model, and dimensions |
 | `contextBudget` | Token ceiling for the injected persona core |

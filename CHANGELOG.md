@@ -7,6 +7,15 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ## [Unreleased]
 
+## [0.1.11] - 2026-06-22
+
+### Added
+
+- Optional git remote for the memory store (e.g. a private GitHub repo): set it in
+  the wizard or with `agent-julia remote <url>`. Maintenance and server startup
+  push to it best-effort (non-interactive, never blocks on credentials or offline).
+  `agent-julia push` syncs on demand.
+
 ## [0.1.10] - 2026-06-22
 
 ### Added
