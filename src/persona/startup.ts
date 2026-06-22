@@ -8,11 +8,11 @@ import { composeCore } from "./compose.js";
 function memoryInstruction(): string {
   return [
     "## Memory (agent-julia)",
-    "Your memory lives in agent-julia, an MCP server — not in this file:",
-    "- Before answering anything that may depend on prior context, `search` / `read` it.",
-    "- When a durable new fact appears, persist it with `ingest`.",
+    "Your memory lives in agent-julia (an MCP server), not in this file.",
+    "- Before answering anything that may depend on what you know about the user, their projects, or past decisions, `search` / `read` your memory first.",
+    "- Capture proactively: when a durable fact, decision, preference, or change surfaces in a conversation, `ingest` it yourself — don't wait to be asked. If unsure whether it's worth keeping, lean toward a short note over losing it. Skip transient or trivial chatter.",
     "- Record voice/style corrections with `correct_voice`.",
-    "- Only this persona core is kept in context; the knowledge base is fetched on demand.",
+    "- Only this core stays in context; the full knowledge base is fetched on demand.",
   ].join("\n");
 }
 

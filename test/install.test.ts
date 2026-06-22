@@ -62,7 +62,7 @@ describe("injected core", () => {
     const cfg = ConfigSchema.parse({ memoryDir: dir, name: "Nova", stylePreset: "custom" });
     const core = await buildInjectedCore(paths, cfg);
     expect(core).toContain("answer in haiku");
-    expect(core).toContain("Custom voice");
+    expect(core).toContain("## Your voice");
     // none of the built-in preset voices leak in
     expect(core).not.toContain("Licensed to tease");
   });

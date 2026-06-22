@@ -4,7 +4,7 @@ import { runWizard } from "./wizard/wizard.js";
 import { buildInstructions, install, uninstall } from "./wizard/register.js";
 import { loadConfig, saveConfig } from "./config/config.js";
 import { migrate } from "./migrations/runner.js";
-import { ensureGitRepo, getRemoteUrl, pushToRemote, setRemoteUrl } from "./store/git.js";
+import { ensureGitRepo, getRemoteUrl, pushToRemote, setRemoteUrl, verifyRemote } from "./store/git.js";
 import { logError } from "./util/log.js";
 
 const HELP = `agent-julia — one brain for your AI
@@ -62,8 +62,14 @@ async function main(): Promise<void> {
       await ensureGitRepo(cfg.memoryDir);
       await setRemoteUrl(cfg.memoryDir, url);
       await saveConfig({ ...cfg, gitRemote: url });
-      const ok = await pushToRemote(cfg.memoryDir);
-      console.log(`Remote set to ${url}. ${ok ? "Pushed." : "Push skipped/failed (will retry on maintenance)."}`);
+      const check = await verifyRemote(cfg.memoryDir);
+      if (!check.ok) {
+        console.log(`Remote set to ${url}, but it's NOT reachable yet (${check.error}).`);
+        console.log("Create the repo / fix credentials, then run `agent-julia push`.");
+        break;
+      }
+      const pushed = await pushToRemote(cfg.memoryDir);
+      console.log(`Remote set to ${url} and reachable. ${pushed ? "Pushed." : "Nothing to push yet."}`);
       break;
     }
     case "push": {

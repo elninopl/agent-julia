@@ -7,6 +7,23 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ## [Unreleased]
 
+## [0.1.17] - 2026-06-22
+
+### Changed
+
+- The injected persona core reads as direct instruction, not a serialized config:
+  a natural identity sentence instead of a Name/Gender/Style/Precedence key-value
+  dump, and lighter section headers ("How you communicate", "Your voice").
+- Stronger proactive-memory instruction: the agent is told to `ingest` durable
+  facts, decisions, and preferences on its own as they surface — not only when
+  explicitly asked — while skipping transient chatter.
+
+### Added
+
+- `verifyRemote`: the wizard and `agent-julia remote` check the git remote is
+  reachable at setup and warn if it isn't, instead of failing silently until the
+  next maintenance push.
+
 ## [0.1.16] - 2026-06-22
 
 ### Changed

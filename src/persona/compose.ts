@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { Config } from "../config/schema.js";
 import { StorePaths } from "../store/paths.js";
 import { clampToBudget, estimateTokens } from "../util/tokens.js";
-import { PRESETS, styleLabel } from "./presets.js";
+import { PRESETS } from "./presets.js";
 import { readCorrections } from "./corrections.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -43,44 +43,37 @@ export interface ComposedCore {
   truncated: boolean;
 }
 
-// Build the budgeted persona core for injection. Precedence is set by ordering and
-// stated explicitly: L3 (corrections) > L1 (universal core) > L2 (style preset).
+// Build the budgeted persona core for injection — written as direct instruction,
+// not a serialized config. Precedence is by ordering: corrections (last, labeled
+// as overriding) win over the universal core, which sits over the style voice.
 // The full knowledge base stays on disk; only this compact core enters context.
 export async function composeCore(paths: StorePaths, config: Config): Promise<ComposedCore> {
-  const label = styleLabel(config.stylePreset);
   const coreVoice = await loadCoreVoice();
   const voice = await loadVoice(paths, config);
   const corrections = await readCorrections(paths);
 
   const sections: string[] = [];
 
+  // Identity as a natural sentence, not a key/value dump.
   sections.push(
-    `# Persona: ${config.name}\n` +
-      `- Name: ${config.name}\n` +
-      `- Gender/pronouns: ${config.gender} (${config.pronouns})\n` +
-      `- Output language: ${config.language} (code, docs, and commits stay in English)\n` +
-      `- Style: ${label}\n` +
-      `- Precedence when rules conflict: user voice corrections > universal core > style`,
+    `# ${config.name}\n` +
+      `You are ${config.name} (${config.pronouns}). Respond in ${config.language} — ` +
+      `code, docs, and commit messages stay in English.`,
   );
 
-  // L1 — universal core (above presets).
-  sections.push(`## Universal core (always on)\n${coreVoice}`);
+  // L1 — universal communication rules.
+  sections.push(`## How you communicate\n${coreVoice}`);
 
-  // L2 — style: a preset, or a custom voice from persona.md.
-  sections.push(`## Style: ${label}\n${voice}`);
+  // L2 — voice: a preset, or a custom voice from persona.md.
+  sections.push(`## Your voice\n${voice}`);
 
-  // L3 — user corrections (highest precedence). Placed last and labeled as
-  // overriding, so the model reads them as the final word.
+  // L3 — user corrections (highest precedence): last word, labeled as overriding.
   if (corrections.length > 0) {
-    sections.push(
-      `## User voice corrections (override everything above)\n${corrections.join("\n")}`,
-    );
+    sections.push(`## Corrections from the user — these win over everything above\n${corrections.join("\n")}`);
   }
 
   // Privacy hard-off is a safety rail, never trimmed away by the budget.
-  const privacy =
-    `## Never persist (privacy hard-off)\n` +
-    config.privacyHardOff.map((p) => `- ${p}`).join("\n");
+  const privacy = `## Never store\n` + config.privacyHardOff.map((p) => `- ${p}`).join("\n");
 
   const budgetForBody = Math.max(config.contextBudget - estimateTokens(privacy) - 8, 100);
   const body = clampToBudget(sections.join("\n\n"), budgetForBody);

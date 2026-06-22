@@ -14,7 +14,7 @@ import { migrate } from "../migrations/runner.js";
 import { Indexer } from "../index/indexer.js";
 import { storePaths } from "../store/paths.js";
 import { listPageIds } from "../store/markdown.js";
-import { ensureGitRepo, setRemoteUrl } from "../store/git.js";
+import { ensureGitRepo, setRemoteUrl, verifyRemote } from "../store/git.js";
 import { allPresets, presetSample, styleLabel } from "../persona/presets.js";
 import { resolveSampleLang } from "../persona/samples.js";
 import { seedPersonaTemplate } from "../persona/custom.js";
@@ -325,7 +325,16 @@ export async function runWizard(): Promise<void> {
     if (config.git) await ensureGitRepo(config.memoryDir);
     if (config.git && config.gitRemote) {
       await setRemoteUrl(config.memoryDir, config.gitRemote);
-      ok(`Remote backup set → ${c.cyan(config.gitRemote)} (pushed on maintenance)`);
+      const check = await verifyRemote(config.memoryDir);
+      if (check.ok) {
+        ok(`Remote backup set + reachable → ${c.cyan(config.gitRemote)}`);
+      } else {
+        note(
+          `Remote set to ${config.gitRemote}, but it's not reachable yet (${check.error}). ` +
+            "Fix access (create the repo / check credentials), then run `agent-julia push`. " +
+            "Until it's reachable, your memory stays local-only.",
+        );
+      }
     }
 
     // Adopt an existing markdown knowledge base if one is already there.
