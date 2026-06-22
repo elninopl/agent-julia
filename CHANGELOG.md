@@ -7,6 +7,8 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ## [Unreleased]
 
+## [0.1.19] - 2026-06-22
+
 ### Fixed
 
 - Concurrent surfaces no longer corrupt the store. SQLite waits on a busy
