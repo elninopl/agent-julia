@@ -7,6 +7,25 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ## [Unreleased]
 
+## [0.1.26] - 2026-06-23
+
+### Changed
+
+- Startup maintenance is skipped when nothing on disk changed since the last run.
+  Each Claude session spawns its own `serve`, so running full maintenance (read
+  every page, refresh the catalog, git add/commit) on every cold start was pure
+  repeated cost. A cheap mtime check (readdir + stat, no content reads) gates it;
+  the explicit `maintenance` tool/command still always runs in full.
+- The WAL is capped (`wal_autocheckpoint`) and truncated on clean shutdown, so
+  the `-wal` file no longer grows large and stays mmapped across instances.
+
+### Fixed
+
+- The server now exits when its client disconnects (stdin/transport close), not
+  only on SIGINT/SIGTERM. Previously a session that closed its pipe without a
+  signal could leave the `serve` process — and its npm-exec wrapper — running for
+  hours, accumulating across sessions.
+
 ## [0.1.25] - 2026-06-23
 
 ### Changed

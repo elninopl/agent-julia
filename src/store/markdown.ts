@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
-import { basename } from "node:path";
+import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { basename, join } from "node:path";
 import matter from "gray-matter";
 import { StorePaths, pageFilePath, pageId } from "./paths.js";
 import { detectLanguage } from "./lang.js";
@@ -50,6 +50,29 @@ export async function listPageIds(paths: StorePaths): Promise<string[]> {
     .filter((f) => f.endsWith(".md"))
     .map((f) => basename(f, ".md"))
     .sort();
+}
+
+// Newest mtime across the inputs maintenance cares about (page files + the
+// corrections and custom-voice files), in ms. Cheap: a readdir plus a stat per
+// file, no content reads. Used to skip maintenance when nothing changed on disk
+// since the last run. Returns 0 on an empty/missing store.
+export async function latestStoreMtime(paths: StorePaths): Promise<number> {
+  let latest = 0;
+  const note = async (p: string): Promise<void> => {
+    try {
+      const s = await stat(p);
+      if (s.mtimeMs > latest) latest = s.mtimeMs;
+    } catch {
+      // missing file — ignore
+    }
+  };
+  if (existsSync(paths.pagesDir)) {
+    const files = await readdir(paths.pagesDir);
+    await Promise.all(files.filter((f) => f.endsWith(".md")).map((f) => note(join(paths.pagesDir, f))));
+  }
+  await note(paths.voiceCorrections);
+  await note(paths.personaFile);
+  return latest;
 }
 
 export async function readPage(paths: StorePaths, page: string): Promise<Page | null> {

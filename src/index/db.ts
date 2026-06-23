@@ -63,6 +63,10 @@ export function openDb(paths: StorePaths, tokenizer: string): DB {
   // Multiple Claude surfaces each open their own handle on this file. Wait for a
   // concurrent writer's lock instead of throwing SQLITE_BUSY on the first clash.
   db.exec("PRAGMA busy_timeout = 5000;");
+  // Cap WAL growth: checkpoint more eagerly than the 1000-page default so the
+  // -wal file (mmapped by every instance) stays small. Indexer.close() also
+  // truncates it on clean shutdown.
+  db.exec("PRAGMA wal_autocheckpoint = 256;");
 
   db.exec("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);");
   // The signature folds in the schema version and the active tokenizer; if either

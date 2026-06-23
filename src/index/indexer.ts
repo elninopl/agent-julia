@@ -40,6 +40,13 @@ export class Indexer {
   }
 
   close(): void {
+    // Truncate the WAL back into the main db on clean shutdown so the -wal file
+    // doesn't linger large and mmapped for the next readers. Best-effort.
+    try {
+      this.db.exec("PRAGMA wal_checkpoint(TRUNCATE);");
+    } catch {
+      // a concurrent writer may hold the lock; the autocheckpoint will catch up
+    }
     this.db.close();
   }
 
