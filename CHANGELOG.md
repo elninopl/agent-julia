@@ -7,6 +7,16 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ## [Unreleased]
 
+## [0.1.25] - 2026-06-23
+
+### Changed
+
+- README restructured for readability: a scannable top (hook, highlights,
+  install, usage), then "Why it helps" and "How it works", then a Reference
+  appendix. The long configuration, command/tool, manual-setup, and maintenance
+  sections are collapsed under `<details>`. Trimmed the problem framing into a
+  three-line lead and cut the before/after examples from three to two.
+
 ## [0.1.24] - 2026-06-23
 
 ### Changed
