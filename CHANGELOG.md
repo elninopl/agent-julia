@@ -7,6 +7,14 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ## [Unreleased]
 
+## [0.1.24] - 2026-06-23
+
+### Changed
+
+- README: add a short "Why Agent Julia" highlight list near the top, and a Usage
+  section showing how you actually work with the agent in natural language
+  (save, recall, steer the voice, browse) and which tool each maps to.
+
 ## [0.1.23] - 2026-06-23
 
 ### Changed

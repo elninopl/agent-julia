@@ -13,6 +13,15 @@
 npx agent-julia init
 ```
 
+**Why Agent Julia**
+
+- **One memory, every surface** — Claude Code and Cowork share the same brain; a fact saved in one is known in the other.
+- **You own it** — plain markdown in a git repo you control, not a database locked inside an app. Readable, portable, `git log`-able.
+- **Small context footprint** — only a budgeted persona core rides each turn; everything else is recalled on demand, so the window stays clear.
+- **Local and private by default** — no API key, no server, nothing leaves your machine (built-in `node:sqlite`; optional fully-local embeddings).
+- **A persona that sticks** — the name, pronouns, and voice you set; corrections you make once apply everywhere, from the next turn.
+- **One-command setup** — `npx agent-julia init` wires it into your Claude apps, backed up and reversible.
+
 ---
 
 ## The problem
@@ -96,6 +105,34 @@ Then append the persona block (printed by the command) to `~/.claude/CLAUDE.md`.
 > **Dispatch (mobile) isn't supported.** It can't run or reach the local stdio MCP server, and it doesn't read Cowork's Global instructions — so neither the memory tools nor the persona reach it in a local-first setup. Covering Dispatch would need the server hosted remotely, which is out of scope here.
 
 The persona block is small on purpose — identity plus an instruction to use agent-julia for memory. Everything else is fetched on demand. When the wizard does this for you, it backs up each file first, writes inside a marked block, and `agent-julia uninstall` removes it cleanly.
+
+## Usage
+
+You don't call tools or memorize commands — you talk to your agent, and it reaches into memory on its own. A few natural examples:
+
+**Save something** *(→ `ingest`)*
+
+- "Remember that we dropped Redis — we're on Postgres LISTEN/NOTIFY now."
+- "Note for the Privé project: the weekly review moved to Mondays."
+- It also captures durable facts on its own as they surface, so you rarely have to ask.
+
+**Recall** *(→ `search`, `read`)*
+
+- "What did we decide about auth?"
+- "What do you know about the Privé pricing model?"
+- "Did I say anything about onboarding last week?"
+
+**Steer the voice** *(→ `correct_voice`)*
+
+- "Stop hedging — commit to an answer."
+- "Don't open every reply with my name."
+- The correction is recorded and applied from the next turn, on every surface.
+
+**Browse** *(→ `list`)*
+
+- "What's in my memory?"  ·  "List every page you have."
+
+Everything you save lands as markdown in your repo and is committed, so you can open it, edit it by hand, or `git log` the history any time.
 
 ## Search
 
