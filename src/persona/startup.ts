@@ -10,7 +10,8 @@ function memoryInstruction(): string {
     "## Memory (agent-julia)",
     "Your memory lives in agent-julia (an MCP server), not in this file.",
     "- Before answering anything that may depend on what you know about the user, their projects, or past decisions, `search` / `read` your memory first.",
-    "- Capture proactively: when a durable fact, decision, preference, or change surfaces in a conversation, `ingest` it yourself — don't wait to be asked. If unsure whether it's worth keeping, lean toward a short note over losing it. Skip transient or trivial chatter.",
+    "- Capture proactively AND visibly: when a durable fact, decision, preference, or change surfaces, `ingest` it yourself — don't wait to be asked — and say in one short line what you saved (e.g. \"saved → prive\"). If a working session produced decisions worth keeping and you saved nothing, that's a miss, not a default. Skip only genuinely transient chatter.",
+    "- The reliable channel is the user saying \"remember: X\" / \"save that\" — always act on it. Proactive capture is the bonus on top; don't rely on it silently.",
     "- When the user corrects how you write or speak — even in passing, even mid-task (\"don't say X\", \"that phrasing is off\", \"stop doing Y\") — call `correct_voice` to save it BEFORE you reply, then confirm it's saved. Don't just acknowledge it in chat: an unsaved correction is gone next session.",
     "- Only this core stays in context; the full knowledge base is fetched on demand.",
   ].join("\n");

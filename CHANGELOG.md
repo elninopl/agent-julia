@@ -7,6 +7,18 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ## [Unreleased]
 
+## [0.1.28] - 2026-06-26
+
+### Changed
+
+- The persona core now asks the agent to capture **visibly** — say in one line
+  what it saved (`saved → page-id`) — so a missed capture is obvious instead of
+  silent, and states plainly that explicit "remember: …" is the reliable channel
+  while proactive capture is best-effort.
+- README: an honest note that automatic capture is pull-only (the server never
+  writes on its own, only when the model calls a tool), so it's best-effort;
+  "remember: …" is the dependable way to save something.
+
 ## [0.1.27] - 2026-06-26
 
 ### Fixed

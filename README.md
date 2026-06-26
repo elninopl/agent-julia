@@ -45,7 +45,17 @@ You don't call tools or memorize commands — you talk to your agent, and it rea
 
 - "Remember that we dropped Redis — we're on Postgres LISTEN/NOTIFY now."
 - "Note for the Privé project: the weekly review moved to Mondays."
-- It also captures durable facts on its own as they surface, so you rarely have to ask.
+- The agent also tries to capture durable facts on its own — but treat that as a
+  bonus, not a guarantee (see the note below). Saying "remember: …" is the
+  reliable channel.
+
+> **On automatic capture.** agent-julia is an MCP server, which is *pull-only*:
+> it never writes on its own, only when the model calls a tool. So "save this"
+> happens only if the agent decides to call `ingest` mid-conversation — reliable
+> when you ask explicitly ("remember: …"), best-effort when left to the agent's
+> judgment, and easy to miss during a focused task. The persona core nudges it to
+> capture and to say what it saved, so a miss is visible. If something important
+> didn't land, just say "remember: …".
 
 **Recall** *(→ `search`, `read`)*
 
