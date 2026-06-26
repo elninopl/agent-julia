@@ -7,6 +7,22 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ## [Unreleased]
 
+## [0.1.27] - 2026-06-26
+
+### Fixed
+
+- User voice corrections (L3, highest precedence) were appended to the budgeted
+  body and so were the first thing `clampToBudget` trimmed when the core was over
+  budget — the highest-precedence layer dropped first. Corrections are now in the
+  protected tail alongside the privacy rail, so they always survive. Added a
+  regression test.
+
+### Changed
+
+- Stronger instruction to capture voice corrections: when the user corrects how
+  the agent writes or speaks, even in passing, call `correct_voice` before
+  replying and confirm it's saved, rather than only acknowledging it in chat.
+
 ## [0.1.26] - 2026-06-23
 
 ### Changed

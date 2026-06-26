@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { upsertManagedBlock, removeManagedBlock, hasManagedBlock } from "../src/managed/block.js";
 import { buildInjectedCore, STARTUP_BLOCK_ID } from "../src/persona/startup.js";
+import { composeCore } from "../src/persona/compose.js";
 import { refreshIndexMd } from "../src/store/catalog.js";
 import { writePage } from "../src/store/markdown.js";
 import { storePaths } from "../src/store/paths.js";
@@ -65,6 +66,18 @@ describe("injected core", () => {
     expect(core).toContain("## Your voice");
     // none of the built-in preset voices leak in
     expect(core).not.toContain("Licensed to tease");
+  });
+
+  it("keeps L3 corrections even when the budget is too small to fit the body", async () => {
+    const dir = tmp();
+    const paths = storePaths(dir);
+    // A correction is highest precedence — it must never be the thing the budget
+    // clamps away. Force a tight budget so the body would otherwise overflow.
+    writeFileSync(paths.voiceCorrections, "# Voice corrections\n\n- 2026-06-26 — never use the word synergy\n", "utf8");
+    const cfg = ConfigSchema.parse({ memoryDir: dir, name: "Julia", contextBudget: 300 });
+    const core = await composeCore(paths, cfg);
+    expect(core.text).toContain("never use the word synergy");
+    expect(core.text).toContain("Never store");
   });
 });
 

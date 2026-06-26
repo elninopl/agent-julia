@@ -67,17 +67,20 @@ export async function composeCore(paths: StorePaths, config: Config): Promise<Co
   // L2 — voice: a preset, or a custom voice from persona.md.
   sections.push(`## Your voice\n${voice}`);
 
-  // L3 — user corrections (highest precedence): last word, labeled as overriding.
+  // Protected tail — never trimmed by the budget. L3 corrections are the highest
+  // precedence layer, so they MUST survive; only the lower-precedence body above
+  // (identity + universal core + style voice) is clamped if the core is over
+  // budget. Privacy hard-off is a safety rail and is protected the same way.
+  const tail: string[] = [];
   if (corrections.length > 0) {
-    sections.push(`## Corrections from the user — these win over everything above\n${corrections.join("\n")}`);
+    tail.push(`## Corrections from the user — these win over everything above\n${corrections.join("\n")}`);
   }
+  tail.push(`## Never store\n` + config.privacyHardOff.map((p) => `- ${p}`).join("\n"));
+  const protectedTail = tail.join("\n\n");
 
-  // Privacy hard-off is a safety rail, never trimmed away by the budget.
-  const privacy = `## Never store\n` + config.privacyHardOff.map((p) => `- ${p}`).join("\n");
-
-  const budgetForBody = Math.max(config.contextBudget - estimateTokens(privacy) - 8, 100);
+  const budgetForBody = Math.max(config.contextBudget - estimateTokens(protectedTail) - 8, 100);
   const body = clampToBudget(sections.join("\n\n"), budgetForBody);
-  const text = `${body}\n\n${privacy}`;
+  const text = `${body}\n\n${protectedTail}`;
   const tokens = estimateTokens(text);
 
   return {
