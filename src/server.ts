@@ -6,6 +6,7 @@ import { composeCore } from "./persona/compose.js";
 import { getMeta, setMeta } from "./index/db.js";
 import { latestStoreMtime } from "./store/markdown.js";
 import { runMaintenance } from "./maintenance/maintenance.js";
+import { installSkills, skillsTargetDir } from "./skills/install.js";
 import { log, warn } from "./util/log.js";
 
 const MAINT_MTIME_KEY = "maint_mtime";
@@ -36,6 +37,17 @@ export async function startServer(): Promise<void> {
     }
   } catch (err) {
     warn("startup maintenance failed (continuing):", (err as Error).message);
+  }
+
+  // Refresh the shipped skills on every boot. Installs register the server as
+  // floating @latest, so this is what propagates new and updated skills to
+  // existing users without a manual `sync`. installSkills only ever touches
+  // copies carrying the agent-julia ownership marker. Non-fatal.
+  try {
+    const steps = await installSkills(skillsTargetDir());
+    log(`skills: ${steps.filter((s) => s.status === "done").length}/${steps.length} refreshed`);
+  } catch (err) {
+    warn("skill refresh failed (continuing):", (err as Error).message);
   }
 
   const server = new McpServer({

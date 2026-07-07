@@ -7,6 +7,24 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ## [Unreleased]
 
+## [0.1.29] - 2026-07-07
+
+### Added
+
+- **`brainstorm` skill** — a structured brainstorm facilitator shipped with the
+  package and installed into `~/.claude/skills/` by the wizard and `sync`
+  (removed by `uninstall`). It runs a five-phase process (frame → diverge →
+  challenge → converge → commit) with one question per message, thinking lenses
+  for business and life topics, an opt-in deep mode (a panel of adversarial
+  perspectives), and session state persisted to memory after every phase, so a
+  brainstorm is resumable across days and devices and ends in a decision doc.
+  Installs never overwrite a user's own skill of the same name — only copies
+  marked `author: agent-julia` are managed.
+- The server refreshes the shipped skills on every boot, so existing installs
+  (which run the floating `agent-julia@latest`) pick up new and updated skills
+  automatically — no manual `sync` needed. Only copies carrying the
+  `author: agent-julia` ownership marker are ever touched.
+
 ## [0.1.28] - 2026-06-26
 
 ### Changed

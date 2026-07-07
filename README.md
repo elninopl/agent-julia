@@ -73,6 +73,13 @@ You don't call tools or memorize commands — you talk to your agent, and it rea
 
 - "What's in my memory?"  ·  "List every page you have."
 
+**Think something through** *(→ the `brainstorm` skill)*
+
+- "Help me decide whether to take the Berlin offer."
+- "Let's brainstorm the pricing for the new plan."
+- "Back to the office-move question from last week." — sessions are resumable;
+  the state lives in memory, so you can start on one machine and finish on another.
+
 Everything you save lands as markdown in your repo and is committed, so you can open it, edit it by hand, or `git log` the history any time.
 
 ## Why it helps
@@ -95,6 +102,21 @@ Two everyday frustrations it removes:
 - **Derived index** — SQLite (FTS5 full-text + optional vector embeddings) built from the markdown, via Node's built-in `node:sqlite` (no native module to compile). It's disposable: delete it and it rebuilds itself from your files.
 - **Budgeted core** — a compact persona block is injected into Claude Code's `CLAUDE.md` and Claude Desktop's global instructions. It stays within a token budget you set, so it never crowds out the conversation.
 - **One MCP server** — every surface talks to the same `agent-julia` server over stdio, so they share one memory and one persona.
+
+## Skills
+
+agent-julia ships one skill, installed into `~/.claude/skills/` (which both Claude Code and Cowork read) by the wizard and refreshed automatically every time the server starts — so existing installs pick it up on their next session, no manual step:
+
+**`brainstorm`** — a structured facilitator that takes a fuzzy idea or an open decision to a committed outcome. Built for business and life questions, not code. What makes it different from just chatting:
+
+- **A real process** — frame (question, criteria, constraints) → diverge → challenge (assumptions, pre-mortem, inversion) → converge on a recommendation you confirm section by section.
+- **One question per message**, with answer options — a dialogue, not a questionnaire.
+- **Thinking lenses** — distillations of proven tools (strategy kernel, jobs-to-be-done, willingness to pay, fear-setting, inversion, regret minimization, one-way vs two-way doors…), picked to fit the topic and named when used.
+- **Deep mode** — for high-stakes calls the agent offers a panel of 3–4 adversarial perspectives (skeptic, the other side, operator…) run as parallel subagents where available. It costs real tokens, so it never runs without your yes.
+- **It remembers** — session state is saved to memory after every phase, so a brainstorm survives days and devices ("back to the X question"); the outcome lands as a decision doc with the options you killed and why, so nothing gets relitigated.
+- **Your places, not hardcoded ones** — at the end it offers the doc as a Markdown/HTML file and, based on what tools *you* have connected, proposes where the actions should go.
+
+The skill starts only when you ask for it (or accept a one-line offer). Your own skill under the same name is never overwritten: installs and uninstalls only touch copies carrying the `author: agent-julia` marker.
 
 ---
 
@@ -171,8 +193,8 @@ The persona core is also exposed as a resource (`agent-julia://core`) for client
 | --- | --- |
 | `agent-julia serve` | Start the MCP server (default; used by the Claude apps) |
 | `agent-julia init` | Run the setup wizard |
-| `agent-julia sync` | Re-apply registration and the persona block for the current config |
-| `agent-julia uninstall` | Remove the managed blocks and registration (backups are kept) |
+| `agent-julia sync` | Re-apply registration, the persona block, and the shipped skills for the current config |
+| `agent-julia uninstall` | Remove the managed blocks, registration, and shipped skills (backups are kept) |
 | `agent-julia remote [url]` | Show or set a git remote to back up your memory |
 | `agent-julia push` | Push the memory store to its remote now |
 | `agent-julia migrate` | Apply pending data migrations and exit |

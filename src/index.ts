@@ -12,8 +12,8 @@ const HELP = `agent-julia — one brain for your AI
 Usage:
   agent-julia serve      Start the MCP stdio server (default; used by Claude clients)
   agent-julia init       Run the interactive setup wizard
-  agent-julia sync       Re-apply MCP registration + persona core (add --print to show the steps instead)
-  agent-julia uninstall  Remove the managed persona blocks and MCP registration
+  agent-julia sync       Re-apply MCP registration + persona core + shipped skills (add --print to show the steps instead)
+  agent-julia uninstall  Remove the managed persona blocks, MCP registration, and shipped skills
   agent-julia remote [url]  Show or set the git remote backing up your memory
   agent-julia push       Push the memory store to its remote now
   agent-julia migrate    Run pending data migrations and exit
