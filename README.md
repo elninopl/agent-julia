@@ -105,7 +105,7 @@ Two everyday frustrations it removes:
 
 ## Skills
 
-agent-julia ships one skill, installed by the wizard (and by `agent-julia sync`) into `~/.claude/skills/`, which both Claude Code and Cowork read:
+agent-julia ships one skill, installed into `~/.claude/skills/` (which both Claude Code and Cowork read) by the wizard and refreshed automatically every time the server starts — so existing installs pick it up on their next session, no manual step:
 
 **`brainstorm`** — a structured facilitator that takes a fuzzy idea or an open decision to a committed outcome. Built for business and life questions, not code. What makes it different from just chatting:
 
@@ -193,8 +193,8 @@ The persona core is also exposed as a resource (`agent-julia://core`) for client
 | --- | --- |
 | `agent-julia serve` | Start the MCP server (default; used by the Claude apps) |
 | `agent-julia init` | Run the setup wizard |
-| `agent-julia sync` | Re-apply registration and the persona block for the current config |
-| `agent-julia uninstall` | Remove the managed blocks and registration (backups are kept) |
+| `agent-julia sync` | Re-apply registration, the persona block, and the shipped skills for the current config |
+| `agent-julia uninstall` | Remove the managed blocks, registration, and shipped skills (backups are kept) |
 | `agent-julia remote [url]` | Show or set a git remote to back up your memory |
 | `agent-julia push` | Push the memory store to its remote now |
 | `agent-julia migrate` | Apply pending data migrations and exit |

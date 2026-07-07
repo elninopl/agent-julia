@@ -7,6 +7,8 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ## [Unreleased]
 
+## [0.1.29] - 2026-07-07
+
 ### Added
 
 - **`brainstorm` skill** — a structured brainstorm facilitator shipped with the
@@ -18,6 +20,10 @@ changes, which always ship an automatic, backup-protected data migration.
   brainstorm is resumable across days and devices and ends in a decision doc.
   Installs never overwrite a user's own skill of the same name — only copies
   marked `author: agent-julia` are managed.
+- The server refreshes the shipped skills on every boot, so existing installs
+  (which run the floating `agent-julia@latest`) pick up new and updated skills
+  automatically — no manual `sync` needed. Only copies carrying the
+  `author: agent-julia` ownership marker are ever touched.
 
 ## [0.1.28] - 2026-06-26
 
