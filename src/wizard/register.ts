@@ -7,7 +7,7 @@ import { log, warn } from "../util/log.js";
 import { copyToClipboard } from "../util/clipboard.js";
 import { buildInjectedCore, STARTUP_BLOCK_ID } from "../persona/startup.js";
 import { storePaths } from "../store/paths.js";
-import { removeManagedBlock, upsertManagedBlock } from "../managed/block.js";
+import { endMarker, hasManagedBlock, removeManagedBlock, startMarker, upsertManagedBlock } from "../managed/block.js";
 import { installSkills, skillsTargetDir, uninstallSkills } from "../skills/install.js";
 
 // The MCP entry every surface gets. Floating @latest auto-propagates next session.
@@ -185,6 +185,29 @@ export async function install(config: Config): Promise<InstallStep[]> {
   }
 
   return steps;
+}
+
+// Refresh the persona block in files that already carry it — the boot-time half
+// of propagation. init/sync CREATE the block (an explicit opt-in we never make
+// for the user); this only keeps existing blocks current, so voice updates and
+// corrections reach every surface without a manual `sync`. Files are rewritten
+// only when the block's content actually changed. Returns the refresh count.
+// Target paths are injectable for tests; callers use the default.
+export async function refreshInjectedCore(
+  config: Config,
+  targets: string[] = [claudeCodeMemoryPath(), coworkMirrorPath()],
+): Promise<number> {
+  const core = await buildInjectedCore(storePaths(config.memoryDir), config);
+  const block = `${startMarker(STARTUP_BLOCK_ID)}\n${core.trim()}\n${endMarker(STARTUP_BLOCK_ID)}`;
+  let refreshed = 0;
+  for (const p of targets) {
+    if (!existsSync(p)) continue;
+    const content = await readFile(p, "utf8");
+    if (!hasManagedBlock(content, STARTUP_BLOCK_ID) || content.includes(block)) continue;
+    await upsertManagedBlock(p, STARTUP_BLOCK_ID, core);
+    refreshed++;
+  }
+  return refreshed;
 }
 
 // The mcpServers snippet to add to a Claude client config, as pretty JSON.

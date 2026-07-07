@@ -7,6 +7,20 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ## [Unreleased]
 
+## [0.1.30] - 2026-07-07
+
+### Added
+
+- Core voice: when the task is ambiguous, the agent asks before starting instead
+  of guessing — trivial, unambiguous requests excluded. Applies to every persona
+  preset.
+- The server now also refreshes the injected persona block on boot, wherever the
+  block already exists — so voice updates and recorded corrections reach Claude
+  Code (and the Cowork mirror file) automatically, without a manual `sync`. The
+  refresh never creates a block, only updates ones you installed, and rewrites a
+  file only when the content actually changed. The Cowork in-app Global
+  instructions field still needs a one-time re-paste to pick up changes.
+
 ## [0.1.29] - 2026-07-07
 
 ### Added
