@@ -8,6 +8,7 @@ import { copyToClipboard } from "../util/clipboard.js";
 import { buildInjectedCore, STARTUP_BLOCK_ID } from "../persona/startup.js";
 import { storePaths } from "../store/paths.js";
 import { removeManagedBlock, upsertManagedBlock } from "../managed/block.js";
+import { installSkills, skillsTargetDir, uninstallSkills } from "../skills/install.js";
 
 // The MCP entry every surface gets. Floating @latest auto-propagates next session.
 function serverEntry(): { command: string; args: string[] } {
@@ -176,6 +177,13 @@ export async function install(config: Config): Promise<InstallStep[]> {
     });
   }
 
+  // --- Shipped skills ---
+  // ~/.claude/skills is read by Claude Code and Cowork alike, so one copy serves
+  // every selected surface.
+  for (const s of await installSkills(skillsTargetDir())) {
+    steps.push({ surface: "shared", action: `install skill '${s.skill}'`, status: s.status, detail: s.detail });
+  }
+
   return steps;
 }
 
@@ -213,6 +221,11 @@ export async function buildInstructions(config: Config): Promise<string> {
       "",
     );
   }
+  out.push(
+    "Skills",
+    `  Copy the packaged skill folders (dist/skills/assets/* inside the agent-julia package) into ${skillsTargetDir()}.`,
+    "",
+  );
   out.push("Restart your Claude apps afterwards.");
   return out.join("\n");
 }
@@ -241,6 +254,10 @@ export async function uninstall(): Promise<InstallStep[]> {
       status: removed ? "done" : "skipped",
       detail: p,
     });
+  }
+
+  for (const s of await uninstallSkills(skillsTargetDir())) {
+    steps.push({ surface: "shared", action: `remove skill '${s.skill}'`, status: s.status, detail: s.detail });
   }
   return steps;
 }
