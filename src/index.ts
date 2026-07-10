@@ -18,6 +18,7 @@ Usage:
   agent-julia push       Push the memory store to its remote now
   agent-julia pull       Pull the memory store from its remote now (two-machine sync)
   agent-julia doctor     Check the whole installation: registration, persona blocks, Cowork drift, skills, store
+  agent-julia export [target]  Export the persona to another tool's instruction file (codex, gemini, or a path); no target prints it
   agent-julia migrate    Run pending data migrations and exit
   agent-julia --help     Show this help
 `;
@@ -102,6 +103,36 @@ async function main(): Promise<void> {
       const cfg = await loadConfig();
       const ok = cfg.git ? await pushToRemote(cfg.memoryDir) : false;
       console.log(ok ? "Pushed to remote." : "Nothing pushed (no remote, git off, or push failed).");
+      break;
+    }
+    case "export": {
+      const cfg = await loadConfig();
+      const { exportPersona, exportText, removeExport, knownAliases } = await import("./export/export.js");
+      const args = process.argv.slice(3);
+      if (args[0] === "--list") {
+        console.log(cfg.exports.length ? cfg.exports.join("\n") : "No exports recorded.");
+        break;
+      }
+      if (args[0] === "--remove") {
+        if (!args[1]) {
+          console.log("Usage: agent-julia export --remove <target>");
+          break;
+        }
+        const { path, removed } = await removeExport(cfg, args[1]);
+        await saveConfig({ ...cfg, exports: cfg.exports.filter((e) => e !== path) });
+        console.log(removed ? `Removed the persona block from ${path}.` : `No persona block in ${path}.`);
+        break;
+      }
+      if (!args[0]) {
+        console.log(await exportText(cfg));
+        break;
+      }
+      const path = await exportPersona(cfg, args[0]);
+      if (!cfg.exports.includes(path)) {
+        await saveConfig({ ...cfg, exports: [...cfg.exports, path] });
+      }
+      console.log(`Persona exported to ${path} — the server keeps it refreshed from now on.`);
+      console.log(`Known named targets: ${knownAliases().join(", ")} (or any file path).`);
       break;
     }
     case "doctor": {

@@ -118,6 +118,10 @@ agent-julia ships one skill, installed into `~/.claude/skills/` (which both Clau
 
 The skill starts only when you ask for it (or accept a one-line offer). Your own skill under the same name is never overwritten: installs and uninstalls only touch copies carrying the `author: agent-julia` marker.
 
+## Beyond Claude
+
+The persona you built is not locked to Claude. `agent-julia export codex` writes it into `~/.codex/AGENTS.md`, `export gemini` into `~/.gemini/GEMINI.md`, and `export <path>` into any AGENTS.md-style instruction file — as a marked, removable block, backed up on first touch, and **kept refreshed by the server on every boot** (a voice correction you make in Claude reaches Codex on its next session). The export carries the persona itself — identity, voice, corrections, privacy rail — without the Claude-specific memory instructions; attach the same MCP server in the other tool if it supports MCP, and the memory follows too.
+
 ---
 
 ## Reference
@@ -195,6 +199,7 @@ The persona core is also exposed as a resource (`agent-julia://core`) for client
 | `agent-julia init` | Run the setup wizard |
 | `agent-julia sync` | Re-apply registration, the persona block, and the shipped skills for the current config |
 | `agent-julia uninstall` | Remove the managed blocks, registration, and shipped skills (backups are kept) |
+| `agent-julia export [target]` | Export the persona to another tool's instruction file (`codex`, `gemini`, or any path); `--list` / `--remove <target>` manage them |
 | `agent-julia doctor` | Check the whole installation: MCP registration, persona blocks (including Cowork paste drift), skills, store and index — with a suggested fix per finding |
 | `agent-julia remote [url]` | Show or set a git remote to back up your memory |
 | `agent-julia push` | Push the memory store to its remote now |

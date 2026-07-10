@@ -5,6 +5,7 @@ import { Config } from "../config/schema.js";
 import { storePaths } from "../store/paths.js";
 import { listPageIds } from "../store/markdown.js";
 import { readCorrections } from "../persona/corrections.js";
+import { EXPORT_BLOCK_ID, exportText } from "../export/export.js";
 import { isGitRepo, getRemoteUrl } from "../store/git.js";
 import { buildInjectedCore, STARTUP_BLOCK_ID } from "../persona/startup.js";
 import { endMarker, hasManagedBlock, startMarker } from "../managed/block.js";
@@ -223,6 +224,40 @@ export async function runDoctor(config: Config, t: DoctorTargets = defaultTarget
             detail: "installed copy differs from the shipped version (yours, or an update pending)",
           },
     );
+  }
+
+  // --- Exported persona files ---
+  if (config.exports.length > 0) {
+    const text = await exportText(config);
+    const exportBlock = `${startMarker(EXPORT_BLOCK_ID)}\n${text.trim()}\n${endMarker(EXPORT_BLOCK_ID)}`;
+    for (const p of config.exports) {
+      if (!existsSync(p)) {
+        checks.push({
+          name: "export",
+          status: "warn",
+          detail: `recorded export file is gone: ${p}`,
+          fix: `agent-julia export ${p} (to recreate) or agent-julia export --remove ${p}`,
+        });
+      } else {
+        const content = await readFile(p, "utf8");
+        if (!hasManagedBlock(content, EXPORT_BLOCK_ID)) {
+          checks.push({
+            name: "export",
+            status: "warn",
+            detail: `no persona block in ${p} (removed by hand?)`,
+            fix: `agent-julia export ${p} or agent-julia export --remove ${p}`,
+          });
+        } else if (!content.includes(exportBlock)) {
+          checks.push({
+            name: "export",
+            status: "warn",
+            detail: `${p} is stale — it refreshes on the next server start`,
+          });
+        } else {
+          checks.push({ name: "export", status: "ok", detail: p });
+        }
+      }
+    }
   }
 
   // --- Voice corrections hygiene ---

@@ -7,6 +7,19 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ## [Unreleased]
 
+## [0.1.36] - 2026-07-10
+
+### Added
+
+- **`agent-julia export`** — the persona now travels beyond Claude. Export it
+  into another tool's instruction file (`codex` → `~/.codex/AGENTS.md`,
+  `gemini` → `~/.gemini/GEMINI.md`, or any path) as a marked, removable block.
+  Recorded exports are refreshed by the server on every boot, so voice
+  corrections made in Claude propagate to the other tools; `--list` and
+  `--remove` manage them, and `doctor` reports missing or stale export files.
+  The export carries the persona only (identity, voice, corrections, privacy
+  rail) — the Claude-specific memory instruction stays out.
+
 ## [0.1.35] - 2026-07-10
 
 ### Added

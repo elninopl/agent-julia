@@ -9,6 +9,7 @@ import { runMaintenance } from "./maintenance/maintenance.js";
 import { pullFromRemote } from "./store/git.js";
 import { installSkills, skillsTargetDir } from "./skills/install.js";
 import { refreshInjectedCore } from "./wizard/register.js";
+import { refreshExports } from "./export/export.js";
 import { log, warn } from "./util/log.js";
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -73,7 +74,11 @@ export async function startServer(): Promise<void> {
   try {
     const steps = await installSkills(skillsTargetDir());
     const cores = await refreshInjectedCore(rt.config);
-    log(`refresh: ${steps.filter((s) => s.status === "done").length}/${steps.length} skill(s), ${cores} persona block(s)`);
+    const exports = await refreshExports(rt.config);
+    log(
+      `refresh: ${steps.filter((s) => s.status === "done").length}/${steps.length} skill(s), ` +
+        `${cores} persona block(s), ${exports} export(s)`,
+    );
   } catch (err) {
     warn("startup refresh failed (continuing):", (err as Error).message);
   }
