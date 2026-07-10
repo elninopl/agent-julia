@@ -266,13 +266,13 @@ export async function runWizard(): Promise<void> {
     if (await p.confirm("Claude Desktop (Cowork)?", true)) surfaces.push("cowork");
 
     // 9 — Weekly review
-    step(9, STEPS, "Weekly review", "a human-judgment pass — contradictions, duplicates, what to promote");
+    step(9, STEPS, "Weekly housekeeping", "reindex, refresh the catalog, flag stale pages and orphan links");
     const weeklyMaintenance = await p.choice<WeeklyMaintenance>([
       {
         value: "cowork-task",
         label: "Let Cowork run it on a schedule",
         recommended: true,
-        desc: "A recurring Cowork task runs maintenance and shows you a digest to approve.",
+        desc: "A recurring Cowork task runs `agent-julia maintenance` for you.",
       },
       {
         value: "own-routine",

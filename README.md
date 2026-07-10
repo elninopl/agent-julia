@@ -166,7 +166,7 @@ Pages carry light frontmatter — title, status, last-updated date, and an auto-
 
 Point the wizard at an existing markdown knowledge base and Agent Julia adopts it: your pages are indexed and a hand-written `index.md` is left alone — Agent Julia only manages a clearly marked block inside it.
 
-Optionally back the store with a git remote — a private GitHub repo, say — set in the wizard or later with `agent-julia remote <url>`. By default it syncs on maintenance (and server startup), best-effort, so an offline moment or a missing credential never blocks a write; it just pushes on the next run. Turn on `gitAutoPush` to push after every write instead, trading a network round-trip per write for immediate off-machine backup. `agent-julia push` syncs on demand.
+Optionally back the store with a git remote — a private GitHub repo, say — set in the wizard or later with `agent-julia remote <url>`. By default it syncs on maintenance (and server startup), best-effort, so an offline moment or a missing credential never blocks a write; it just pushes on the next run. Turn on `gitAutoPush` to push after every write instead, trading a network round-trip per write for immediate off-machine backup. `agent-julia push` syncs on demand. With a remote set, the server also **pulls on startup** — so on a second machine, a session starts from what the first one pushed; a merge conflict is aborted (never left half-done) and reported for a by-hand `agent-julia pull`.
 
 <details>
 <summary><strong>Commands &amp; MCP tools</strong></summary>
@@ -198,6 +198,7 @@ The persona core is also exposed as a resource (`agent-julia://core`) for client
 | `agent-julia doctor` | Check the whole installation: MCP registration, persona blocks (including Cowork paste drift), skills, store and index — with a suggested fix per finding |
 | `agent-julia remote [url]` | Show or set a git remote to back up your memory |
 | `agent-julia push` | Push the memory store to its remote now |
+| `agent-julia pull` | Pull the memory store from its remote now (two-machine sync) |
 | `agent-julia migrate` | Apply pending data migrations and exit |
 
 </details>

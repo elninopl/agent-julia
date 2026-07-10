@@ -7,6 +7,22 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ## [Unreleased]
 
+## [0.1.35] - 2026-07-10
+
+### Added
+
+- **Two-machine sync:** with a git remote configured, the server pulls the
+  store on startup (best-effort, non-interactive — offline is a quiet skip),
+  so a session on one machine starts from what the other pushed. A merge
+  conflict is aborted rather than left half-done, and reported for a by-hand
+  resolve. New `agent-julia pull` runs the same pull on demand.
+
+### Fixed
+
+- The wizard's weekly-review step no longer promises an approval digest that
+  doesn't exist yet — it now describes what scheduled maintenance actually
+  does (reindex, catalog refresh, stale/orphan flagging).
+
 ## [0.1.34] - 2026-07-10
 
 ### Changed

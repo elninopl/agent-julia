@@ -95,3 +95,74 @@ describe("latestStoreMtime", () => {
     expect(after).toBeGreaterThan(before);
   });
 });
+
+describe("pullFromRemote — two-machine sync", () => {
+  it("brings machine A's pushed memories onto machine B", async () => {
+    const { pullFromRemote, setRemoteUrl, ensureGitRepo, pushToRemote } = await import("../src/store/git.js");
+    const { writePage } = await import("../src/store/markdown.js");
+    const { storePaths } = await import("../src/store/paths.js");
+    const { readFileSync, existsSync: fsExists } = await import("node:fs");
+    const { execFileSync } = await import("node:child_process");
+
+    const bare = mkdtempSync(join(tmpdir(), "aj-bare-"));
+    execFileSync("git", ["init", "--bare", "-q", bare]);
+
+    // Machine A: write and push.
+    const a = mkdtempSync(join(tmpdir(), "aj-a-"));
+    await ensureGitRepo(a);
+    const pathsA = storePaths(a);
+    await writePage(pathsA, "shared-fact", "written on machine A", {});
+    execFileSync("git", ["-C", a, "add", "-A"]);
+    execFileSync("git", ["-C", a, "commit", "-q", "-m", "from A"]);
+    await setRemoteUrl(a, bare);
+    expect(await pushToRemote(a)).toBe(true);
+
+    // Machine B: same remote, empty store — pull.
+    const b = mkdtempSync(join(tmpdir(), "aj-b-"));
+    execFileSync("git", ["clone", "-q", bare, b]);
+    // drop the clone's content to simulate being behind, then reset to an old state
+    execFileSync("git", ["-C", b, "reset", "-q", "--hard", "HEAD"]);
+    // A pushes one more page B doesn't have:
+    await writePage(pathsA, "newer-fact", "second write on A", {});
+    execFileSync("git", ["-C", a, "add", "-A"]);
+    execFileSync("git", ["-C", a, "commit", "-q", "-m", "more from A"]);
+    expect(await pushToRemote(a)).toBe(true);
+
+    expect(await pullFromRemote(b)).toBe("pulled");
+    expect(fsExists(join(b, "pages", "newer-fact.md"))).toBe(true);
+    expect(readFileSync(join(b, "pages", "newer-fact.md"), "utf8")).toContain("second write on A");
+    expect(await pullFromRemote(b)).toBe("up-to-date");
+  });
+
+  it("aborts a conflicted merge and leaves the store clean", async () => {
+    const { pullFromRemote, setRemoteUrl, ensureGitRepo, pushToRemote } = await import("../src/store/git.js");
+    const { writeFileSync: wf } = await import("node:fs");
+    const { execFileSync } = await import("node:child_process");
+
+    const bare = mkdtempSync(join(tmpdir(), "aj-bare-"));
+    execFileSync("git", ["init", "--bare", "-q", bare]);
+
+    const a = mkdtempSync(join(tmpdir(), "aj-a-"));
+    await ensureGitRepo(a);
+    wf(join(a, "clash.md"), "base\n", "utf8");
+    execFileSync("git", ["-C", a, "add", "-A"]);
+    execFileSync("git", ["-C", a, "commit", "-q", "-m", "base"]);
+    await setRemoteUrl(a, bare);
+    expect(await pushToRemote(a)).toBe(true);
+
+    const b = mkdtempSync(join(tmpdir(), "aj-b-"));
+    execFileSync("git", ["clone", "-q", bare, b]);
+
+    // Diverge: both edit the same line.
+    wf(join(a, "clash.md"), "version A\n", "utf8");
+    execFileSync("git", ["-C", a, "commit", "-q", "-am", "A edit"]);
+    expect(await pushToRemote(a)).toBe(true);
+    wf(join(b, "clash.md"), "version B\n", "utf8");
+    execFileSync("git", ["-C", b, "commit", "-q", "-am", "B edit"]);
+
+    expect(await pullFromRemote(b)).toBe("conflict");
+    // No merge in progress, B's own version intact.
+    const status = execFileSync("git", ["-C", b, "status", "--porcelain"], { encoding: "utf8" });
+    expect(status.trim()).toBe("");
+  });
+});
