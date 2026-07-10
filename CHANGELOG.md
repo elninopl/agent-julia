@@ -7,6 +7,12 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ## [Unreleased]
 
+## [0.1.32] - 2026-07-10
+
+Republish of 0.1.31: its release run failed in CI on a broken npm
+toolchain before anything reached the registry, so 0.1.31 was never
+published. This version adds only the CI fix on top.
+
 ## [0.1.31] - 2026-07-10
 
 ### Security
