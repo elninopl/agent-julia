@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { Runtime } from "../runtime.js";
-import { listPages, readPage } from "../store/markdown.js";
+import { listPages, readPage, relatedPages } from "../store/markdown.js";
 import { ingest } from "../store/ingest.js";
 import { commitAll, pushToRemote } from "../store/git.js";
 import { appendCorrection } from "../persona/corrections.js";
@@ -72,6 +72,17 @@ export function registerTools(server: McpServer, rt: Runtime): void {
       },
     },
     async ({ query, limit }) => json(await indexer.search(query, limit ?? 8)),
+  );
+
+  server.registerTool(
+    "related",
+    {
+      title: "Related pages",
+      description:
+        "Pages connected to one page through [[wiki-links]]: what it links to, and what links back to it. Use to walk the knowledge graph around a topic.",
+      inputSchema: { page: z.string().describe("Page id, e.g. 'prive-game'") },
+    },
+    async ({ page }) => json(await relatedPages(paths, page)),
   );
 
   server.registerTool(

@@ -169,3 +169,23 @@ describe("pullFromRemote — two-machine sync", () => {
     expect(status.trim()).toBe("");
   });
 });
+
+describe("relatedPages", () => {
+  it("returns forward links and backlinks", async () => {
+    const { relatedPages } = await import("../src/store/markdown.js");
+    const { writePage } = await import("../src/store/markdown.js");
+    const dir = mkdtempSync(join(tmpdir(), "aj-rel-"));
+    const paths = storePaths(dir);
+    await writePage(paths, "hub", "links to [[spoke-a]] and [[Spoke-B|label]]", {});
+    await writePage(paths, "spoke-a", "no links here", {});
+    await writePage(paths, "spoke-b", "points back at [[hub]]", {});
+
+    const hub = await relatedPages(paths, "hub");
+    expect(hub.links.sort()).toEqual(["spoke-a", "spoke-b"]);
+    expect(hub.backlinks).toEqual(["spoke-b"]);
+
+    const spokeA = await relatedPages(paths, "spoke-a");
+    expect(spokeA.links).toEqual([]);
+    expect(spokeA.backlinks).toEqual(["hub"]);
+  });
+});

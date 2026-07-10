@@ -18,6 +18,8 @@ Usage:
   agent-julia push       Push the memory store to its remote now
   agent-julia pull       Pull the memory store from its remote now (two-machine sync)
   agent-julia doctor     Check the whole installation: registration, persona blocks, Cowork drift, skills, store
+  agent-julia search <query>   Search your memory from the terminal
+  agent-julia read <page>      Print one memory page
   agent-julia export [target]  Export the persona to another tool's instruction file (codex, gemini, or a path); no target prints it
   agent-julia migrate    Run pending data migrations and exit
   agent-julia --help     Show this help
@@ -103,6 +105,44 @@ async function main(): Promise<void> {
       const cfg = await loadConfig();
       const ok = cfg.git ? await pushToRemote(cfg.memoryDir) : false;
       console.log(ok ? "Pushed to remote." : "Nothing pushed (no remote, git off, or push failed).");
+      break;
+    }
+    case "search": {
+      const q = process.argv.slice(3).join(" ").trim();
+      if (!q) {
+        console.log("Usage: agent-julia search <query>");
+        break;
+      }
+      const cfg = await loadConfig();
+      const { storePaths } = await import("./store/paths.js");
+      const { Indexer } = await import("./index/indexer.js");
+      const idx = Indexer.open(storePaths(cfg.memoryDir), cfg);
+      try {
+        await idx.sync();
+        const hits = await idx.search(q, 10);
+        if (hits.length === 0) {
+          console.log("No hits.");
+        } else {
+          for (const h of hits) {
+            console.log(`${h.id}  —  ${h.title}${h.snippet ? `\n    ${h.snippet}` : ""}`);
+          }
+        }
+      } finally {
+        idx.close();
+      }
+      break;
+    }
+    case "read": {
+      const page = process.argv[3];
+      if (!page) {
+        console.log("Usage: agent-julia read <page>");
+        break;
+      }
+      const cfg = await loadConfig();
+      const { storePaths } = await import("./store/paths.js");
+      const { readPage } = await import("./store/markdown.js");
+      const found = await readPage(storePaths(cfg.memoryDir), page);
+      console.log(found ? `# ${found.frontmatter.title ?? found.id}\n\n${found.body}` : `No page found: ${page}`);
       break;
     }
     case "export": {

@@ -43,6 +43,25 @@ export function extractLinks(body: string): string[] {
   return [...out];
 }
 
+// Pages related to `page` through wiki-links: what it links to (forward) and
+// what links to it (back). Backlinks need a scan of every page body — fine at
+// personal-knowledge-base scale; revisit if stores grow past a few thousand.
+export async function relatedPages(
+  paths: StorePaths,
+  page: string,
+): Promise<{ links: string[]; backlinks: string[] }> {
+  const id = pageId(page);
+  const self = await readPage(paths, id);
+  const links = self ? extractLinks(self.body) : [];
+  const backlinks: string[] = [];
+  for (const other of await listPageIds(paths)) {
+    if (other === id) continue;
+    const p2 = await readPage(paths, other);
+    if (p2 && extractLinks(p2.body).includes(id)) backlinks.push(other);
+  }
+  return { links, backlinks };
+}
+
 export async function listPageIds(paths: StorePaths): Promise<string[]> {
   if (!existsSync(paths.pagesDir)) return [];
   const files = await readdir(paths.pagesDir);
