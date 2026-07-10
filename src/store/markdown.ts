@@ -67,6 +67,10 @@ export async function latestStoreMtime(paths: StorePaths): Promise<number> {
     }
   };
   if (existsSync(paths.pagesDir)) {
+    // Stat the directory itself too: deleting a page updates the dir's mtime but
+    // leaves no file to raise the max, so without this a hand-deleted page would
+    // never trigger maintenance and would linger in the index and catalog.
+    await note(paths.pagesDir);
     const files = await readdir(paths.pagesDir);
     await Promise.all(files.filter((f) => f.endsWith(".md")).map((f) => note(join(paths.pagesDir, f))));
   }

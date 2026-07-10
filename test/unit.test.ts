@@ -67,3 +67,20 @@ describe("config schema", () => {
     expect(cfg.privacyHardOff.length).toBeGreaterThan(0);
   });
 });
+
+describe("page id is a security boundary", () => {
+  it("cannot traverse out of pages/", () => {
+    expect(pageId("../../../etc/passwd")).toBe("etc-passwd");
+    expect(pageId("..\\..\\windows")).toBe("windows");
+    expect(pageId("/absolute/path")).toBe("absolute-path");
+    expect(pageId("nested/sub/dir")).toBe("nested-sub-dir");
+    expect(pageFilePath("/store", "../../escape")).toBe("/store/pages/escape.md");
+    expect(pageId("")).toBe("untitled");
+    expect(pageId("..")).toBe("untitled");
+  });
+
+  it("keeps ordinary ids unchanged", () => {
+    expect(pageId("prive-game")).toBe("prive-game");
+    expect(pageId("v2.plan_notes")).toBe("v2.plan_notes");
+  });
+});

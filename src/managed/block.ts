@@ -47,11 +47,18 @@ export async function upsertManagedBlock(
   const existed = existsSync(filePath);
   await backupOnce(filePath);
 
-  const block = `${startMarker(id)}\n${body.trim()}\n${endMarker(id)}`;
+  // The body can carry user-authored text (voice corrections quote whatever the
+  // user said). Strip anything that looks like our markers — a literal end
+  // marker inside the body would close the region early and leak the rest of
+  // the block as permanent user content on the next upsert.
+  const safeBody = body.replace(/<!--\s*agent-julia:[\s\S]*?-->/g, "").trim();
+  const block = `${startMarker(id)}\n${safeBody}\n${endMarker(id)}`;
   let current = existed ? await readFile(filePath, "utf8") : "";
 
   if (hasManagedBlock(current, id)) {
-    current = current.replace(blockRegion(id), block);
+    // Function replacement: a plain string would reinterpret `$&`/`$'` inside
+    // the block as regex replacement patterns and corrupt the content.
+    current = current.replace(blockRegion(id), () => block);
   } else {
     const sep = current.length === 0 ? "" : current.endsWith("\n\n") ? "" : current.endsWith("\n") ? "\n" : "\n\n";
     current = `${current}${sep}${block}\n`;

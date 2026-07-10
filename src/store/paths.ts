@@ -46,11 +46,18 @@ export function pageFilePath(root: string, page: string): string {
 
 // Normalize any page reference to its canonical id (no dir, no extension,
 // lowercase kebab-case) so links and filenames match regardless of how they
-// were typed.
+// were typed. The id is also a security boundary: MCP callers control this
+// string and it becomes a filename under pages/, so everything outside the
+// safe character set — path separators included — collapses to "-", and dot
+// runs are reduced so an id can never traverse out of the store.
 export function pageId(page: string): string {
   let id = page.trim();
   if (id.startsWith("pages/")) id = id.slice("pages/".length);
   if (id.startsWith("archive/")) id = id.slice("archive/".length);
   if (id.endsWith(".md")) id = id.slice(0, -3);
-  return id.toLowerCase();
+  id = id.toLowerCase();
+  id = id.replace(/[^a-z0-9._-]+/g, "-");
+  id = id.replace(/\.{2,}/g, ".");
+  id = id.replace(/^[-._]+|[-._]+$/g, "");
+  return id || "untitled";
 }

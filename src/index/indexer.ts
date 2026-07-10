@@ -18,7 +18,7 @@ import { SearchResult, search } from "./search.js";
 import {
   clearEmbeddings,
   embedPassage,
-  embeddingCount,
+  embeddedIds,
   embeddingsAreStale,
   semanticDelete,
   semanticStore,
@@ -125,12 +125,22 @@ export class Indexer {
   // it, since the page hashes are unchanged).
   async reembedIfStale(): Promise<boolean> {
     if (!this.provider.enabled) return false;
-    const stale = embeddingsAreStale(this.db, this.provider);
-    const missing = embeddingCount(this.db) < allIndexedIds(this.db).length;
-    if (!stale && !missing) return false;
-    log(stale ? "embedding model changed — re-embedding all pages" : "embeddings missing — embedding all pages");
-    clearEmbeddings(this.db);
-    for (const id of await listPageIds(this.paths)) await this.indexPage(id);
+    if (embeddingsAreStale(this.db, this.provider)) {
+      // Model changed: nothing stored can be trusted — wipe and redo everything.
+      log("embedding model changed — re-embedding all pages");
+      clearEmbeddings(this.db);
+      for (const id of await listPageIds(this.paths)) await this.indexPage(id);
+      return true;
+    }
+    // Same model, some pages unembedded (provider was off when they were indexed,
+    // or their embed failed). Fill in ONLY the gaps: wiping everything here would
+    // re-embed the whole store on every boot for as long as one page keeps
+    // failing — the full cost of the API, every session.
+    const have = new Set(embeddedIds(this.db));
+    const gaps = allIndexedIds(this.db).filter((id) => !have.has(id));
+    if (gaps.length === 0) return false;
+    log(`embeddings missing — embedding ${gaps.length} page(s)`);
+    for (const id of gaps) await this.indexPage(id);
     return true;
   }
 
