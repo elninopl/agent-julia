@@ -6,6 +6,7 @@ import { composeCore } from "./persona/compose.js";
 import { getMeta, setMeta } from "./index/db.js";
 import { latestStoreMtime } from "./store/markdown.js";
 import { runMaintenance } from "./maintenance/maintenance.js";
+import { pullFromRemote } from "./store/git.js";
 import { installSkills, skillsTargetDir } from "./skills/install.js";
 import { refreshInjectedCore } from "./wizard/register.js";
 import { log, warn } from "./util/log.js";
@@ -32,6 +33,14 @@ async function packageVersion(): Promise<string> {
 // resources over a tool call.
 export async function startServer(): Promise<void> {
   const rt = await buildRuntime();
+
+  // Two-machine sync: pull the store from its remote before maintenance reads
+  // it, so a session on this machine starts from what the other machine pushed.
+  // Best-effort — offline is a quiet skip, a conflict is aborted and warned.
+  if (rt.config.git && rt.config.gitRemote) {
+    const pulled = await pullFromRemote(rt.config.memoryDir);
+    log(`git pull: ${pulled}`);
+  }
 
   // Automatic maintenance on launch ("on write + cron" — this is the cron-ish
   // half). Skip it when nothing on disk changed since the last run: every Claude

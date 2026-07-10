@@ -137,6 +137,42 @@ export async function pushToRemote(root: string): Promise<boolean> {
   return res ?? false;
 }
 
+// Pull from origin — the other half of the two-machine story (push alone means
+// machine B never sees machine A's memories). Best-effort and non-interactive:
+// offline or missing credentials is a quiet skip, never a blocked startup. A
+// merge conflict is aborted so the store is never left mid-merge; the user
+// resolves by pulling by hand.
+export async function pullFromRemote(
+  root: string,
+): Promise<"pulled" | "up-to-date" | "conflict" | "skipped"> {
+  if (!isGitRepo(root)) return "skipped";
+  if (!(await getRemoteUrl(root))) return "skipped";
+  const res = await withGitLock(root, async (): Promise<"pulled" | "up-to-date" | "conflict" | "skipped"> => {
+    try {
+      const { stdout } = await exec("git", ["-C", root, "pull", "--no-rebase", "--no-edit", "origin"], {
+        encoding: "utf8",
+        timeout: 20_000,
+        env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+      });
+      return /Already up to date/i.test(stdout) ? "up-to-date" : "pulled";
+    } catch (err) {
+      if (existsSync(join(root, ".git", "MERGE_HEAD"))) {
+        try {
+          await git(root, ["merge", "--abort"]);
+        } catch {
+          // even the abort failed — leave state for the user, the warning below points there
+        }
+        warn(`git pull hit a merge conflict — resolve it by hand: git -C ${root} pull`);
+        return "conflict";
+      }
+      const msg = (err as Error).message.split("\n").find((l) => l.trim()) ?? "";
+      warn("git pull skipped (offline or no credentials):", msg);
+      return "skipped";
+    }
+  });
+  return res ?? "skipped";
+}
+
 // Stage everything and commit. No-op when there is nothing to commit. The derived
 // index is git-ignored within the store.
 export async function commitAll(root: string, message: string): Promise<boolean> {
