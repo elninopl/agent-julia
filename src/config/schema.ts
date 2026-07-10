@@ -78,6 +78,11 @@ export const ConfigSchema = z.object({
   contextBudget: z.number().int().positive().default(1200),
 
   surfaces: z.array(z.enum(SURFACES)).default(["code", "cowork"]),
+
+  // Files outside the Claude ecosystem that carry an exported persona block
+  // (e.g. ~/.codex/AGENTS.md). Recorded by `agent-julia export` so the server
+  // can keep them refreshed on boot, exactly like the Claude blocks.
+  exports: z.array(z.string()).default([]),
   weeklyMaintenance: z.enum(WEEKLY_MAINTENANCE).default("cowork-task"),
 
   // Categories the agent must never persist. Seeds from sensible privacy defaults.
