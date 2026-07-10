@@ -60,6 +60,11 @@ export function embeddingCount(db: DB): number {
   return row?.n ?? 0;
 }
 
+export function embeddedIds(db: DB): string[] {
+  const rows = db.prepare("SELECT id FROM embeddings").all() as Array<{ id: string }>;
+  return rows.map((r) => r.id);
+}
+
 export async function semanticSearch(
   db: DB,
   provider: EmbeddingProvider,

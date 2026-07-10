@@ -19,8 +19,10 @@ const LOCK_WAIT_MS = 15_000;
 // Serialize git operations across processes. Every Claude surface runs its own
 // server, and two `git commit`s racing on .git/index.lock leave a write silently
 // uncommitted. An atomic mkdir is the mutex; a stale lock (crashed holder) is
-// reclaimed after LOCK_STALE_MS.
-async function withGitLock<T>(root: string, fn: () => Promise<T>): Promise<T> {
+// reclaimed after LOCK_STALE_MS. On lock-wait timeout the operation is SKIPPED
+// (null) — running unlocked would recreate exactly the race the lock exists to
+// prevent; a skipped commit is picked up by the next commitAll anyway.
+async function withGitLock<T>(root: string, fn: () => Promise<T>): Promise<T | null> {
   const internal = join(root, ".agent-julia");
   const lockDir = join(internal, "git.lock");
   await mkdir(internal, { recursive: true });
@@ -41,8 +43,8 @@ async function withGitLock<T>(root: string, fn: () => Promise<T>): Promise<T> {
         // lock vanished between EEXIST and stat — just retry
       }
       if (Date.now() > deadline) {
-        warn("git lock busy, proceeding without it");
-        return fn();
+        warn("git lock busy — skipping this git operation (the next write will pick the changes up)");
+        return null;
       }
       await delay(100);
     }
@@ -114,7 +116,7 @@ export async function verifyRemote(root: string): Promise<{ ok: boolean; error?:
 export async function pushToRemote(root: string): Promise<boolean> {
   if (!isGitRepo(root)) return false;
   if (!(await getRemoteUrl(root))) return false;
-  return withGitLock(root, async () => {
+  const res = await withGitLock(root, async () => {
     try {
       const branch = await git(root, ["rev-parse", "--abbrev-ref", "HEAD"]);
       await exec("git", ["-C", root, "push", "-u", "origin", branch], {
@@ -132,13 +134,14 @@ export async function pushToRemote(root: string): Promise<boolean> {
       return false;
     }
   });
+  return res ?? false;
 }
 
 // Stage everything and commit. No-op when there is nothing to commit. The derived
 // index is git-ignored within the store.
 export async function commitAll(root: string, message: string): Promise<boolean> {
   if (!isGitRepo(root)) await ensureGitRepo(root);
-  return withGitLock(root, async () => {
+  const res = await withGitLock(root, async () => {
     await git(root, ["add", "-A"]);
     try {
       const status = await git(root, ["status", "--porcelain"]);
@@ -150,4 +153,5 @@ export async function commitAll(root: string, message: string): Promise<boolean>
       return false;
     }
   });
+  return res ?? false;
 }

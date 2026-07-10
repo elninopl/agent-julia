@@ -9,8 +9,23 @@ import { runMaintenance } from "./maintenance/maintenance.js";
 import { installSkills, skillsTargetDir } from "./skills/install.js";
 import { refreshInjectedCore } from "./wizard/register.js";
 import { log, warn } from "./util/log.js";
+import { readFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const MAINT_MTIME_KEY = "maint_mtime";
+
+// The package version, read from package.json (two levels up from dist/ and
+// src/ alike). Best-effort — the server must boot even if the read fails.
+async function packageVersion(): Promise<string> {
+  try {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const raw = await readFile(join(here, "..", "package.json"), "utf8");
+    return (JSON.parse(raw) as { version?: string }).version ?? "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
+}
 
 // Boot the MCP stdio server. Runs migrations, opens the index, registers tools,
 // and exposes the budgeted persona core as a resource for clients that prefer
@@ -56,7 +71,7 @@ export async function startServer(): Promise<void> {
 
   const server = new McpServer({
     name: "agent-julia",
-    version: "0.1.0",
+    version: await packageVersion(),
   });
 
   registerTools(server, rt);

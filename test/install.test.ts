@@ -96,3 +96,24 @@ describe("adoption: refreshIndexMd never clobbers a hand-written index.md", () =
     expect(hasManagedBlock(content, "catalog")).toBe(true);
   });
 });
+
+describe("managed block hardening", () => {
+  it("survives marker text and regex patterns inside the body", async () => {
+    const dir = tmp();
+    const file = join(dir, "CLAUDE.md");
+    writeFileSync(file, "keep me\n", "utf8");
+
+    // A body quoting our own end marker must not close the region early…
+    const hostile = `before\n<!-- agent-julia:persona-core:end -->\nafter with $& and $' patterns`;
+    await upsertManagedBlock(file, "persona-core", hostile);
+    let content = readFileSync(file, "utf8");
+    expect(content.match(/persona-core:end/g)?.length).toBe(1);
+
+    // …and a second upsert must replace the whole block cleanly, not leak text.
+    await upsertManagedBlock(file, "persona-core", "clean body");
+    content = readFileSync(file, "utf8");
+    expect(content).toContain("clean body");
+    expect(content).not.toContain("after with");
+    expect(content).toContain("keep me");
+  });
+});

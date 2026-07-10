@@ -55,8 +55,10 @@ export function ftsSearch(db: DB, query: string, limit: number): FtsHit[] {
   return rows.map((r) => ({
     id: r.id,
     title: r.title,
-    // bm25 returns lower-is-better; normalize to a positive higher-is-better score.
-    score: 1 / (1 + Math.max(0, r.rank)),
+    // bm25 returns NEGATIVE values for matches (more negative = better).
+    // A sigmoid over the raw rank maps that to (0, 1) higher-is-better; the old
+    // max(0, rank) clamped every match to a flat 1.0.
+    score: 1 / (1 + Math.exp(r.rank)),
     snippet: r.snippet,
   }));
 }

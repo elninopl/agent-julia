@@ -73,3 +73,25 @@ describe("git gating on ingest", () => {
     expect(log).toContain("Update memory: note");
   });
 });
+
+describe("latestStoreMtime", () => {
+  it("rises when a page is deleted, so maintenance is not skipped", async () => {
+    const { mkdtempSync } = await import("node:fs");
+    const { rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { storePaths } = await import("../src/store/paths.js");
+    const { writePage, latestStoreMtime } = await import("../src/store/markdown.js");
+
+    const dir = mkdtempSync(join(tmpdir(), "aj-mtime-"));
+    const paths = storePaths(dir);
+    await writePage(paths, "keep", "stays", {});
+    await writePage(paths, "doomed", "goes away", {});
+    const before = await latestStoreMtime(paths);
+
+    await new Promise((r) => setTimeout(r, 20));
+    await rm(join(paths.pagesDir, "doomed.md"));
+    const after = await latestStoreMtime(paths);
+    expect(after).toBeGreaterThan(before);
+  });
+});

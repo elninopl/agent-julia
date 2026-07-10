@@ -7,6 +7,36 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ## [Unreleased]
 
+## [0.1.31] - 2026-07-10
+
+### Security
+
+- Page ids are now sanitized to a safe character set. Previously a crafted id
+  (`../../…`) passed to the `read`/`ingest` tools could read or write `.md`
+  files **outside the memory store** — including `~/.claude/CLAUDE.md`. Ids
+  can no longer traverse out of `pages/`.
+- Managed-block bodies are hardened: text quoting the block's own end marker
+  can no longer close the region early and leak block content into the host
+  file, and `$`-patterns in the body no longer corrupt it on replace.
+
+### Fixed
+
+- A single failed embedding no longer triggers a full re-embed of the entire
+  store on every server start (the full cost of the embedding API, every
+  session, until the page stopped failing) — only the missing pages are
+  embedded now.
+- Deleting a page file by hand is now noticed by the startup maintenance gate
+  (the pages directory's own mtime is included), so removed pages leave the
+  index and catalog instead of lingering until an unrelated change.
+- On a git-lock wait timeout the operation is skipped and retried with the
+  next write, instead of running unlocked and racing the very commits the
+  lock exists to protect.
+- FTS search results carry a real relevance score again — bm25 ranks are
+  negative for matches, and the old normalization clamped every match to a
+  flat 1.0.
+- The MCP server now reports its real package version instead of a hardcoded
+  `0.1.0`.
+
 ## [0.1.30] - 2026-07-07
 
 ### Added
