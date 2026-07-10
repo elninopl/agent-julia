@@ -152,6 +152,9 @@ describe("pullFromRemote — two-machine sync", () => {
 
     const b = mkdtempSync(join(tmpdir(), "aj-b-"));
     execFileSync("git", ["clone", "-q", bare, b]);
+    // A fresh clone has no committer identity on CI runners.
+    execFileSync("git", ["-C", b, "config", "user.email", "test@example.com"]);
+    execFileSync("git", ["-C", b, "config", "user.name", "Test"]);
 
     // Diverge: both edit the same line.
     wf(join(a, "clash.md"), "version A\n", "utf8");
