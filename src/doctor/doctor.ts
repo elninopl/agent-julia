@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { Config } from "../config/schema.js";
 import { storePaths } from "../store/paths.js";
 import { listPageIds } from "../store/markdown.js";
+import { readCorrections } from "../persona/corrections.js";
 import { isGitRepo, getRemoteUrl } from "../store/git.js";
 import { buildInjectedCore, STARTUP_BLOCK_ID } from "../persona/startup.js";
 import { endMarker, hasManagedBlock, startMarker } from "../managed/block.js";
@@ -222,6 +223,17 @@ export async function runDoctor(config: Config, t: DoctorTargets = defaultTarget
             detail: "installed copy differs from the shipped version (yours, or an update pending)",
           },
     );
+  }
+
+  // --- Voice corrections hygiene ---
+  const corrections = await readCorrections(paths);
+  if (corrections.length > 20) {
+    checks.push({
+      name: "voice corrections",
+      status: "warn",
+      detail: `${corrections.length} corrections on file — the oldest stop riding in the injected core once the budget fills`,
+      fix: "consolidate voice-corrections.md into fewer, broader rules (it is a plain markdown file)",
+    });
   }
 
   // --- Backups hygiene (informational) ---

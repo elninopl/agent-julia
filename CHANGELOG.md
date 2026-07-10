@@ -7,6 +7,26 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ## [Unreleased]
 
+## [0.1.34] - 2026-07-10
+
+### Changed
+
+- Voice corrections are compacted before injection: exact repeats are deduped
+  (the newest occurrence wins), and when the list outgrows the context budget
+  the oldest corrections stay in `voice-corrections.md` instead of riding in
+  the core — a counter line says how many, so nothing disappears silently.
+  Previously the protected corrections tail could grow past the entire budget
+  and squeeze the actual voice down to its 100-token floor.
+- `doctor` warns when more than 20 corrections are on file and suggests
+  consolidating them.
+
+### Added
+
+- Test coverage for the semantic and hybrid search paths (deterministic fake
+  embedding provider — ranking by meaning, keyword+vector fusion) and a
+  regression test for the 0.1.31 re-embed gap-fill fix. This half of search
+  previously had no tests at all.
+
 ## [0.1.33] - 2026-07-10
 
 ### Added

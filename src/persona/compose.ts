@@ -72,10 +72,32 @@ export async function composeCore(paths: StorePaths, config: Config): Promise<Co
   // (identity + universal core + style voice) is clamped if the core is over
   // budget. Privacy hard-off is a safety rail and is protected the same way.
   const tail: string[] = [];
+  const privacy = `## Never store\n` + config.privacyHardOff.map((p) => `- ${p}`).join("\n");
   if (corrections.length > 0) {
-    tail.push(`## Corrections from the user — these win over everything above\n${corrections.join("\n")}`);
+    // Protected from the body clamp, but not unbounded: an append-only list
+    // that grew for months must not eat the whole budget and squeeze the voice
+    // down to its 100-token floor. Newest rules win; anything dropped here
+    // still lives in voice-corrections.md, and a counter line says so.
+    const header = "## Corrections from the user — these win over everything above";
+    const room = Math.max(config.contextBudget - estimateTokens(privacy) - estimateTokens(header) - 108, 120);
+    const kept: string[] = [];
+    let used = 0;
+    let dropped = 0;
+    for (const c of [...corrections].reverse()) {
+      const t = estimateTokens(c);
+      if (used + t > room) {
+        dropped++;
+        continue;
+      }
+      kept.unshift(c);
+      used += t;
+    }
+    if (dropped > 0) {
+      kept.push(`- (+${dropped} older correction(s) in voice-corrections.md — consolidate them there)`);
+    }
+    tail.push(`${header}\n${kept.join("\n")}`);
   }
-  tail.push(`## Never store\n` + config.privacyHardOff.map((p) => `- ${p}`).join("\n"));
+  tail.push(privacy);
   const protectedTail = tail.join("\n\n");
 
   const budgetForBody = Math.max(config.contextBudget - estimateTokens(protectedTail) - 8, 100);

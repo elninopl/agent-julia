@@ -34,9 +34,10 @@ export class Indexer {
     private readonly config: Config,
   ) {}
 
-  static open(paths: StorePaths, config: Config): Indexer {
+  // `provider` is an injection seam for tests; production callers omit it.
+  static open(paths: StorePaths, config: Config, provider?: EmbeddingProvider): Indexer {
     const db = openDb(paths, ftsTokenizerFor(config.language));
-    return new Indexer(db, makeEmbeddingProvider(config.embedding), paths, config);
+    return new Indexer(db, provider ?? makeEmbeddingProvider(config.embedding), paths, config);
   }
 
   close(): void {

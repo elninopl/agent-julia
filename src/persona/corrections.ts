@@ -22,8 +22,19 @@ export async function appendCorrection(paths: StorePaths, note: string): Promise
 export async function readCorrections(paths: StorePaths): Promise<string[]> {
   if (!existsSync(paths.voiceCorrections)) return [];
   const raw = await readFile(paths.voiceCorrections, "utf8");
-  return raw
+  const lines = raw
     .split("\n")
     .filter((l) => l.startsWith("- "))
     .map((l) => l.replace(/^- \d{4}-\d{2}-\d{2} — /, "- ").trim());
+  // Repeating a correction is common ("stop doing X" said twice, months apart);
+  // surface each distinct rule once, keeping its most recent position.
+  const seen = new Set<string>();
+  const deduped: string[] = [];
+  for (const l of [...lines].reverse()) {
+    const key = l.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.unshift(l);
+  }
+  return deduped;
 }

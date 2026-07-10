@@ -117,3 +117,28 @@ describe("managed block hardening", () => {
     expect(content).toContain("keep me");
   });
 });
+
+describe("L3 corrections compaction", () => {
+  it("dedupes repeated corrections and keeps the newest rules under budget", async () => {
+    const { appendCorrection, readCorrections } = await import("../src/persona/corrections.js");
+    const dir = tmp();
+    const cfg = ConfigSchema.parse({ memoryDir: dir, contextBudget: 400 });
+    const paths = storePaths(dir);
+
+    await appendCorrection(paths, "no exclamation marks");
+    await appendCorrection(paths, "No exclamation marks");
+    expect(await readCorrections(paths)).toHaveLength(1);
+
+    // Flood with corrections far beyond the budget: the newest must survive in
+    // the core, the overflow must be represented by a counter line, and the
+    // body (voice) must still be present.
+    for (let i = 0; i < 60; i++) {
+      await appendCorrection(paths, `rule number ${i}: some fairly long correction text to eat budget`);
+    }
+    const core = await composeCore(paths, cfg);
+    expect(core.text).toContain("rule number 59");
+    expect(core.text).not.toContain("rule number 1:");
+    expect(core.text).toMatch(/\+\d+ older correction/);
+    expect(core.text).toContain("## Never store");
+  });
+});
