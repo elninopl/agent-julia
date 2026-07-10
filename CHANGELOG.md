@@ -7,6 +7,17 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ## [Unreleased]
 
+## [0.1.37] - 2026-07-10
+
+### Added
+
+- **CLI access to your own memory**: `agent-julia search <query>` (the same
+  hybrid index the agent uses) and `agent-julia read <page>` — the store is
+  yours; now you can reach it without opening a Claude session.
+- **`related` MCP tool** — walk the knowledge graph around a page: what it
+  links to and what links back to it, via the `[[wiki-links]]` already in
+  your pages.
+
 ## [0.1.36] - 2026-07-10
 
 ### Added
