@@ -41,15 +41,17 @@ jobs:
       - run: npm run build
       - run: npm test
 
-      # Trusted Publishing (OIDC) needs npm >= 11.5.1; the bundled npm may be older.
-      - name: Update npm for OIDC trusted publishing
-        run: npm install -g npm@latest
-
       # No token: npm exchanges a short-lived OIDC token with the registry. The
       # package's Trusted Publisher (repo + this workflow) must be configured on
       # npmjs first. Provenance is attached automatically on OIDC publish.
+      #
+      # Publish through npx with a pinned npm rather than `npm install -g
+      # npm@latest`: overwriting the toolcache npm in place can leave a partial
+      # install (v0.1.31's first run died on a missing `sigstore` after exactly
+      # that), while npx runs a complete, freshly fetched copy. OIDC needs
+      # npm >= 11.5.1.
       - name: Publish to npm (Trusted Publishing)
-        run: npm publish --access public
+        run: npx -y npm@11 publish --access public
 
       - name: Extract release notes
         run: node scripts/changelog-extract.mjs "${GITHUB_REF_NAME}" > RELEASE_NOTES.md
