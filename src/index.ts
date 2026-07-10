@@ -16,6 +16,7 @@ Usage:
   agent-julia uninstall  Remove the managed persona blocks, MCP registration, and shipped skills
   agent-julia remote [url]  Show or set the git remote backing up your memory
   agent-julia push       Push the memory store to its remote now
+  agent-julia doctor     Check the whole installation: registration, persona blocks, Cowork drift, skills, store
   agent-julia migrate    Run pending data migrations and exit
   agent-julia --help     Show this help
 `;
@@ -90,6 +91,14 @@ async function main(): Promise<void> {
       const cfg = await loadConfig();
       const ok = cfg.git ? await pushToRemote(cfg.memoryDir) : false;
       console.log(ok ? "Pushed to remote." : "Nothing pushed (no remote, git off, or push failed).");
+      break;
+    }
+    case "doctor": {
+      const cfg = await loadConfig();
+      const { runDoctor, formatChecks } = await import("./doctor/doctor.js");
+      const checks = await runDoctor(cfg);
+      console.log(formatChecks(checks));
+      if (checks.some((c) => c.status === "fail")) process.exit(1);
       break;
     }
     case "migrate": {
