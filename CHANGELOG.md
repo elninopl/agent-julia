@@ -7,6 +7,20 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ## [Unreleased]
 
+## [0.1.33] - 2026-07-10
+
+### Added
+
+- **`agent-julia doctor`** — a read-only health check for the whole
+  installation: Node version, store and git state, index presence, MCP
+  registration on each surface, persona block present and current in
+  `~/.claude/CLAUDE.md`, shipped skills installed and current — each finding
+  with the command that fixes it.
+- Doctor also detects **Cowork persona drift**: `init`/`sync` now record a hash
+  of the core you were asked to paste, and when the core has changed since,
+  doctor tells you the in-app Global instructions are stale and need a
+  re-paste. Previously this failure mode was completely silent.
+
 ## [0.1.32] - 2026-07-10
 
 Republish of 0.1.31: its release run failed in CI on a broken npm

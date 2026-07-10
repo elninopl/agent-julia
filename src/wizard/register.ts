@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir, platform } from "node:os";
 import { dirname, join } from "node:path";
@@ -16,7 +17,7 @@ function serverEntry(): { command: string; args: string[] } {
 }
 
 // Claude Desktop config — the file that registers the MCP server for Cowork.
-function desktopConfigPath(): string | null {
+export function desktopConfigPath(): string | null {
   const home = homedir();
   switch (platform()) {
     case "darwin":
@@ -30,17 +31,29 @@ function desktopConfigPath(): string | null {
 }
 
 // Claude Code user-scoped config + startup instructions file.
-function claudeCodeConfigPath(): string {
+export function claudeCodeConfigPath(): string {
   return join(homedir(), ".claude.json");
 }
-function claudeCodeMemoryPath(): string {
+export function claudeCodeMemoryPath(): string {
   return join(homedir(), ".claude", "CLAUDE.md");
 }
 
 // On-disk mirror of the Cowork Global instructions block. Cowork stores that field
 // inside the app, not on disk; this keeps an auditable copy the user can paste in.
-function coworkMirrorPath(): string {
+export function coworkMirrorPath(): string {
   return join(homedir(), ".config", "agent-julia", "cowork-global-instructions.md");
+}
+
+// Hash of the core the user was last ASKED to paste into Cowork (written by
+// init/sync when they issue the paste step). The in-app field can't be read, so
+// this is the best available signal: when the current core differs from this
+// hash, the Cowork persona has drifted and needs a re-paste — `doctor` flags it.
+export function coworkPasteMarkerPath(): string {
+  return join(homedir(), ".config", "agent-julia", "cowork-pasted.sha1");
+}
+
+export function coreHash(core: string): string {
+  return createHash("sha1").update(core.trim()).digest("hex");
 }
 
 // Returns false (without throwing) if the file exists but isn't valid JSON, so
@@ -175,6 +188,9 @@ export async function install(config: Config): Promise<InstallStep[]> {
       status: "manual",
       detail: detail.join("\n"),
     });
+    // Record what the user was asked to paste, so `doctor` can tell when the
+    // core has drifted from the Cowork field since.
+    await writeFile(coworkPasteMarkerPath(), coreHash(core) + "\n", "utf8");
   }
 
   // --- Shipped skills ---

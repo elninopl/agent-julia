@@ -10,6 +10,10 @@ const here = dirname(fileURLToPath(import.meta.url));
 // dist/skills/ by the build step), so this resolves in dev and installed alike.
 const SHIPPED_SKILLS_DIR = join(here, "assets");
 
+export function shippedSkillsDir(): string {
+  return SHIPPED_SKILLS_DIR;
+}
+
 // Skills agent-julia ships. Each is a directory with a SKILL.md inside.
 export const SHIPPED_SKILLS = ["brainstorm"] as const;
 

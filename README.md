@@ -195,6 +195,7 @@ The persona core is also exposed as a resource (`agent-julia://core`) for client
 | `agent-julia init` | Run the setup wizard |
 | `agent-julia sync` | Re-apply registration, the persona block, and the shipped skills for the current config |
 | `agent-julia uninstall` | Remove the managed blocks, registration, and shipped skills (backups are kept) |
+| `agent-julia doctor` | Check the whole installation: MCP registration, persona blocks (including Cowork paste drift), skills, store and index — with a suggested fix per finding |
 | `agent-julia remote [url]` | Show or set a git remote to back up your memory |
 | `agent-julia push` | Push the memory store to its remote now |
 | `agent-julia migrate` | Apply pending data migrations and exit |
