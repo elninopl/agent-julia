@@ -7,6 +7,28 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ## [Unreleased]
 
+## [0.1.38] - 2026-07-13
+
+### Added
+
+- **The weekly digest is real** (was "v0.2" since the first release). The
+  `maintenance` tool's `interactive` mode now returns owner-judgment
+  proposals: near-duplicate pages (pairwise embedding similarity ≥ 0.9),
+  long-untouched facts, orphan `[[links]]`, unlinked pages, and oversized
+  pages — and instructs the agent to walk the user through them one at a
+  time, applying only what's approved. Nothing changes without a yes.
+- **`archive` tool** — retire a page into `archive/` (kept on disk and in git
+  history, removed from the index and catalog). The digest's "retire" action;
+  until now the KB had no way to take a page out of circulation at all.
+- **`agent-julia maintenance`** CLI command — the README and wizard have
+  recommended it for months; now it exists. Runs the automatic half and
+  points at the agent-run digest for the judgment half.
+
+### Changed
+
+- Wizard step 9 and the post-install next steps now describe the real digest
+  flow (a recurring Cowork task with a "run the weekly digest" prompt).
+
 ## [0.1.37] - 2026-07-10
 
 ### Added

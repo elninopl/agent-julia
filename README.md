@@ -202,6 +202,7 @@ The persona core is also exposed as a resource (`agent-julia://core`) for client
 | `agent-julia search <query>` | Search your memory from the terminal (same hybrid index the agent uses) |
 | `agent-julia read <page>` | Print one memory page |
 | `agent-julia export [target]` | Export the persona to another tool's instruction file (`codex`, `gemini`, or any path); `--list` / `--remove <target>` manage them |
+| `agent-julia maintenance` | Run automatic store maintenance from the terminal (reindex, flag stale/orphans, refresh catalog, commit) |
 | `agent-julia doctor` | Check the whole installation: MCP registration, persona blocks (including Cowork paste drift), skills, store and index — with a suggested fix per finding |
 | `agent-julia remote [url]` | Show or set a git remote to back up your memory |
 | `agent-julia push` | Push the memory store to its remote now |
@@ -264,7 +265,7 @@ The persona block is small on purpose — identity plus an instruction to use ag
 
 Housekeeping runs on its own. On every write, and again when the server starts, Agent Julia reindexes changed pages, picks up files you edited by hand, flags stale-dated notes and broken links, refreshes the catalog, recompacts the persona core, and commits. Nothing is deleted without you — stale items are flagged, not removed.
 
-A heavier weekly pass — for contradictions, duplicates, and deciding what to promote — is owner's-judgment work. Run `agent-julia maintenance` on whatever cadence suits you, or schedule it as a Claude Desktop task.
+A heavier weekly pass — merging duplicates, retiring stale pages, fixing broken links — is owner's-judgment work, so it runs as a **digest**: ask your agent to "run the weekly digest" (or schedule a recurring Cowork task with that prompt), and it gathers the candidates — near-duplicate pages (by embedding similarity), long-untouched facts, orphan `[[links]]`, unlinked pages, oversized pages — and walks you through them one at a time. Nothing changes without your yes; approved retirements go to `archive/` (kept on disk and in git history, out of the index). `agent-julia maintenance` runs the automatic half from the terminal.
 
 Upgrades are backward-compatible, or they ship an automatic migration that runs on first launch — backed up, idempotent, and transparent. The config carries a `schemaVersion`; ordered migration steps bring older stores forward on startup. The derived search index is disposable and simply rebuilds itself when its shape changes. `@latest` picks up new versions automatically next session; pin an exact version (`agent-julia@<version>`) if you want it fixed. Either way, upgrades never lose data and never ask you to hand-edit files.
 

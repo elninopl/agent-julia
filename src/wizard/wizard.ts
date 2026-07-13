@@ -272,7 +272,7 @@ export async function runWizard(): Promise<void> {
         value: "cowork-task",
         label: "Let Cowork run it on a schedule",
         recommended: true,
-        desc: "A recurring Cowork task runs `agent-julia maintenance` for you.",
+        desc: "A recurring Cowork task has your agent run the weekly digest with you: merge/retire proposals, one at a time.",
       },
       {
         value: "own-routine",
@@ -403,8 +403,8 @@ export async function runWizard(): Promise<void> {
     next.push(`Say hi — your agent is now ${c.bold(config.name)}, with memory that follows you.`);
     next.push(
       config.weeklyMaintenance === "cowork-task"
-        ? `Set up a weekly Cowork task running ${c.bold("agent-julia maintenance")}.`
-        : `Run ${c.bold("agent-julia maintenance")} weekly (cron/Todoist) for housekeeping.`,
+        ? `Set up a weekly Cowork task with the prompt: ${c.bold('"run your memory\'s weekly digest and walk me through the proposals"')}.`
+        : `Run ${c.bold("agent-julia maintenance")} weekly (cron/Todoist), and ask your agent for the digest when you want the judgment pass.`,
     );
 
     console.log("");

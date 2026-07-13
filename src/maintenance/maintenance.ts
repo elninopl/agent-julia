@@ -5,6 +5,7 @@ import { extractLinks, listPageIds, listPages, readPage } from "../store/markdow
 import { refreshIndexMd } from "../store/catalog.js";
 import { commitAll, pushToRemote } from "../store/git.js";
 import { composeCore } from "../persona/compose.js";
+import { Proposals, buildProposals } from "./proposals.js";
 
 export interface MaintenanceReport {
   mode: "auto" | "interactive";
@@ -19,8 +20,9 @@ export interface MaintenanceReport {
   coreTruncated: boolean;
   committed: boolean;
   pushed: boolean;
-  // Interactive-only proposals are deferred to v0.2; empty for now.
-  proposals: string[];
+  // Owner-judgment candidates, gathered only in interactive mode (the weekly
+  // digest). null in auto mode.
+  proposals: Proposals | null;
 }
 
 // Days after which a dated fact is FLAGGED (never auto-deleted) as possibly stale.
@@ -55,6 +57,8 @@ export async function runMaintenance(
     if (updated && Date.parse(updated) < cutoff) staleFlagged.push({ id, updated });
   }
 
+  const proposals = mode === "interactive" ? await buildProposals(paths, indexer) : null;
+
   await refreshIndexMd(paths);
   const core = await composeCore(paths, config);
 
@@ -78,7 +82,7 @@ export async function runMaintenance(
     coreTruncated: core.truncated,
     committed,
     pushed,
-    proposals: [],
+    proposals,
   };
 }
 
