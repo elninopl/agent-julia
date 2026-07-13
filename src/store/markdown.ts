@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, stat, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import matter from "gray-matter";
 import { StorePaths, pageFilePath, pageId } from "./paths.js";
@@ -60,6 +60,17 @@ export async function relatedPages(
     if (p2 && extractLinks(p2.body).includes(id)) backlinks.push(other);
   }
   return { links, backlinks };
+}
+
+// Retire a page: move it out of the active KB into archive/ (kept, versioned,
+// out of the index and catalog). The digest's "archive this" action.
+export async function archivePage(paths: StorePaths, page: string): Promise<boolean> {
+  const id = pageId(page);
+  const from = pageFilePath(paths.root, id);
+  if (!existsSync(from)) return false;
+  await mkdir(paths.archiveDir, { recursive: true });
+  await rename(from, join(paths.archiveDir, `${id}.md`));
+  return true;
 }
 
 export async function listPageIds(paths: StorePaths): Promise<string[]> {

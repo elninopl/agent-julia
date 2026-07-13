@@ -17,6 +17,7 @@ Usage:
   agent-julia remote [url]  Show or set the git remote backing up your memory
   agent-julia push       Push the memory store to its remote now
   agent-julia pull       Pull the memory store from its remote now (two-machine sync)
+  agent-julia maintenance  Run store maintenance now (reindex, flag stale/orphans, refresh catalog, commit)
   agent-julia doctor     Check the whole installation: registration, persona blocks, Cowork drift, skills, store
   agent-julia search <query>   Search your memory from the terminal
   agent-julia read <page>      Print one memory page
@@ -173,6 +174,25 @@ async function main(): Promise<void> {
       }
       console.log(`Persona exported to ${path} — the server keeps it refreshed from now on.`);
       console.log(`Known named targets: ${knownAliases().join(", ")} (or any file path).`);
+      break;
+    }
+    case "maintenance": {
+      const cfg = await loadConfig();
+      const { storePaths } = await import("./store/paths.js");
+      const { Indexer } = await import("./index/indexer.js");
+      const { runMaintenance } = await import("./maintenance/maintenance.js");
+      const idx = Indexer.open(storePaths(cfg.memoryDir), cfg);
+      try {
+        const r = await runMaintenance(storePaths(cfg.memoryDir), idx, cfg, "auto");
+        console.log(
+          `Maintenance done: +${r.indexAdded}/~${r.indexUpdated}/-${r.indexRemoved} indexed, ` +
+            `${r.staleFlagged.length} stale-flagged, ${r.orphanLinks.length} orphan link(s), ` +
+            `core ${r.coreTokens}/${r.coreBudget} tokens${r.committed ? ", committed" : ""}${r.pushed ? ", pushed" : ""}.`,
+        );
+        console.log("For the interactive digest (merge/retire proposals), ask your agent to run the weekly digest.");
+      } finally {
+        idx.close();
+      }
       break;
     }
     case "doctor": {

@@ -1,8 +1,10 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { Runtime } from "../runtime.js";
-import { listPages, readPage, relatedPages } from "../store/markdown.js";
+import { archivePage, listPages, readPage, relatedPages } from "../store/markdown.js";
+import { pageId } from "../store/paths.js";
 import { ingest } from "../store/ingest.js";
+import { refreshIndexMd } from "../store/catalog.js";
 import { commitAll, pushToRemote } from "../store/git.js";
 import { appendCorrection } from "../persona/corrections.js";
 import { composeCore } from "../persona/compose.js";
@@ -128,11 +130,32 @@ export function registerTools(server: McpServer, rt: Runtime): void {
   );
 
   server.registerTool(
+    "archive",
+    {
+      title: "Archive a memory page",
+      description:
+        "Retire a page from the active knowledge base into archive/ (kept on disk and in git history, removed from the index and catalog). Use for pages the user confirmed are obsolete — e.g. from the weekly digest. Ask before archiving; never bulk-archive.",
+      inputSchema: { page: z.string().describe("Page id, e.g. 'old-project'") },
+    },
+    async ({ page }) => {
+      const moved = await archivePage(paths, page);
+      if (!moved) return text(`No page found: ${page}`);
+      indexer.removePage(pageId(page));
+      await refreshIndexMd(paths);
+      if (config.git) {
+        const committed = await commitAll(paths.root, `Archive memory page: ${page}`);
+        if (committed && config.gitAutoPush) await pushToRemote(paths.root);
+      }
+      return text(`Archived: ${page} (moved to archive/, removed from index and catalog).`);
+    },
+  );
+
+  server.registerTool(
     "maintenance",
     {
       title: "Run maintenance",
       description:
-        "Run automatic maintenance: rebuild the search index, flag orphan links and stale facts, refresh index.md, recompact the core, and commit. 'interactive' mode additionally surfaces owner-judgment proposals (v0.2).",
+        "Run maintenance. 'auto': rebuild the search index, flag orphan links and stale facts, refresh index.md, recompact the core, commit. 'interactive' — the weekly digest: additionally returns owner-judgment proposals (near-duplicate pages to merge, stale pages to confirm or retire, orphan links, unlinked pages, oversized pages to split). Walk the user through the proposals ONE AT A TIME, never in bulk; apply only what they approve — merge with 'ingest', retire with 'archive', skip freely. Nothing in the digest changes anything by itself.",
       inputSchema: {
         mode: z.enum(["auto", "interactive"]).optional().describe("default: auto"),
       },
