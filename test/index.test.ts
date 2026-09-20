@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { Indexer } from "../src/index/indexer.js";
 import { allIndexedIds, getMeta, setMeta } from "../src/index/db.js";
 import { storePaths, pageFilePath } from "../src/store/paths.js";
-import { writePage } from "../src/store/markdown.js";
+import { todayISO, writePage } from "../src/store/markdown.js";
 import { ConfigSchema } from "../src/config/schema.js";
 
 function setup(language = "en") {
@@ -182,5 +182,60 @@ describe("recall: a question asked in a sentence", () => {
     } finally {
       indexer.close();
     }
+  });
+});
+
+describe("letters and scripts the tokenizer alone cannot handle", () => {
+  it("finds Łódź when you type Lodz", async () => {
+    // remove_diacritics folds everything that decomposes — ą, ć, ę, ó, ś, ź, ż —
+    // but ł does not decompose, so it never folded. The comment in db.ts used to
+    // offer this exact example as proof it worked.
+    const { paths, indexer } = setup("pl");
+    try {
+      await writePage(paths, "miasto", "Konferencja w Łodzi, potem Gdańsk. Było miło.", {});
+      await indexer.sync();
+      expect((await indexer.search("lodzi", 5)).map((h) => h.id)).toContain("miasto");
+      expect((await indexer.search("bylo", 5)).map((h) => h.id)).toContain("miasto");
+      // and the real spelling still works
+      expect((await indexer.search("Łodzi", 5)).map((h) => h.id)).toContain("miasto");
+    } finally {
+      indexer.close();
+    }
+  });
+
+  it("keeps the real spelling in the snippet", async () => {
+    const { paths, indexer } = setup("pl");
+    try {
+      await writePage(paths, "miasto", "Konferencja w Łodzi, potem Gdańsk.", {});
+      await indexer.sync();
+      const hit = (await indexer.search("Gdańsk", 5))[0]!;
+      expect(hit.snippet).toContain("Łodzi");
+    } finally {
+      indexer.close();
+    }
+  });
+
+  it("answers a two-character query in a language written without spaces", async () => {
+    // The trigram tokenizer the index picks for CJK cannot match fewer than
+    // three characters, which is the ordinary length of a word in those
+    // languages — the tokenizer chosen for them failed their commonest query.
+    const { paths, indexer } = setup("ja");
+    try {
+      await writePage(paths, "ml", "機械学習モデルの展開と拡張", {});
+      await indexer.sync();
+      expect((await indexer.search("機械", 5)).map((h) => h.id)).toContain("ml");
+    } finally {
+      indexer.close();
+    }
+  });
+});
+
+describe("dates are the user's, not UTC's", () => {
+  it("stamps the local calendar day", async () => {
+    // 23:30 on the 19th in UTC+2 is still the 19th, not the 20th.
+    const local = new Date("2026-09-19T21:30:00Z");
+    const stamped = todayISO(local);
+    const expected = new Date(local.getTime() - local.getTimezoneOffset() * 60_000).toISOString().slice(0, 10);
+    expect(stamped).toBe(expected);
   });
 });

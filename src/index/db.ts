@@ -38,8 +38,25 @@ function loadDatabaseSync(): new (path: string) => DB {
 // Bump when the derived index's shape changes in a way the tokenizer signature
 // doesn't already capture. The index is disposable: on a signature mismatch we
 // drop and rebuild from the markdown.
-export const INDEX_SCHEMA_VERSION = 3;
+export const INDEX_SCHEMA_VERSION = 4;
 const INDEX_SIG_KEY = "index_signature";
+
+// Letters that carry a stroke or a bar rather than a combining accent. SQLite's
+// `remove_diacritics 2` folds anything that decomposes — ą, ć, ę, ó, ś, ź, ż all
+// work — but ł, đ, ø and ß do not decompose, so they never folded. The comment
+// in this file used to offer "Lodz finds Łódź" as the example, which was the one
+// case that did not work. Folded on both sides, indexing and query, so the two
+// meet in the middle.
+const FOLD: Record<string, string> = {
+  "ł": "l", "Ł": "l", "đ": "d", "Đ": "d", "ø": "o", "Ø": "o",
+  "ß": "ss", "æ": "ae", "Æ": "ae", "œ": "oe", "Œ": "oe", "ı": "i", "ŧ": "t", "ħ": "h",
+};
+
+export function foldForIndex(text: string): string {
+  let out = "";
+  for (const ch of text) out += FOLD[ch] ?? ch;
+  return out;
+}
 
 // Choose the FTS tokenizer from the store's primary language:
 // - CJK / Thai (no word spacing): the `trigram` tokenizer matches substrings, so
@@ -92,6 +109,11 @@ function initSchema(db: DB, tokenizer: string): void {
       id UNINDEXED,
       title,
       body,
+      -- A folded shadow of title+body, for the letters SQLite's remove_diacritics
+      -- cannot fold (ł, đ, ø, ß). Matching happens across every indexed column,
+      -- so "lodz" finds "Łódź" — while title and body keep their real spelling,
+      -- so snippets are still readable.
+      fold,
       tokenize = '${tokenizer}'
     );
 
