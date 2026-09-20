@@ -11,7 +11,7 @@ import {
 } from "../src/surfaces/code-memory.js";
 import { Indexer } from "../src/index/indexer.js";
 import { storePaths } from "../src/store/paths.js";
-import { readPage } from "../src/store/markdown.js";
+import { readPage, writePage } from "../src/store/markdown.js";
 import { parseFrontmatter } from "../src/store/frontmatter.js";
 import { ConfigSchema, CodeMemoryMode } from "../src/config/schema.js";
 
@@ -153,6 +153,49 @@ describe("absorbing what Claude Code wrote anyway", () => {
       expect(report).toMatchObject({ projects: 0, pointers: 0, absorbed: 0 });
       expect(existsSync(join(memory, "MEMORY.md"))).toBe(false);
       expect(readFileSync(join(memory, "deploy-notes.md"), "utf8")).toBe(MEMORY_FILE);
+    } finally {
+      indexer.close();
+    }
+  });
+});
+
+describe("a project that documents itself", () => {
+  it("is routed to, not copied in", async () => {
+    const { dir, projects, memory, paths, config } = sandbox("pointer");
+    const workingDir = join(dir, "my-repo");
+    mkdirSync(join(workingDir, "_doc"), { recursive: true });
+    writeFileSync(join(workingDir, "_doc", "architecture.md"), "# how it works", "utf8");
+    writeFileSync(join(workingDir, "CLAUDE.md"), "# repo rules", "utf8");
+    // A page claims the project and declares the source no directory listing
+    // could reveal: a server that answers questions about it.
+    await writePage(
+      paths,
+      "my-repo",
+      [
+        "---",
+        `project: ${workingDir}`,
+        "sources:",
+        "  - kind: mcp",
+        "    at: my-repo-docs",
+        "    how: docs_search",
+        "    about: the company documentation server",
+        "---",
+        "",
+        "What this store knows about my-repo.",
+      ].join("\n"),
+      {},
+    );
+
+    const indexer = Indexer.open(paths, config);
+    try {
+      await adoptCodeMemory(paths, indexer, config, projects);
+      const block = readFileSync(join(memory, "MEMORY.md"), "utf8");
+      expect(block).toContain("This project's page in agent-julia is `my-repo`");
+      expect(block).toContain("`my-repo-docs` MCP server");
+      expect(block).toContain("docs_search");
+      expect(block).toContain(join(workingDir, "_doc"));
+      expect(block).toContain(join(workingDir, "CLAUDE.md"));
+      expect(block).toContain("route to it");
     } finally {
       indexer.close();
     }

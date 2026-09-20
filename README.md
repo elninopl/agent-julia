@@ -172,6 +172,26 @@ Pages carry light frontmatter — title, status, last-updated date, and an auto-
 
 Point the wizard at an existing markdown knowledge base and Agent Julia adopts it: your pages are indexed and a hand-written `index.md` is left alone — Agent Julia only manages a clearly marked block inside it.
 
+### When a project documents itself
+
+Most projects already document themselves, and that documentation should not become a copy inside your store: it is large, it changes daily, and a copy goes stale the same week. A page can say where the rest of what it is about actually lives, and Agent Julia routes there instead.
+
+```yaml
+project: ~/Sites/prive
+sources:
+  - kind: dir
+    at: _doc
+    about: product and technical documentation
+  - kind: mcp
+    at: acme
+    how: docs_search, docs_read
+    about: company documentation, reachable without the repo
+```
+
+`kind` is `dir`, `file`, `mcp` or `url`, so a documentation tree, a company MCP server, a Notion space and a repo's own `CLAUDE.md` are all declared the same way. A string works too (`"dir:_doc — the product docs"`). A documentation directory and a `CLAUDE.md` in the project are found without being declared; a server or a URL has to be written down, because no directory listing reveals it.
+
+The route then travels wherever the question is asked: `search` attaches it to a hit on that page, `read` appends it to the page, and the block in Claude Code's own memory directory names it for an agent standing inside the repo. Every one of them carries the same rule — ask Agent Julia about the user, their projects and past decisions, read the project's own documentation for how the project works.
+
 ### Claude Code's own memory
 
 Claude Code keeps a memory of its own: one directory per working directory under `~/.claude/projects/<project>/memory`, an index it puts into the prompt of every session started there, and one file per fact. It does the same job as this store and reaches exactly one directory — a fact saved there is invisible to Claude Desktop, to Cowork, and to the same repo opened from another machine.

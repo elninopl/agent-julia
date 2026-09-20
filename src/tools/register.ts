@@ -12,6 +12,7 @@ import { coreHashOf, memoryInstruction } from "../persona/startup.js";
 import { PASTE_LAYOUT } from "../persona/paste.js";
 import { mergeSurfaces, readPasteMarker, readSurfaces, refreshInjectedCore } from "../wizard/register.js";
 import { runMaintenance } from "../maintenance/maintenance.js";
+import { routingNoteFor } from "../store/sources.js";
 
 type TextResult = { content: Array<{ type: "text"; text: string }> };
 
@@ -199,7 +200,12 @@ export function registerTools(server: McpServer, rt: Runtime): void {
     async ({ page }) => {
       const raw = await readPageRaw(paths, page);
       if (raw === null) return text(`No page found: ${page}`);
-      return text(raw);
+      // A page about a project usually covers only the part its documentation
+      // does not. Handing back the page without saying where the rest lives is
+      // how an agent concludes the rest does not exist.
+      const full = await readPage(paths, page).catch(() => null);
+      const note = full ? await routingNoteFor(full.frontmatter) : null;
+      return text(note ? `${raw.trimEnd()}\n\n---\n\n${note}\n` : raw);
     },
   );
 
@@ -215,7 +221,21 @@ export function registerTools(server: McpServer, rt: Runtime): void {
         limit: z.number().int().positive().max(50).optional().describe("Max results (default 8)"),
       },
     },
-    async ({ query, limit }) => json(await indexer.search(query, limit ?? 8)),
+    async ({ query, limit }) => {
+      const hits = await indexer.search(query, limit ?? 8);
+      // Routing travels with the hit: the moment a project's page ranks for a
+      // question, the reader learns that part of the answer is in that
+      // project's own documentation and how to reach it.
+      return json(
+        await Promise.all(
+          hits.map(async (hit) => {
+            const page = await readPage(paths, hit.id).catch(() => null);
+            const note = page ? await routingNoteFor(page.frontmatter) : null;
+            return note ? { ...hit, elsewhere: note } : hit;
+          }),
+        ),
+      );
+    },
   );
 
   server.registerTool(

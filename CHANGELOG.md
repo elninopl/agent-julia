@@ -9,6 +9,15 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ### Added
 
+- **A page can say where the rest of what it is about actually lives, and
+  agent-julia routes there instead of holding a copy.** `project:` claims a
+  working directory and `sources:` lists what is not in the store — a
+  documentation directory, a file, an MCP server, a URL — each with what it
+  covers and how to reach it. A doc directory and a repo's own `CLAUDE.md` are
+  detected without being declared; a server or a URL has to be written down.
+  The route travels with the answer: `search` attaches it to a hit on that
+  page, `read` appends it, and the block in Claude Code's memory directory
+  names it for an agent working inside the repo.
 - **Claude Code's own per-project memory is adopted instead of competing with
   this one.** It keeps a memory directory per working directory, whose index it
   puts into every session's prompt — a second memory doing the same job, holding

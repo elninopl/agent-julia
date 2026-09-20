@@ -10,6 +10,15 @@ import { parseFrontmatter, stringifyFrontmatter } from "../store/frontmatter.js"
 import { readPage, writeFileAtomic } from "../store/markdown.js";
 import { endMarker, removeManagedBlock, startMarker, upsertManagedBlock } from "../managed/block.js";
 import { ingest } from "../store/ingest.js";
+import {
+  PageSource,
+  ROUTING_RULE,
+  detectSources,
+  loadRoutes,
+  mergeSources,
+  normalizeDir,
+  renderSources,
+} from "../store/sources.js";
 import { warn } from "../util/log.js";
 
 // CLIENT-DEPENDENT, undocumented, may break without notice.
@@ -115,10 +124,23 @@ export function pageForProject(project: CodeMemoryProject): string {
   return pageId(`code-memory-${project.name}`);
 }
 
-// `absorbing` is false for a directory whose backlog is past the limit: absorb
-// never runs there until the user asks for it, and a block promising otherwise
-// would be a claim about behaviour that is not happening.
-export function pointerBody(config: Config, page: string | null, absorbing = true): string {
+export interface PointerContext {
+  /** Page holding what was absorbed out of this directory. */
+  page?: string | null;
+  /** Page in the store that is about this project. */
+  projectPage?: string | null;
+  /** Where this project's own documentation lives. */
+  sources?: PageSource[];
+  workingDir?: string | null;
+  /**
+   * False for a directory whose backlog is past the limit: absorb never runs
+   * there until the user asks for it, and a block promising otherwise would be
+   * a claim about behaviour that is not happening.
+   */
+  absorbing?: boolean;
+}
+
+export function pointerBody(config: Config, ctx: PointerContext = {}): string {
   const lines = [
     "This project's durable memory lives in agent-julia, not in this directory.",
     "",
@@ -126,12 +148,27 @@ export function pointerBody(config: Config, page: string | null, absorbing = tru
     "- Save through `ingest`, not by writing a file here. A page in agent-julia is reachable from Claude Code, Claude Desktop and Cowork; a file here is reachable only from this directory.",
     "- When the user corrects how you write or speak, call `correct_voice` before you reply.",
   ];
-  if (config.codeMemory === "absorb" && absorbing) {
+  if (config.codeMemory === "absorb" && ctx.absorbing !== false) {
     lines.push(
       "- A file written here anyway is moved into agent-julia on the next start and replaced by a pointer to the page that holds it.",
     );
   }
-  if (page) lines.push(`- This project's captured notes are on page \`${page}\`.`);
+  if (ctx.projectPage) lines.push(`- This project's page in agent-julia is \`${ctx.projectPage}\`.`);
+  if (ctx.page) lines.push(`- This project's captured notes are on page \`${ctx.page}\`.`);
+
+  // The repo's own documentation. Naming it here is the whole point of the
+  // block on this surface: the model is standing inside the repo, and the
+  // question "where does this belong" has two answers that must not be mixed.
+  const sources = ctx.sources ?? [];
+  if (sources.length > 0) {
+    lines.push(
+      "",
+      "This project documents itself, and that documentation is not in agent-julia:",
+      ...renderSources(sources, ctx.workingDir ?? undefined),
+      "",
+      ROUTING_RULE,
+    );
+  }
   return lines.join("\n");
 }
 
@@ -160,6 +197,9 @@ export async function adoptCodeMemory(
   const report: AdoptionReport = { projects: 0, pointers: 0, absorbed: 0, pending: 0, overflow: 0, failed: 0 };
   if (config.codeMemory === "off") return report;
 
+  // Once per run, not once per project: matching a directory against every page
+  // separately would read the whole store five times on a boot.
+  const routes = await loadRoutes(paths);
   for (const project of await findCodeMemoryProjects(root)) {
     report.projects++;
     try {
@@ -186,7 +226,16 @@ export async function adoptCodeMemory(
       // Per project, and after absorbing: a cumulative counter would have let
       // one project's page be announced in another project's index.
       const page = (await readPage(paths, pageForProject(project))) ? pageForProject(project) : null;
-      if (await upsertIfChanged(project.indexPath, pointerBody(config, page, absorbing))) report.pointers++;
+      const route = project.workingDir ? routes.get(await normalizeDir(project.workingDir)) : undefined;
+      const detected = project.workingDir ? await detectSources(project.workingDir) : [];
+      const body = pointerBody(config, {
+        page,
+        projectPage: route?.page ?? null,
+        sources: mergeSources(route?.sources ?? [], detected),
+        workingDir: project.workingDir,
+        absorbing,
+      });
+      if (await upsertIfChanged(project.indexPath, body)) report.pointers++;
     } catch (err) {
       // One unwritable directory must not stop the rest, and must never take a
       // booting server down with it.
