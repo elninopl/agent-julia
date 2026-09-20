@@ -45,18 +45,25 @@ export function pageFilePath(root: string, page: string): string {
 }
 
 // Normalize any page reference to its canonical id (no dir, no extension,
-// lowercase kebab-case) so links and filenames match regardless of how they
-// were typed. The id is also a security boundary: MCP callers control this
-// string and it becomes a filename under pages/, so everything outside the
-// safe character set — path separators included — collapses to "-", and dot
-// runs are reduced so an id can never traverse out of the store.
+// lowercase) so links and filenames match regardless of how they were typed.
+// The id is also a security boundary: MCP callers control this string and it
+// becomes a filename under pages/, so path separators, control characters and
+// dot runs are collapsed and an id can never traverse out of the store.
+//
+// Letters and digits are kept in any script. The old rule allowed [a-z0-9._-]
+// only, which mapped every name written in Cyrillic, Greek, Chinese, Japanese,
+// Korean or Thai to the single id "untitled" — so in those languages every page
+// was the same file, and each new one destroyed the last. The same rule turned
+// "Kraków" into "krak-w" and "ofeô" into "ofe".
 export function pageId(page: string): string {
-  let id = page.trim();
+  let id = page.trim().normalize("NFKC");
   if (id.startsWith("pages/")) id = id.slice("pages/".length);
   if (id.startsWith("archive/")) id = id.slice("archive/".length);
   if (id.endsWith(".md")) id = id.slice(0, -3);
   id = id.toLowerCase();
-  id = id.replace(/[^a-z0-9._-]+/g, "-");
+  // Anything that is not a letter, a digit or one of . _ - becomes a separator.
+  // Path separators and control characters fall in here, which is the boundary.
+  id = id.replace(/[^\p{L}\p{N}._-]+/gu, "-");
   id = id.replace(/\.{2,}/g, ".");
   id = id.replace(/^[-._]+|[-._]+$/g, "");
   return id || "untitled";
