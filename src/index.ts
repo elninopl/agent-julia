@@ -22,6 +22,7 @@ Usage:
   agent-julia search <query>   Search your memory from the terminal
   agent-julia read <page>      Print one memory page
   agent-julia export [target]  Export the persona to another tool's instruction file (codex, gemini, or a path); no target prints it
+  agent-julia undo [sha] List the last memory commits, or undo one by id
   agent-julia migrate    Run pending data migrations and exit
   agent-julia --help     Show this help
 `;
@@ -200,6 +201,49 @@ async function main(): Promise<void> {
           );
         }
         console.log("For the interactive digest (merge/retire proposals), ask your agent to run the weekly digest.");
+      } finally {
+        idx.close();
+      }
+      break;
+    }
+    case "undo": {
+      const cfg = await loadConfig();
+      if (!cfg.git) {
+        console.log("Git is off for this store, so there is no history to undo from.");
+        break;
+      }
+      const { listStoreCommits, revertCommit } = await import("./store/git.js");
+      const target = process.argv[3];
+      if (!target) {
+        const commits = await listStoreCommits(cfg.memoryDir, 10);
+        if (commits.length === 0) {
+          console.log("No commits in the store yet.");
+          break;
+        }
+        console.log("Recent changes to your memory (newest first):\n");
+        for (const c of commits) {
+          const pages = c.files.filter((f) => f.startsWith("pages/")).map((f) => f.replace(/^pages\/|\.md$/g, ""));
+          console.log(`  ${c.sha.slice(0, 8)}  ${c.date}  ${c.subject}`);
+          if (pages.length) console.log(`            pages: ${pages.join(", ")}`);
+        }
+        console.log("\nUndo one with:  agent-julia undo <id>");
+        break;
+      }
+      const { ok, error } = await revertCommit(cfg.memoryDir, target);
+      if (!ok) {
+        console.log(`Could not undo ${target}: ${error}`);
+        process.exitCode = 1;
+        break;
+      }
+      const { storePaths } = await import("./store/paths.js");
+      const { Indexer } = await import("./index/indexer.js");
+      const idx = Indexer.open(storePaths(cfg.memoryDir), cfg);
+      try {
+        const synced = await idx.sync();
+        console.log(
+          `Undone ${target} as a new commit. Index: +${synced.added}/~${synced.updated}/-${synced.removed}.`,
+        );
+        if (cfg.gitRemote) console.log("Run `agent-julia push` to send the undo to your remote.");
       } finally {
         idx.close();
       }

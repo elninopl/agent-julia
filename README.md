@@ -166,7 +166,7 @@ your-memory/
   archive/     retired pages, read-only
 ```
 
-Pages carry light frontmatter — title, status, last-updated date, and an auto-detected language — and link to each other with `[[wiki-links]]`. Writing always goes through the `ingest` tool, which updates the page, refreshes the catalog, appends the journal, reindexes, and commits to git in one step.
+Pages carry light frontmatter — title, status, last-updated date, and an auto-detected language — and link to each other with `[[wiki-links]]`. Writing always goes through the `ingest` tool, which writes the page, refreshes the catalog, appends the journal, reindexes, and commits to git in one step. A write either appends to the page or replaces it, says which it did and by how much, and refuses a replace that would throw an established page away. `agent-julia undo` walks the commits it wrote and reverses one.
 
 Point the wizard at an existing markdown knowledge base and Agent Julia adopts it: your pages are indexed and a hand-written `index.md` is left alone — Agent Julia only manages a clearly marked block inside it.
 
@@ -184,7 +184,7 @@ You drive Agent Julia by talking to it (see [Usage](#usage)); these are the unde
 | `search` | Find pages by keyword and meaning |
 | `read` | Read a page in full |
 | `list` | List every page with title, status, and date |
-| `ingest` | Create or update a page (schema-enforced, git-committed) |
+| `ingest` | Write a page: `append` a fact, or `replace` the whole thing (schema-enforced, guarded, git-committed) |
 | `correct_voice` | Record a voice correction |
 | `get_core` | Return the budgeted persona core |
 | `maintenance` | Reindex, flag stale notes and broken links, recompact, commit |
@@ -207,6 +207,7 @@ The persona core is also exposed as a resource (`agent-julia://core`) for client
 | `agent-julia remote [url]` | Show or set a git remote to back up your memory |
 | `agent-julia push` | Push the memory store to its remote now |
 | `agent-julia pull` | Pull the memory store from its remote now (two-machine sync) |
+| `agent-julia undo` | List recent changes to your memory, and undo one by id |
 | `agent-julia migrate` | Apply pending data migrations and exit |
 
 </details>

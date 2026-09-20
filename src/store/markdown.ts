@@ -145,6 +145,15 @@ export async function readPage(paths: StorePaths, page: string): Promise<Page | 
   };
 }
 
+// The file exactly as it sits on disk, frontmatter and all. A caller that reads
+// a page in order to write it back needs this: everything else parses the
+// frontmatter away, and what is parsed away cannot be written back.
+export async function readPageRaw(paths: StorePaths, page: string): Promise<string | null> {
+  const path = pageFilePath(paths.root, page);
+  if (!existsSync(path)) return null;
+  return readFile(path, "utf8");
+}
+
 export async function listPages(paths: StorePaths): Promise<PageSummary[]> {
   const ids = await listPageIds(paths);
   const out: PageSummary[] = [];
@@ -161,29 +170,101 @@ export async function listPages(paths: StorePaths): Promise<PageSummary[]> {
   return out;
 }
 
+// How a write relates to what is already on the page.
+//   "replace" — the payload becomes the whole page. The old default, and still
+//               the right call for a rewrite, a merge or a digest proposal.
+//   "append"  — the payload is added under what is already there. What the model
+//               almost always means by "remember this".
+export type WriteMode = "replace" | "append";
+
+export interface WriteResult {
+  path: string;
+  mode: WriteMode;
+  bytesBefore: number;
+  bytesAfter: number;
+  linesRemoved: number;
+  linesAdded: number;
+}
+
+// A replace that throws away most of an established page is almost never what
+// the caller meant; it is what "remember one fact" looks like when it arrives as
+// a whole-page write. Below this much surviving content, refuse and say how to
+// proceed on purpose.
+const SHRINK_FLOOR = 0.4;
+// Below this the page is a stub, and rewriting a stub is ordinary. Roughly two
+// short lines: the incident this guard exists for replaced four facts with one.
+const SHRINK_GUARD_MIN_BYTES = 120;
+
+export class DestructiveWriteError extends Error {
+  constructor(
+    readonly id: string,
+    readonly bytesBefore: number,
+    readonly bytesAfter: number,
+    readonly linesRemoved: number,
+  ) {
+    super(
+      `Refusing to replace "${id}": that write drops ${linesRemoved} line(s), ` +
+        `${bytesBefore} bytes down to ${bytesAfter}. ` +
+        `If you meant to add to the page, call again with mode "append". ` +
+        `If you really meant to rewrite it, call again with confirm: true.`,
+    );
+    this.name = "DestructiveWriteError";
+  }
+}
+
 // Write a page, ensuring a schema-conformant frontmatter (title/status/updated).
-// Returns the absolute path written.
+// Existing frontmatter is preserved and the payload merged over it, so a
+// read-modify-write cycle cannot quietly drop keys the caller never mentioned.
 export async function writePage(
   paths: StorePaths,
   page: string,
   content: string,
-  opts: { status?: string; title?: string; now?: Date } = {},
-): Promise<string> {
+  opts: {
+    status?: string;
+    title?: string;
+    now?: Date;
+    mode?: WriteMode;
+    confirm?: boolean;
+  } = {},
+): Promise<WriteResult> {
   const id = pageId(page);
   const path = pageFilePath(paths.root, id);
   await mkdir(paths.pagesDir, { recursive: true });
 
-  const parsed = matter(content, MATTER_OPTIONS);
+  if (!content.trim()) {
+    throw new Error(`Refusing to write an empty page "${id}". Pass content, or archive the page instead.`);
+  }
+
+  const mode: WriteMode = opts.mode ?? "replace";
+  const existingRaw = existsSync(path) ? await readFile(path, "utf8") : null;
+  const existing = existingRaw ? parseMatter(existingRaw, path) : null;
+  const existingBody = existing?.content.trim() ?? "";
+  const existingFm = (existing?.data ?? {}) as PageFrontmatter;
+
+  const parsed = parseMatter(content, `payload for ${id}`);
   const fm = parsed.data as PageFrontmatter;
-  // Body may have come without frontmatter; in that case parsed.content === content.
-  const body = parsed.content.trim();
+  const incomingBody = parsed.content.trim();
+
+  const body = mode === "append" && existingBody ? `${existingBody}\n\n${incomingBody}` : incomingBody;
+
+  if (mode === "replace" && !opts.confirm && existingBody.length >= SHRINK_GUARD_MIN_BYTES) {
+    if (body.length < existingBody.length * SHRINK_FLOOR) {
+      throw new DestructiveWriteError(
+        id,
+        existingBody.length,
+        body.length,
+        countLines(existingBody) - countLines(body),
+      );
+    }
+  }
 
   // Auto-detect the page language (metadata) unless the author set it explicitly.
-  const lang = fm.lang ?? detectLanguage(body);
+  const lang = fm.lang ?? existingFm.lang ?? detectLanguage(body);
 
   const merged: PageFrontmatter = {
-    title: fm.title ?? opts.title ?? id,
-    status: fm.status ?? opts.status ?? "active",
+    ...stripCoreKeys(existingFm),
+    title: fm.title ?? existingFm.title ?? opts.title ?? id,
+    status: fm.status ?? opts.status ?? existingFm.status ?? "active",
     updated: todayISO(opts.now),
     ...(lang ? { lang } : {}),
     ...stripCoreKeys(fm),
@@ -191,7 +272,26 @@ export async function writePage(
 
   const out = matter.stringify("\n" + body + "\n", merged, MATTER_OPTIONS);
   await writeFile(path, out, "utf8");
-  return path;
+  return {
+    path,
+    mode,
+    bytesBefore: existingBody.length,
+    bytesAfter: body.length,
+    linesRemoved: Math.max(countLines(existingBody) - countLines(body), 0),
+    linesAdded: Math.max(countLines(body) - countLines(existingBody), 0),
+  };
+}
+
+function countLines(text: string): number {
+  return text ? text.split("\n").length : 0;
+}
+
+function parseMatter(raw: string, what: string): matter.GrayMatterFile<string> {
+  try {
+    return matter(raw, MATTER_OPTIONS);
+  } catch (err) {
+    throw new Error(`cannot parse front matter in ${what}: ${(err as Error).message}`);
+  }
 }
 
 function stripCoreKeys(fm: PageFrontmatter): PageFrontmatter {

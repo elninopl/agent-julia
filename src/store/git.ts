@@ -222,3 +222,74 @@ export async function commitAll(root: string, message: string): Promise<boolean>
   });
   return res ?? false;
 }
+
+export interface StoreCommit {
+  sha: string;
+  date: string;
+  subject: string;
+  files: string[];
+}
+
+// The last N commits that touched the store, newest first. The product writes a
+// commit on every ingest and has never once read one back; this is the reading
+// half, and what `undo` picks from.
+export async function listStoreCommits(root: string, limit = 10): Promise<StoreCommit[]> {
+  if (!isGitRepo(root)) return [];
+  try {
+    const out = await git(root, [
+      "log",
+      `-n${limit}`,
+      "--date=short",
+      "--pretty=format:%H\u0001%ad\u0001%s",
+      "--name-only",
+    ]);
+    if (!out) return [];
+    return out
+      .split(/\n(?=[0-9a-f]{40}\u0001)/)
+      .map((block) => {
+        const [head, ...rest] = block.split("\n");
+        const [sha, date, subject] = (head ?? "").split("\u0001");
+        return {
+          sha: sha ?? "",
+          date: date ?? "",
+          subject: subject ?? "",
+          files: rest.filter((l) => l.trim()),
+        };
+      })
+      .filter((c) => c.sha);
+  } catch (err) {
+    warn("could not read the store history:", (err as Error).message);
+    return [];
+  }
+}
+
+// Undo one commit by recording its inverse. A revert, never a history rewrite:
+// the store may already be pushed and shared with a second machine, and losing
+// the record of what was undone would defeat the point of versioning it.
+export async function revertCommit(
+  root: string,
+  sha: string,
+): Promise<{ ok: boolean; error?: string }> {
+  if (!isGitRepo(root)) return { ok: false, error: "the store is not a git repository" };
+  const res = await withGitLock(root, async (): Promise<{ ok: boolean; error?: string }> => {
+    try {
+      const dirty = await git(root, ["status", "--porcelain"]);
+      if (dirty) {
+        return {
+          ok: false,
+          error: "the store has uncommitted changes — commit or discard them first",
+        };
+      }
+      await git(root, ["revert", "--no-edit", sha]);
+      return { ok: true };
+    } catch (err) {
+      try {
+        await git(root, ["revert", "--abort"]);
+      } catch {
+        // nothing to abort, or the abort failed — the message below points the user at it
+      }
+      return { ok: false, error: (err as Error).message.split("\n").find((l) => l.trim()) ?? "revert failed" };
+    }
+  });
+  return res ?? { ok: false, error: "another git operation held the lock — try again" };
+}
