@@ -132,11 +132,11 @@ Deeper detail — search, persona, the file layout, and the full configuration a
 
 Two layers work together, and both run locally.
 
-**Keyword (always on).** SQLite FTS5 with Porter stemming, so `debug` matches `debugging`, and diacritics folding, so `cafe` matches `café` and `krakow` matches `Kraków`. For languages without spaces between words — Chinese, Japanese, Korean, Thai — Agent Julia switches to a trigram tokenizer so substring search still works. The tokenizer is chosen from your configured language.
+**Keyword (always on).** SQLite FTS5 with Porter stemming, so `debug` matches `debugging`, and diacritics folding, so `cafe` matches `café` and `lodz` matches `Łódź` (the letters SQLite cannot fold on its own — ł, đ, ø, ß — are carried by a folded shadow column, so titles and snippets keep their real spelling). For languages without spaces between words — Chinese, Japanese, Korean, Thai — Agent Julia switches to a trigram tokenizer, with a substring fallback for the one- and two-character queries that are ordinary in those languages. A question asked as a sentence is answered by a ladder: all terms, then content words only, then any two, then the most distinctive one alone. Each hit says which rung it came from, so a loose answer looks loose.
 
 **Meaning (optional).** Turn on semantic search to find a note even when you phrase it differently, and across languages — a question in Polish can surface an English note. You choose how it runs:
 
-- **Local model** — a multilingual model (the `multilingual-e5` family, ~118 languages) runs in-process. No server, no API key, fully offline after a one-time model download. Pick a size in the wizard: small (~120 MB download, ~0.3 GB RAM), base (~280 MB, ~0.6 GB), or large (~560 MB, ~1.3 GB). The size is a one-time download cached on disk; the model also loads into RAM while search runs. The wizard reads your machine's RAM and CPU cores and suggests a tier. RAM is rarely the limit — even the largest model needs only ~1.3 GB — so the suggestion leans on cores, since a bigger model's main cost is slower CPU inference per query. The real trade-off is download size and speed against quality. Needs one extra package, `@huggingface/transformers`, which stays optional so the base install is tiny.
+- **Local model** — a multilingual model (the `multilingual-e5` family, ~118 languages) runs in-process. Pages are embedded in parts, split on their own headings, so a long page is searchable to its end and not just to the model's first 512 tokens. No server, no API key, fully offline after a one-time model download. Pick a size in the wizard: small (~120 MB download, ~0.3 GB RAM), base (~280 MB, ~0.6 GB), or large (~560 MB, ~1.3 GB). The size is a one-time download cached on disk; the model also loads into RAM while search runs. The wizard reads your machine's RAM and CPU cores and suggests a tier. RAM is rarely the limit — even the largest model needs only ~1.3 GB — so the suggestion leans on cores, since a bigger model's main cost is slower CPU inference per query. The real trade-off is download size and speed against quality. Needs one extra package, `@huggingface/transformers`, which stays optional so the base install is tiny.
 - **Hosted API** — any OpenAI-compatible endpoint (OpenAI, or a local server like Ollama or LM Studio). Your key is read from an environment variable and never written to disk.
 - **None** — stay keyword-only. The default, and completely dependency-free.
 
@@ -182,10 +182,14 @@ You drive Agent Julia by talking to it (see [Usage](#usage)); these are the unde
 | Tool | What it does |
 | --- | --- |
 | `search` | Find pages by keyword and meaning |
-| `read` | Read a page in full |
-| `list` | List every page with title, status, and date |
+| `read` | Read a page exactly as stored, front matter included |
+| `list` | List pages with title, status, and date (bounded; takes `limit` and `since`) |
 | `ingest` | Write a page: `append` a fact, or `replace` the whole thing (schema-enforced, guarded, git-committed) |
 | `correct_voice` | Record a voice correction |
+| `retract_correction` | Withdraw one, keeping the record of having had it |
+| `history` | How one page changed: when, what was added, what was removed |
+| `related` | Walk the `[[wiki-links]]` around a page |
+| `archive` | Retire a page into `archive/` |
 | `get_core` | Return the budgeted persona core |
 | `maintenance` | Reindex, flag stale notes and broken links, recompact, commit |
 
@@ -203,11 +207,14 @@ The persona core is also exposed as a resource (`agent-julia://core`) for client
 | `agent-julia read <page>` | Print one memory page |
 | `agent-julia export [target]` | Export the persona to another tool's instruction file (`codex`, `gemini`, or any path); `--list` / `--remove <target>` manage them |
 | `agent-julia maintenance` | Run automatic store maintenance from the terminal (reindex, flag stale/orphans, refresh catalog, commit) |
-| `agent-julia doctor` | Check the whole installation: MCP registration, persona blocks (including Cowork paste drift), skills, store and index — with a suggested fix per finding |
+| `agent-julia doctor [--fix]` | Check the whole installation: MCP registration, persona blocks (including Cowork paste drift), skills, store, index, and whether semantic search actually loads — with a suggested fix per finding. `--fix` applies the repairs that are safe to make unattended |
 | `agent-julia remote [url]` | Show or set a git remote to back up your memory |
 | `agent-julia push` | Push the memory store to its remote now |
 | `agent-julia pull` | Pull the memory store from its remote now (two-machine sync) |
-| `agent-julia undo` | List recent changes to your memory, and undo one by id |
+| `agent-julia undo [id]` | List recent changes to your memory, and undo one by id |
+| `agent-julia reindex` | Rebuild the search index from your markdown (it is disposable) |
+| `agent-julia unarchive [page]` | List what is archived, and bring one back |
+| `agent-julia relocate <path>` | Move the memory store and point the config at it |
 | `agent-julia migrate` | Apply pending data migrations and exit |
 
 </details>
