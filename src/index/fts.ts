@@ -1,4 +1,4 @@
-import { DB } from "./db.js";
+import { DB, foldForIndex } from "./db.js";
 
 export interface FtsHit {
   id: string;
@@ -25,7 +25,12 @@ export function ftsTitle(db: DB, id: string): string | undefined {
 
 export function ftsUpsert(db: DB, id: string, title: string, body: string): void {
   ftsDelete(db, id);
-  db.prepare("INSERT INTO pages_fts (id, title, body) VALUES (?, ?, ?)").run(id, title, body);
+  db.prepare("INSERT INTO pages_fts (id, title, body, fold) VALUES (?, ?, ?, ?)").run(
+    id,
+    title,
+    body,
+    foldForIndex(`${title}\n${body}`),
+  );
 }
 
 // Words that carry no retrieval signal but, because every term is ANDed, are
@@ -48,7 +53,7 @@ const STOPWORDS = new Set([
 ]);
 
 function terms(query: string): string[] {
-  return query
+  return foldForIndex(query)
     .toLowerCase()
     .split(/\s+/)
     .map((t) => t.replace(/["'()*^:-]/g, "").trim())
@@ -61,7 +66,7 @@ const quoted = (t: string): string => `"${t}"`;
 // what the page is ABOUT; a hit in the body may be a passing mention. Without a
 // weight the two ranked the same, so asking about "acme cennik" put four other
 // pages above the page called "acme — cennik".
-const BM25 = "bm25(pages_fts, 0.0, 10.0, 1.0)";
+const BM25 = "bm25(pages_fts, 0.0, 10.0, 1.0, 0.5)";
 
 function run(db: DB, match: string, limit: number, via: FtsHit["via"]): FtsHit[] {
   let rows: Array<{ id: string; title: string; rank: number; snippet: string }>;
@@ -130,7 +135,31 @@ export function ftsSearch(db: DB, query: string, limit: number): FtsHit[] {
       const single = run(db, quoted(t), limit, "fts-loose");
       if (single.length > 0) return single;
     }
+    return substringFallback(db, pool, limit);
+  }
+  return substringFallback(db, all, limit);
+}
+
+// The trigram tokenizer, which the index uses for Chinese, Japanese, Korean and
+// Thai, cannot match anything shorter than three characters — and one or two
+// characters is the ordinary length of a word in exactly those languages. A
+// bounded LIKE scan is the honest answer for a query FTS structurally cannot
+// serve; it only runs when the ladder above found nothing.
+function substringFallback(db: DB, pool: string[], limit: number): FtsHit[] {
+  const short = pool.filter((t) => t.length > 0 && t.length < 3);
+  if (short.length === 0) return [];
+  const term = short.sort((a, b) => b.length - a.length)[0]!;
+  try {
+    const rows = db
+      .prepare(
+        `SELECT id, title, substr(body, 1, 160) AS snippet
+         FROM pages_fts
+         WHERE title LIKE ? OR body LIKE ?
+         LIMIT ?`,
+      )
+      .all(`%${term}%`, `%${term}%`, limit) as Array<{ id: string; title: string; snippet: string }>;
+    return rows.map((r) => ({ id: r.id, title: r.title, score: 0.1, snippet: r.snippet, via: "fts-loose" as const }));
+  } catch {
     return [];
   }
-  return [];
 }

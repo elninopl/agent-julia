@@ -34,8 +34,14 @@ export interface PageSummary {
 
 const LINK_RE = /\[\[([^\]]+)\]\]/g;
 
+// The user's calendar date, not UTC's. `updated` drives the 270-day staleness
+// threshold, backup directory names and the prefix on every voice correction;
+// stamping UTC meant that for anyone east of Greenwich, a fact saved after
+// midnight local time was dated yesterday, and for UTC+13 most of the working
+// day was.
 export function todayISO(now = new Date()): string {
-  return now.toISOString().slice(0, 10);
+  const local = new Date(now.getTime() - now.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 10);
 }
 
 // Extract [[wiki-style]] cross-links from a body, normalized to page ids.

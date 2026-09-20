@@ -80,6 +80,21 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ### Fixed
 
+- **"Lodz" finds "Łódź" now, which the code claimed it already did.** SQLite's
+  `remove_diacritics 2` folds anything that decomposes — ą, ć, ę, ó, ś, ź, ż all
+  worked — but ł, đ, ø and ß do not decompose and never folded. The comment in
+  the index offered "Lodz finds Łódź" as its example, which was the one case
+  that failed. A folded shadow column now carries those letters, so matching
+  works while titles and snippets keep their real spelling.
+- **A two-character query works in the languages that need it.** The trigram
+  tokenizer the index picks for Chinese, Japanese, Korean and Thai cannot match
+  fewer than three characters, which is the ordinary word length in exactly
+  those languages: the tokenizer chosen for them failed their commonest query.
+  A bounded substring scan answers it when the keyword ladder finds nothing.
+- **Dates are the user's calendar day, not UTC's.** `updated` drives the
+  270-day staleness threshold, backup directory names and the prefix on every
+  voice correction. For anyone east of Greenwich a fact saved after midnight
+  was dated yesterday; at UTC+13, most of the working day was.
 - **Adopting a repo no longer commits the search index.** The store's
   `.gitignore` was written only when none existed, so a folder that already had
   one staged `.agent-julia/index.sqlite` and its `-wal`/`-shm` on every write —
