@@ -1,10 +1,10 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/elninopl/agent-julia/main/scripts/AgentJulia.png" alt="Agent Julia — one brain for Claude Code and Claude Cowork" width="540">
+  <img src="https://raw.githubusercontent.com/elninopl/agent-julia/main/scripts/AgentJulia.png" alt="Agent Julia — a named persona and one memory for Claude Code and Claude Desktop" width="540">
 </p>
 
 # Agent Julia
 
-**One brain for your AI.** A memory and persona that stay the same across Claude Code and Claude Desktop (Cowork) — owned by you, stored as plain markdown in a git repo, and kept small in the model's context.
+**Give your AI a name, a voice, and a memory that stays.** Build a persona once — what it is called, how it speaks, what it must never store — and talk to it by name across Claude Code and Claude Desktop. It is yours: plain markdown in a git repo you own, kept small in the model's context, corrected in passing and remembered for good.
 
 [![npm](https://img.shields.io/npm/v/agent-julia.svg)](https://www.npmjs.com/package/agent-julia)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
@@ -13,15 +13,17 @@
 npx agent-julia init
 ```
 
-Every Claude surface forgets between sessions and keeps its own separate notes, so the same person gets a slightly different, amnesiac assistant on each one. The usual fix — piling everything into `CLAUDE.md` and global instructions — backfires, because long context measurably degrades the model. Agent Julia gives your AI a real brain instead: one memory you own as plain markdown, with only a small, budgeted slice loaded into context and the rest recalled on demand.
+Every Claude surface forgets between sessions and keeps its own separate notes, so the same person gets a slightly different, amnesiac assistant on each one — one that has to be re-taught the same preferences and called nothing in particular. The usual fix, piling everything into `CLAUDE.md` and global instructions, backfires: long context measurably degrades the model, and a pasted block goes stale the moment you correct something.
+
+Agent Julia gives your AI an identity instead of a configuration. You name it, choose how it speaks, and correct it the way you would correct a colleague — "stop hedging", "don't open with my name" — and it keeps that, everywhere, from the next turn on. Its memory is one folder of markdown you own, with a small budgeted slice of persona riding each message and the rest recalled only when it is needed.
 
 ## Highlights
 
-- **One memory, every surface** — Claude Code and Cowork share the same brain; a fact saved in one is known in the other.
-- **You own it** — plain markdown in a git repo you control, not a database locked inside an app. Readable, portable, `git log`-able.
+- **A persona with a name** — you set what it is called, its pronouns, the language it replies in and how it writes. You address it by name, and it answers as that, not as "the assistant".
+- **A voice you shape by talking** — "stop hedging", "don't use that word", "write to my co-founder, not to an engineer". Say it once, in passing, and it holds. Withdraw it the same way.
+- **One memory, every surface** — Claude Code and Claude Desktop share the same brain; a fact saved in one is known in the other.
+- **You own it** — plain markdown in a git repo you control, not a database locked inside an app. Readable, portable, `git log`-able, and no write can silently destroy what it was meant to extend.
 - **Small context footprint** — only a budgeted persona core rides each turn; everything else is recalled on demand, so the window stays clear.
-- **Local and private by default** — no API key, no server, nothing leaves your machine (built-in `node:sqlite`; optional fully-local embeddings).
-- **A persona that sticks** — the name, pronouns, and voice you set; corrections you make once apply everywhere, from the next turn.
 
 ---
 
@@ -170,6 +172,20 @@ Pages carry light frontmatter — title, status, last-updated date, and an auto-
 
 Point the wizard at an existing markdown knowledge base and Agent Julia adopts it: your pages are indexed and a hand-written `index.md` is left alone — Agent Julia only manages a clearly marked block inside it.
 
+### How the persona reaches each surface
+
+Two halves, delivered differently, because one of them can be written for you and the other cannot.
+
+| | Claude Code | Claude Desktop |
+| --- | --- | --- |
+| Identity, language, never-store | rewritten in `~/.claude/CLAUDE.md` on every server start | pasted once by you; it only changes if you rename your agent |
+| Your voice and every correction | same block, always current | fetched with `get_core` at the start of a conversation |
+| When a correction you just made applies | that turn, and in the prompt from the next session | that turn, and in the next conversation |
+
+The server also hands every client a short set of instructions when it connects — who the agent is, what it must never store, and the instruction to load the rest. That part needs no paste at all, so a machine where you never finished the setup still gets a named agent that knows what it must not keep.
+
+`agent-julia doctor` reports what it actually knows here, and says plainly what it cannot: it has no way to read the in-app field, so it tells you what it last asked you to paste, what the last Desktop session was seen running with, and whether the voice has genuinely been fetched there.
+
 Optionally back the store with a git remote — a private GitHub repo, say — set in the wizard or later with `agent-julia remote <url>`. By default it syncs on maintenance (and server startup), best-effort, so an offline moment or a missing credential never blocks a write; it just pushes on the next run. Turn on `gitAutoPush` to push after every write instead, trading a network round-trip per write for immediate off-machine backup. `agent-julia push` syncs on demand. With a remote set, the server also **pulls on startup** — so on a second machine, a session starts from what the first one pushed; a merge conflict is aborted (never left half-done) and reported for a by-hand `agent-julia pull`.
 
 <details>
@@ -260,7 +276,7 @@ What it adds:
 
 Then append the persona block (printed by the command) to `~/.claude/CLAUDE.md`.
 
-**Claude Desktop (Cowork)** — add the same `mcpServers` entry to the Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS), and paste the persona block into **Settings → Cowork → Global instructions**. Cowork keeps that field inside the app, so it can't be written for you — but `agent-julia init` and `agent-julia sync` copy the block to your clipboard, so it's a single paste.
+**Claude Desktop** — add the same `mcpServers` entry to the Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS), and paste the short persona block into **Settings → Instructions for Claude**. That field lives inside the app and no program can write it, so it is the one manual step — which is exactly why what goes in it is only the part that never changes: the name, the pronouns, the reply language and the never-store list. Your voice and your corrections are not in it; the agent fetches those at the start of a conversation, so they are current without you pasting again. `agent-julia paste` prints the block and copies it.
 
 > **Dispatch (mobile) isn't supported.** It can't run or reach the local stdio MCP server, and it doesn't read Cowork's Global instructions — so neither the memory tools nor the persona reach it in a local-first setup. Covering Dispatch would need the server hosted remotely, which is out of scope here.
 

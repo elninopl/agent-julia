@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { warn } from "../util/log.js";
-import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { withFileLock } from "./lock.js";
 import { dirname } from "node:path";
 
 // A managed block is a clearly-marked region agent-julia owns inside a file it
@@ -44,6 +45,14 @@ export async function upsertManagedBlock(
   id: string,
   body: string,
 ): Promise<{ created: boolean; backedUp: boolean }> {
+  return withFileLock(filePath, () => upsertLocked(filePath, id, body));
+}
+
+async function upsertLocked(
+  filePath: string,
+  id: string,
+  body: string,
+): Promise<{ created: boolean; backedUp: boolean }> {
   await mkdir(dirname(filePath), { recursive: true });
   const existed = existsSync(filePath);
   await backupOnce(filePath);
@@ -77,7 +86,7 @@ export async function upsertManagedBlock(
     const sep = current.length === 0 ? "" : current.endsWith("\n\n") ? "" : current.endsWith("\n") ? "\n" : "\n\n";
     current = `${current}${sep}${block}\n`;
   }
-  await writeFile(filePath, current, "utf8");
+  await writeFileAtomic(filePath, current);
   return { created: !existed, backedUp: existed };
 }
 
@@ -89,4 +98,17 @@ export async function removeManagedBlock(filePath: string, id: string): Promise<
   const cleaned = current.replace(blockRegion(id), "").replace(/\n{3,}/g, "\n\n").trimEnd() + "\n";
   await writeFile(filePath, cleaned, "utf8");
   return true;
+}
+
+// Temp file plus rename. These files belong to the user, not to us: a truncated
+// ~/.claude/CLAUDE.md is a broken Claude install and a lost profile.
+async function writeFileAtomic(path: string, content: string): Promise<void> {
+  const tmp = `${path}.${process.pid}.tmp`;
+  try {
+    await writeFile(tmp, content, "utf8");
+    await rename(tmp, path);
+  } catch (err) {
+    await unlink(tmp).catch(() => undefined);
+    throw err;
+  }
 }

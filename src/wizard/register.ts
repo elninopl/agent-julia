@@ -2,12 +2,13 @@ import { existsSync, realpathSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { copyFile, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { homedir, platform } from "node:os";
+import { homedir, hostname, platform } from "node:os";
 import { dirname, join, sep } from "node:path";
 import { Config, Surface } from "../config/schema.js";
 import { log, warn } from "../util/log.js";
 import { copyToClipboard } from "../util/clipboard.js";
 import { buildInjectedCore, STARTUP_BLOCK_ID } from "../persona/startup.js";
+import { PASTE_LAYOUT, configFingerprint, pasteBody, pasteHash } from "../persona/paste.js";
 import { storePaths } from "../store/paths.js";
 import { endMarker, hasManagedBlock, removeManagedBlock, startMarker, upsertManagedBlock } from "../managed/block.js";
 import { installSkills, skillsTargetDir, uninstallSkills } from "../skills/install.js";
@@ -121,7 +122,66 @@ export function coworkMirrorPath(): string {
 // this is the best available signal: when the current core differs from this
 // hash, the Cowork persona has drifted and needs a re-paste — `doctor` flags it.
 export function coworkPasteMarkerPath(): string {
+  return join(homedir(), ".config", "agent-julia", "cowork-paste.json");
+}
+
+// The pre-0.1.39 marker: a bare sha1 of the full block the user was asked to
+// paste. Kept only as evidence that they were once asked under layout 1.
+export function legacyPasteMarkerPath(): string {
   return join(homedir(), ".config", "agent-julia", "cowork-pasted.sha1");
+}
+
+// Bookkeeping about the surfaces that connect: which clients have started the
+// server and when each last loaded the voice. agent-julia's own config dir, not
+// the memory store, and never git-committed.
+export function surfacesStatePath(): string {
+  return join(homedir(), ".config", "agent-julia", "surfaces.json");
+}
+
+export interface PasteMarker {
+  layout: number;
+  variant: "stable" | "with-voice";
+  stableHash: string;
+  configFingerprint: string;
+  askedAt: string;
+  askedOn: string;
+  previousLayout?: number;
+  corrections?: number;
+}
+
+export async function readPasteMarker(path = coworkPasteMarkerPath()): Promise<PasteMarker | null> {
+  try {
+    return JSON.parse(await readFile(path, "utf8")) as PasteMarker;
+  } catch {
+    return null;
+  }
+}
+
+export async function writePasteMarker(marker: PasteMarker): Promise<void> {
+  const path = coworkPasteMarkerPath();
+  await mkdir(dirname(path), { recursive: true });
+  const prior = await readPasteMarker();
+  await writeFile(path, JSON.stringify({ ...prior, ...marker }, null, 2) + "\n", "utf8");
+}
+
+export interface SurfacesState {
+  boots?: Record<string, { at: string }>;
+  fetches?: Record<string, { at: string; coreHash: string }>;
+  migrationNotices?: { count: number; lastAt: string };
+}
+
+export async function readSurfaces(path = surfacesStatePath()): Promise<SurfacesState> {
+  try {
+    return JSON.parse(await readFile(path, "utf8")) as SurfacesState;
+  } catch {
+    return {};
+  }
+}
+
+export async function writeSurfaces(next: SurfacesState): Promise<void> {
+  const path = surfacesStatePath();
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, JSON.stringify(next, null, 2) + "\n", "utf8");
 }
 
 export function coreHash(core: string): string {
@@ -255,15 +315,18 @@ export async function install(config: Config): Promise<InstallStep[]> {
     const detail = copied
       ? [
           "Copied to your clipboard — paste it once:",
-          "  1. Claude Desktop → Settings → Cowork → Global instructions",
-          "  2. paste (⌘V / Ctrl-V) and save",
+          "  1. Claude Desktop → Settings → Instructions for Claude",
+          "  2. replace any earlier agent-julia block, paste (⌘V / Ctrl-V) and save",
           "  3. restart Claude Desktop",
+          "",
+          "It is short on purpose: it carries who you are and what must never be stored.",
+          "Your voice and your corrections are fetched live, so this text does not go stale.",
         ]
       : [
-          "Cowork keeps Global instructions inside the app, so paste it once:",
+          "Claude Desktop keeps that field inside the app, so paste it once:",
           `  1. open this file:  ${mirror}`,
           "  2. copy everything in it",
-          "  3. in Claude Desktop: Settings → Cowork → Global instructions → paste",
+          "  3. in Claude Desktop: Settings → Instructions for Claude → replace the old block",
         ];
     steps.push({
       surface: "cowork",
@@ -271,9 +334,17 @@ export async function install(config: Config): Promise<InstallStep[]> {
       status: "manual",
       detail: detail.join("\n"),
     });
-    // Record what the user was asked to paste, so `doctor` can tell when the
-    // core has drifted from the Cowork field since.
-    await writeFile(coworkPasteMarkerPath(), coreHash(core) + "\n", "utf8");
+    // Record what we ASKED for. It is the only thing we can know: the field
+    // itself is unreadable from outside the app.
+    const body = await pasteBody(config);
+    await writePasteMarker({
+      layout: PASTE_LAYOUT,
+      variant: "stable",
+      stableHash: pasteHash(body),
+      configFingerprint: configFingerprint(config),
+      askedAt: new Date().toISOString(),
+      askedOn: hostname(),
+    });
   }
 
   // --- Shipped skills ---
@@ -292,18 +363,32 @@ export async function install(config: Config): Promise<InstallStep[]> {
 // corrections reach every surface without a manual `sync`. Files are rewritten
 // only when the block's content actually changed. Returns the refresh count.
 // Target paths are injectable for tests; callers use the default.
+export interface RefreshTarget {
+  path: string;
+  body: "core" | "paste";
+}
+
+// Two files, two different bodies, same block id. Claude Code's file is rewritten
+// on every boot and can carry the whole volatile core; the Cowork mirror is only
+// ever copied by hand, so it carries the stable layer and nothing that goes out
+// of date between pastes.
 export async function refreshInjectedCore(
   config: Config,
-  targets: string[] = [claudeCodeMemoryPath(), coworkMirrorPath()],
+  targets: RefreshTarget[] = [
+    { path: claudeCodeMemoryPath(), body: "core" },
+    { path: coworkMirrorPath(), body: "paste" },
+  ],
 ): Promise<number> {
   const core = await buildInjectedCore(storePaths(config.memoryDir), config);
-  const block = `${startMarker(STARTUP_BLOCK_ID)}\n${core.trim()}\n${endMarker(STARTUP_BLOCK_ID)}`;
+  const paste = await pasteBody(config);
   let refreshed = 0;
-  for (const p of targets) {
-    if (!existsSync(p)) continue;
-    const content = await readFile(p, "utf8");
+  for (const t of targets) {
+    if (!existsSync(t.path)) continue;
+    const body = t.body === "core" ? core : paste;
+    const block = `${startMarker(STARTUP_BLOCK_ID)}\n${body.trim()}\n${endMarker(STARTUP_BLOCK_ID)}`;
+    const content = await readFile(t.path, "utf8");
     if (!hasManagedBlock(content, STARTUP_BLOCK_ID) || content.includes(block)) continue;
-    await upsertManagedBlock(p, STARTUP_BLOCK_ID, core);
+    await upsertManagedBlock(t.path, STARTUP_BLOCK_ID, body);
     refreshed++;
   }
   return refreshed;
@@ -408,10 +493,11 @@ export async function uninstall(): Promise<InstallStep[]> {
 
   // The record of what the user was last asked to paste into Claude Desktop.
   // Leaving it behind makes a later reinstall claim the in-app copy is current.
-  const marker = coworkPasteMarkerPath();
-  if (existsSync(marker)) {
-    await rm(marker, { force: true });
-    steps.push({ surface: "shared", action: "clear Cowork paste marker", status: "done", detail: marker });
+  for (const state of [coworkPasteMarkerPath(), legacyPasteMarkerPath(), surfacesStatePath()]) {
+    if (existsSync(state)) {
+      await rm(state, { force: true });
+      steps.push({ surface: "shared", action: "clear local state", status: "done", detail: state });
+    }
   }
 
   steps.push({

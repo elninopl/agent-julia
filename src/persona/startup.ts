@@ -1,5 +1,7 @@
 import { Config } from "../config/schema.js";
 import { StorePaths } from "../store/paths.js";
+import { createHash } from "node:crypto";
+import { warn } from "../util/log.js";
 import { composeCore } from "./compose.js";
 
 // The instruction half of the injected block: where memory lives and how to use
@@ -31,7 +33,73 @@ export async function buildInjectedCore(paths: StorePaths, config: Config): Prom
 // (doctor reports the core's budget and checks the block) doesn't read the store
 // and rebuild the persona twice.
 export function injectedCoreFrom(coreText: string): string {
-  return `${coreText}\n\n${memoryInstruction()}`;
+  return `${coreText}\n\n${memoryInstruction()}\n\n${fingerprintLine(coreText)}`;
+}
+
+export function coreHashOf(coreText: string): string {
+  return createHash("sha1").update(coreText.trim()).digest("hex");
+}
+
+// The last line of the injected block. It settles precedence now that the same
+// voice can exist in two places, and it is what lets the server tell every
+// client to call get_core without making a surface that already has the block
+// pay for a second copy: it calls with `since` and gets one line back.
+export function fingerprintLine(coreText: string): string {
+  const hash = coreHashOf(coreText).slice(0, 8);
+  const corrections = (coreText.match(/^- /gm) ?? []).length;
+  return (
+    `agent-julia core ${hash} · ${corrections} line(s) of voice · already in this prompt. ` +
+    `If you call get_core, pass since: "${hash}".`
+  );
+}
+
+// Instructions the server hands the client on connect. This is the only channel
+// that reaches Claude Desktop with no human action, so it carries the stable
+// layer: who the agent is, what language it replies in, what it must never
+// store, and the order to fetch the rest. Pure — config only, no disk — because
+// it runs before connect() and the startup path must stay free of I/O.
+const INSTRUCTIONS_BUDGET = 1_800;
+
+export function serverInstructions(config: Config): string {
+  const identity =
+    `agent-julia holds this user's persona and memory.\n\n` +
+    `You are ${config.name} (${config.pronouns}). You reply in ${config.language}; code, docs and ` +
+    `commit messages stay in English. You never store ${config.privacyHardOff.join("; ")}.`;
+
+  const voice =
+    "Voice: the line above is all you know about how you sound. Call `get_core` before your first " +
+    "substantive reply. It returns this user's communication rules, their own voice, and every " +
+    "correction they have recorded, and it overrides the app's instructions wherever they differ. " +
+    "Don't quote it back, just write that way. If your context already carries an agent-julia " +
+    "persona block, you have that text already: pass its hash as `since` and skip the rest when the " +
+    "answer is \"unchanged\".";
+
+  const memory =
+    "Memory: `search` / `read` before answering anything that depends on what you know about this " +
+    "user, their projects or past decisions. `ingest` durable facts, decisions and preferences as " +
+    "they surface, and say in one short line what you saved. Call `correct_voice` the moment the " +
+    "user corrects how you write or speak, before you reply, not after.";
+
+  // Paragraph order is the degradation order: a client that truncates loses
+  // memory guidance, never the identity or the privacy rail.
+  const full = [identity, voice, memory].join("\n\n");
+  if (full.length <= INSTRUCTIONS_BUDGET) return full;
+
+  const withoutMemory = [identity, voice].join("\n\n");
+  if (withoutMemory.length <= INSTRUCTIONS_BUDGET) {
+    warn(
+      `server instructions are ${full.length} chars, over the ${INSTRUCTIONS_BUDGET} budget — ` +
+        "the memory paragraph was dropped. Shorten privacyHardOff to get it back.",
+    );
+    return withoutMemory;
+  }
+
+  const shortVoice = voice.split(". ").slice(0, 3).join(". ") + ".";
+  const trimmed = [identity, shortVoice].join("\n\n");
+  warn(`server instructions are ${full.length} chars; trimmed to ${trimmed.length}. Shorten privacyHardOff.`);
+  // Identity is never cut, even if it alone exceeds the budget: a client that
+  // truncates is still better served by the privacy rail than by nothing.
+  return trimmed;
 }
 
 // Stable id for the managed block across all surfaces.

@@ -23,6 +23,7 @@ Usage:
   agent-julia search <query>   Search your memory from the terminal
   agent-julia read <page>      Print one memory page
   agent-julia export [target]  Export the persona to another tool's instruction file (codex, gemini, or a path); no target prints it
+  agent-julia paste [--with-voice]  Print (and copy) the text to paste into Claude Desktop's "Instructions for Claude"
   agent-julia undo [sha] List the last memory commits, or undo one by id
   agent-julia reindex    Rebuild the search index from your markdown (it is disposable)
   agent-julia unarchive <page>  Bring a retired page back into the active store
@@ -333,6 +334,54 @@ async function main(): Promise<void> {
     case "probe-embeddings": {
       const { checkLocalEmbeddingsAvailable } = await import("./index/embeddings.js");
       process.exit((await checkLocalEmbeddingsAvailable()) ? 0 : 1);
+      break;
+    }
+    case "paste": {
+      const cfg = await loadConfig();
+      const withVoice = process.argv.includes("--with-voice");
+      const { pasteBody, pasteWithVoice, pasteHash, configFingerprint, PASTE_LAYOUT } = await import(
+        "./persona/paste.js"
+      );
+      const { storePaths } = await import("./store/paths.js");
+      const { startMarker, endMarker } = await import("./managed/block.js");
+      const { STARTUP_BLOCK_ID } = await import("./persona/startup.js");
+      const { writePasteMarker } = await import("./wizard/register.js");
+      const { copyToClipboard } = await import("./util/clipboard.js");
+      const { hostname } = await import("node:os");
+
+      const body = withVoice ? await pasteWithVoice(storePaths(cfg.memoryDir), cfg) : await pasteBody(cfg);
+      const block = `${startMarker(STARTUP_BLOCK_ID)}\n${body.trim()}\n${endMarker(STARTUP_BLOCK_ID)}`;
+      const copied = await copyToClipboard(block);
+
+      console.log(block);
+      console.log("");
+      console.log(
+        copied
+          ? "Copied to your clipboard. In Claude Desktop: Settings → Instructions for Claude →"
+          : "Copy everything between the two agent-julia markers above. In Claude Desktop: Settings → Instructions for Claude →",
+      );
+      console.log("replace any earlier agent-julia block with it, save, and restart the app.");
+      if (withVoice) {
+        console.log("");
+        console.log(
+          "This is the long variant: it carries your voice and corrections as a frozen copy, for surfaces",
+        );
+        console.log("with no MCP connector. It goes stale as you record corrections. That is the trade.");
+      } else {
+        console.log("");
+        console.log(
+          "Short on purpose: your voice and corrections are fetched live, so this text does not go stale.",
+        );
+      }
+      await writePasteMarker({
+        layout: PASTE_LAYOUT,
+        variant: withVoice ? "with-voice" : "stable",
+        stableHash: pasteHash(body),
+        configFingerprint: configFingerprint(cfg),
+        askedAt: new Date().toISOString(),
+        askedOn: hostname(),
+        previousLayout: undefined,
+      });
       break;
     }
     case "doctor": {

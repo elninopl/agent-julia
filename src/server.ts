@@ -3,6 +3,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { Runtime, buildRuntime } from "./runtime.js";
 import { registerTools } from "./tools/register.js";
 import { composeCore } from "./persona/compose.js";
+import { serverInstructions } from "./persona/startup.js";
 import { getMeta, setMeta } from "./index/db.js";
 import { latestStoreMtime } from "./store/markdown.js";
 import { runMaintenance } from "./maintenance/maintenance.js";
@@ -40,7 +41,46 @@ async function packageVersion(): Promise<string> {
 // cost the session its memory tools before the client ever finished the
 // handshake — invisibly, because a stdio server's diagnostics go nowhere the
 // user looks. Tools answer while this runs; the index is already open.
+// Was this machine ever asked to paste, or seen running, the old long block?
+// Evidence only — the mirror file exists for everyone with the cowork surface,
+// including people who never pasted at all, so it is not evidence and is not
+// used as such.
+async function detectLegacyPaste(): Promise<void> {
+  try {
+    const { readPasteMarker, writePasteMarker, legacyPasteMarkerPath } = await import(
+      "./wizard/register.js"
+    );
+    const marker = await readPasteMarker();
+    if (marker && marker.previousLayout !== undefined) return;
+    if (marker && marker.layout >= 2) return;
+
+    const { existsSync } = await import("node:fs");
+    const askedUnderLayout1 = existsSync(legacyPasteMarkerPath());
+    const { probeCoworkSession } = await import("./surfaces/cowork-probe.js");
+    const probe = await probeCoworkSession();
+    const seenLayout1 = probe.status === "found" && probe.layout === 1;
+    if (!askedUnderLayout1 && !seenLayout1) return;
+
+    const { pasteBody, pasteHash, configFingerprint, PASTE_LAYOUT } = await import("./persona/paste.js");
+    const cfg = (await import("./config/config.js")).loadConfig;
+    const config = await cfg();
+    await writePasteMarker({
+      layout: marker?.layout ?? 1,
+      variant: "stable",
+      stableHash: marker?.stableHash ?? pasteHash(await pasteBody(config)),
+      configFingerprint: marker?.configFingerprint ?? configFingerprint(config),
+      askedAt: marker?.askedAt ?? new Date().toISOString(),
+      askedOn: marker?.askedOn ?? "unknown",
+      previousLayout: 1,
+    });
+    log(`Claude Desktop still has the old long paste (layout 1); the current one is layout ${PASTE_LAYOUT}`);
+  } catch {
+    // evidence gathering must never take the server down
+  }
+}
+
 async function runStartupTasks(rt: Runtime): Promise<void> {
+  await detectLegacyPaste();
   // Two-machine sync: pull the store from its remote before maintenance reads
   // it, so a session on this machine starts from what the other machine pushed.
   // Best-effort — offline is a quiet skip, a conflict is aborted and warned.
@@ -101,6 +141,19 @@ async function runStartupTasks(rt: Runtime): Promise<void> {
   }
 }
 
+// Which client started this server, so doctor can say whether the voice ever
+// reaches Claude Desktop — the surface that cannot be inspected any other way.
+async function recordBoot(server: McpServer): Promise<void> {
+  try {
+    const { readSurfaces, writeSurfaces } = await import("./wizard/register.js");
+    const client = server.server.getClientVersion()?.name ?? "unknown";
+    const state = await readSurfaces();
+    await writeSurfaces({ ...state, boots: { ...state.boots, [client]: { at: new Date().toISOString() } } });
+  } catch {
+    // bookkeeping must never take the server down
+  }
+}
+
 // Exit when the process that spawned us does. Claude starts one server per
 // session and does not always close the pipe or send a signal on the way out:
 // on one machine this left 88 live servers, the oldest twelve days old, holding
@@ -127,10 +180,16 @@ export async function startServer(): Promise<void> {
   // Assigned once the handler below exists; the transport can close before then.
   let shutdownRef: ((why: string) => void) | null = null;
 
-  const server = new McpServer({
-    name: "agent-julia",
-    version: await packageVersion(),
-  });
+  const server = new McpServer(
+    { name: "agent-julia", version: await packageVersion() },
+    {
+      // The only channel into a Claude Desktop session that needs no human
+      // action. It carries the stable layer — identity, language, the privacy
+      // rail, and the order to fetch the rest — because the volatile half is
+      // too large for it and would double up with Claude Code's block.
+      instructions: serverInstructions(rt.config),
+    },
+  );
 
   registerTools(server, rt);
 
@@ -139,7 +198,10 @@ export async function startServer(): Promise<void> {
     "agent-julia://core",
     {
       title: "Persona core",
-      description: "Budgeted persona core to inject into context (identity + voice + corrections).",
+      description:
+        "The same persona the get_core tool returns. Note that Claude Desktop maps tools only, " +
+        "so this resource is not a delivery channel for Cowork — it is here for other MCP clients " +
+        "and for attaching the core by hand.",
       mimeType: "text/markdown",
     },
     async (uri) => {
@@ -159,6 +221,7 @@ export async function startServer(): Promise<void> {
 
   startParentWatchdog(() => shutdown("the client that started this server is gone"));
 
+  await recordBoot(server);
   await runStartupTasks(rt);
 
   let down = false;

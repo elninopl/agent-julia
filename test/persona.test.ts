@@ -1,8 +1,11 @@
 import { mkdtempSync, writeFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { composeCore } from "../src/persona/compose.js";
+import { pasteBody, pasteHash } from "../src/persona/paste.js";
+import { coreHashOf, fingerprintLine, serverInstructions } from "../src/persona/startup.js";
 import { storePaths } from "../src/store/paths.js";
 import { ConfigSchema } from "../src/config/schema.js";
 import { clampToBudget, estimateTokens } from "../src/util/tokens.js";
@@ -193,5 +196,96 @@ describe("composeCore priority: our text yields, the user's does not", () => {
     expect(core.text).toContain("## Your voice");
     expect(core.text).toContain("## Never store");
     expect(core.text).not.toContain("Corrections from the user");
+  });
+});
+
+describe("the pasted layer carries nothing that changes often", () => {
+  const cfg = () =>
+    ConfigSchema.parse({
+      memoryDir: "/unused",
+      name: "Julia",
+      pronouns: "she/her",
+      language: "pl",
+      privacyHardOff: ["passwords, API keys", "card numbers", "third-party private data"],
+    });
+
+  it("contains no line from the voice, the corrections or the shipped rules", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "aj-paste-"));
+    const paths = storePaths(dir);
+    writeFileSync(paths.personaFile, "- Zawsze mów do mnie per elniño.\n", "utf8");
+    writeFileSync(paths.voiceCorrections, "# Voice corrections\n\n- 2026-01-01 — Never use the word moat.\n", "utf8");
+
+    const body = await pasteBody(cfg());
+    expect(body).not.toContain("elniño");
+    expect(body).not.toContain("moat");
+    // core-voice.md's own wording must not leak in either.
+    const core = await readFile(join("src", "persona", "assets", "core-voice.md"), "utf8");
+    const distinctive = core.split("\n").filter((l) => l.startsWith("- ") && l.length > 60);
+    for (const line of distinctive) expect(body).not.toContain(line.trim());
+  });
+
+  it("carries the identity, the language and every privacy entry", async () => {
+    const c = cfg();
+    const body = await pasteBody(c);
+    expect(body).toContain("Julia");
+    expect(body).toContain("she/her");
+    expect(body).toContain("Respond in pl");
+    for (const p of c.privacyHardOff) expect(body).toContain(p);
+  });
+
+  it("is stable for the same config and changes when the config does", async () => {
+    const a = await pasteBody(cfg());
+    expect(await pasteBody(cfg())).toBe(a);
+    const b = await pasteBody(ConfigSchema.parse({ memoryDir: "/unused", name: "Ada", language: "en" }));
+    expect(pasteHash(b)).not.toBe(pasteHash(a));
+  });
+
+  it("tells the agent what to do when the tools are not there", async () => {
+    const body = await pasteBody(cfg());
+    expect(body).toMatch(/get_core/);
+    expect(body).toMatch(/not there|not available/i);
+  });
+});
+
+describe("what every client is told on connect", () => {
+  it("fits the budget and leads with identity and the privacy rail", () => {
+    const text = serverInstructions(
+      ConfigSchema.parse({ memoryDir: "/unused", name: "Julia", language: "pl" }),
+    );
+    expect(text.length).toBeLessThanOrEqual(1800);
+    expect(text.indexOf("You are Julia")).toBeLessThan(text.indexOf("Voice:"));
+    expect(text).toContain("get_core");
+    expect(text).toContain("never store");
+  });
+
+  it("degrades in a fixed order instead of throwing, and never drops the privacy list", () => {
+    // Paragraph order is the degradation order: a client that truncates loses
+    // memory guidance, never identity and never what must not be stored.
+    const privacyHardOff = Array.from({ length: 12 }, (_, i) => `a very long category of secret number ${i} `.repeat(3));
+    const text = serverInstructions(
+      ConfigSchema.parse({ memoryDir: "/unused", name: "X".repeat(40), language: "pl", privacyHardOff }),
+    );
+    expect(text).toContain("X".repeat(40));
+    for (const p of privacyHardOff) expect(text).toContain(p.trim());
+    expect(text).not.toContain("Memory: `search`");
+  });
+
+  it("is pure — the same config gives the same text and it reads no disk", () => {
+    const cfg = ConfigSchema.parse({ memoryDir: "/does/not/exist", name: "Ada" });
+    expect(serverInstructions(cfg)).toBe(serverInstructions(cfg));
+  });
+});
+
+describe("the core fingerprint", () => {
+  it("lets a surface that already has the block confirm it instead of re-reading", async () => {
+    const paths = store({ corrections: 2 });
+    const core = await composeCore(paths, config(3000));
+    const line = fingerprintLine(core.text);
+    const hash = coreHashOf(core.text).slice(0, 8);
+    expect(line).toContain(hash);
+    expect(line).toContain('since: "' + hash + '"');
+    // It changes when the voice changes, which is the whole point.
+    const other = await composeCore(store({ corrections: 5 }), config(3000));
+    expect(coreHashOf(other.text)).not.toBe(coreHashOf(core.text));
   });
 });
