@@ -7,6 +7,7 @@ import { getMeta, setMeta } from "./index/db.js";
 import { latestStoreMtime } from "./store/markdown.js";
 import { runMaintenance } from "./maintenance/maintenance.js";
 import { pullFromRemote } from "./store/git.js";
+import { waitForIdle } from "./store/lock.js";
 import { installSkills, skillsTargetDir } from "./skills/install.js";
 import { refreshInjectedCore } from "./wizard/register.js";
 import { refreshExports } from "./export/export.js";
@@ -16,6 +17,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const MAINT_MTIME_KEY = "maint_mtime";
+// How long a shutdown waits for an in-flight write before exiting anyway.
+const DRAIN_MS = 5_000;
 
 // The package version, read from package.json (two levels up from dist/ and
 // src/ alike). Best-effort — the server must boot even if the read fails.
@@ -90,6 +93,8 @@ async function runStartupTasks(rt: Runtime): Promise<void> {
 // resources over a tool call.
 export async function startServer(): Promise<void> {
   const rt = await buildRuntime();
+  // Assigned once the handler below exists; the transport can close before then.
+  let shutdownRef: ((why: string) => void) | null = null;
 
   const server = new McpServer({
     name: "agent-julia",
@@ -113,25 +118,50 @@ export async function startServer(): Promise<void> {
   );
 
   const transport = new StdioServerTransport();
+  const priorOnClose = transport.onclose;
+  transport.onclose = () => {
+    priorOnClose?.();
+    shutdownRef?.("transport closed");
+  };
   await server.connect(transport);
   log(`agent-julia serving "${rt.config.name}" — memory: ${rt.config.memoryDir}`);
 
   await runStartupTasks(rt);
 
   let down = false;
-  const shutdown = () => {
+  const shutdown = (why: string) => {
     if (down) return;
     down = true;
-    rt.indexer.close();
-    process.exit(0);
+    log(`shutting down (${why})`);
+    // Give an in-flight write its lock and its commit. process.exit() used to
+    // fire immediately, so a shutdown landing mid-ingest could leave the page on
+    // disk, the journal appended and nothing committed. The deadline keeps a
+    // wedged operation from turning into a process that never exits.
+    const deadline = setTimeout(() => process.exit(0), DRAIN_MS);
+    deadline.unref?.();
+    void (async () => {
+      try {
+        await waitForIdle(DRAIN_MS);
+      } finally {
+        clearTimeout(deadline);
+        try {
+          rt.indexer.close();
+        } catch {
+          // closing a db that is already gone is not worth a failed exit
+        }
+        process.exit(0);
+      }
+    })();
   };
-  process.on("SIGINT", shutdown);
-  process.on("SIGTERM", shutdown);
+
+  // Registered BEFORE connect: the SDK chains its own handler onto
+  // transport.onclose inside connect(), and assigning afterwards discarded it.
+  shutdownRef = shutdown;
+  process.on("SIGINT", () => shutdown("SIGINT"));
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
   // Reap the server when its client goes away. Claude spawns one serve per
   // session and may close the stdio pipe without sending a signal; without this
-  // the process (and its npm-exec wrapper) lingers for hours. Exit when the
-  // transport closes or stdin ends.
-  transport.onclose = shutdown;
-  process.stdin.on("end", shutdown);
-  process.stdin.on("close", shutdown);
+  // the process (and its npm-exec wrapper) lingers for hours.
+  process.stdin.on("end", () => shutdown("stdin ended"));
+  process.stdin.on("close", () => shutdown("stdin closed"));
 }

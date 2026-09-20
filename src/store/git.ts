@@ -1,9 +1,9 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { warn } from "../util/log.js";
+import { withStoreLock } from "./lock.js";
 
 const exec = promisify(execFile);
 
@@ -47,49 +47,11 @@ export async function gitAvailable(): Promise<boolean> {
   return gitOnPath;
 }
 
-const delay = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
-const LOCK_STALE_MS = 30_000;
-const LOCK_WAIT_MS = 15_000;
-
-// Serialize git operations across processes. Every Claude surface runs its own
-// server, and two `git commit`s racing on .git/index.lock leave a write silently
-// uncommitted. An atomic mkdir is the mutex; a stale lock (crashed holder) is
-// reclaimed after LOCK_STALE_MS. On lock-wait timeout the operation is SKIPPED
-// (null) — running unlocked would recreate exactly the race the lock exists to
-// prevent; a skipped commit is picked up by the next commitAll anyway.
-async function withGitLock<T>(root: string, fn: () => Promise<T>): Promise<T | null> {
-  const internal = join(root, ".agent-julia");
-  const lockDir = join(internal, "git.lock");
-  await mkdir(internal, { recursive: true });
-  const deadline = Date.now() + LOCK_WAIT_MS;
-  for (;;) {
-    try {
-      await mkdir(lockDir);
-      break;
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
-      try {
-        const st = await stat(lockDir);
-        if (Date.now() - st.mtimeMs > LOCK_STALE_MS) {
-          await rm(lockDir, { recursive: true, force: true });
-          continue;
-        }
-      } catch {
-        // lock vanished between EEXIST and stat — just retry
-      }
-      if (Date.now() > deadline) {
-        warn("git lock busy — skipping this git operation (the next write will pick the changes up)");
-        return null;
-      }
-      await delay(100);
-    }
-  }
-  try {
-    return await fn();
-  } finally {
-    await rm(lockDir, { recursive: true, force: true });
-  }
-}
+// Git shares the store lock with the rest of the write path. Before, the mutex
+// guarded git only: writePage, refreshIndexMd, appendLog and the index update
+// all ran unlocked, so two surfaces writing at once could interleave a page
+// write with another page's catalog refresh.
+const withGitLock = <T>(root: string, fn: () => Promise<T>): Promise<T | null> => withStoreLock(root, fn);
 
 // execFile rejects with a generic "Command failed" message and puts what
 // actually went wrong on stderr. Reporting the wrapper's first line is how

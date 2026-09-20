@@ -59,6 +59,25 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ### Fixed
 
+- **The whole write path is serialized, not just its git step.** The mutex
+  guarded `commitAll`; `writePage`, the catalog refresh, the journal append and
+  the index update all ran unlocked, so two Claude surfaces writing at the same
+  moment could interleave a page write with another page's catalog refresh. The
+  lock also had no owner: any holder that ran long had its lock deleted by the
+  next waiter, and both then ran at once — the exact race it existed to prevent.
+  It now writes an owner token, refreshes it on a heartbeat, reclaims a stale
+  lock only when the token has not moved, and releases only what is still its
+  own. Reentrancy is scoped to the async call chain, so a nested acquire passes
+  through while a second concurrent call in the same process waits.
+- **Page writes are atomic.** `writeFile` truncates in place, so a crash or a
+  full disk mid-write left half a page where a whole one had been, in the only
+  copy of what the agent knows. Writes now go to a temp file and rename.
+- **Shutdown drains.** The SDK chains its own handler onto `transport.onclose`
+  inside `connect()`, and the server assigned that field afterwards, discarding
+  it; the handler then called `process.exit(0)` immediately. A shutdown landing
+  mid-ingest could leave the page on disk, the journal appended and nothing
+  committed. Handlers are registered before connect, in-flight writes get up to
+  five seconds, and the deadline still guarantees the process exits.
 - **Archiving stops destroying the archive.** `archivePage` renamed onto its
   destination without checking it, so retiring a second page under the same id
   overwrote the first — in the one directory whose entire purpose is keeping

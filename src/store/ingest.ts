@@ -3,6 +3,7 @@ import { StorePaths, pageId } from "./paths.js";
 import { WriteMode, writePage } from "./markdown.js";
 import { appendLog, refreshIndexMd } from "./catalog.js";
 import { commitAll, pushToRemote } from "./git.js";
+import { withStoreLock } from "./lock.js";
 
 export interface IngestResult {
   id: string;
@@ -39,6 +40,33 @@ export async function ingest(
   } = {},
 ): Promise<IngestResult> {
   const id = pageId(page);
+  // One lock around the whole sequence. Guarding only the git step left the page
+  // write, the catalog refresh, the journal append and the index update exposed:
+  // two surfaces writing at once could interleave a page write with another
+  // page's catalog refresh and lose one of them.
+  const result = await withStoreLock(paths.root, () => ingestLocked(paths, indexer, id, content, opts));
+  if (!result) {
+    throw new Error(
+      `another agent-julia process is writing to this store and did not finish in time; "${id}" was not saved. Try again.`,
+    );
+  }
+  return result;
+}
+
+async function ingestLocked(
+  paths: StorePaths,
+  indexer: Indexer,
+  id: string,
+  content: string,
+  opts: {
+    status?: string;
+    title?: string;
+    git?: boolean;
+    autoPush?: boolean;
+    mode?: WriteMode;
+    confirm?: boolean;
+  },
+): Promise<IngestResult> {
   // writePage only cares about the page itself; git/autoPush are handled below.
   const w = await writePage(paths, id, content, {
     status: opts.status,
