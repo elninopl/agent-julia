@@ -1,5 +1,6 @@
 import { existsSync, realpathSync } from "node:fs";
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { copyFile, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { homedir, platform } from "node:os";
 import { dirname, join, sep } from "node:path";
@@ -12,24 +13,79 @@ import { endMarker, hasManagedBlock, removeManagedBlock, startMarker, upsertMana
 import { installSkills, skillsTargetDir, uninstallSkills } from "../skills/install.js";
 import { EXPORT_BLOCK_ID as EXPORTED_BLOCK_ID } from "../export/export.js";
 
-// How the Claude clients will launch the server.
-//
-// `npx -y agent-julia@latest serve` keeps everyone on the newest version, and
-// stays the answer when the wizard itself was run through npx. But an npx cache
-// directory cannot resolve an optional peer dependency installed anywhere else,
-// which is why local embeddings could be configured, downloaded and indexed and
-// still never load in a session. When the wizard is running from an installed
-// copy, register that copy by path: it is stable, and it can see its siblings.
-function serverEntry(): { command: string; args: string[] } {
+export interface ServerEntry {
+  command: string;
+  args: string[];
+}
+
+// Candidate ways to launch the server, best first. The running copy is stable
+// and can see its own siblings; a globally installed one likewise; npx keeps
+// everyone on @latest but runs from a cache directory that cannot resolve an
+// optional peer dependency installed anywhere else — which is exactly why local
+// embeddings could be chosen, downloaded, indexed, and still never load.
+function candidates(): ServerEntry[] {
+  const out: ServerEntry[] = [];
   const entry = process.argv[1];
   if (entry && !entry.includes(`${sep}_npx${sep}`) && existsSync(entry)) {
     try {
-      return { command: process.execPath, args: [realpathSync(entry), "serve"] };
+      out.push({ command: process.execPath, args: [realpathSync(entry), "serve"] });
     } catch {
-      // fall through to npx
+      // unreadable — skip it
     }
   }
-  return { command: "npx", args: ["-y", "agent-julia@latest", "serve"] };
+  const global = globalBinary();
+  if (global && !out.some((c) => c.args[0] === global)) {
+    out.push({ command: process.execPath, args: [global, "serve"] });
+  }
+  out.push({ command: "npx", args: ["-y", "agent-julia@latest", "serve"] });
+  return out;
+}
+
+function globalBinary(): string | null {
+  try {
+    const root = execFileSync("npm", ["root", "-g"], { encoding: "utf8" }).trim();
+    const entry = join(root, "agent-julia", "dist", "index.js");
+    return existsSync(entry) ? realpathSync(entry) : null;
+  } catch {
+    return null;
+  }
+}
+
+// Can the server this command would start load the local embedding model?
+// Asking the candidate itself is the only honest test: resolution depends on
+// where that copy lives, not on where the wizard is running.
+function canEmbed(entry: ServerEntry): boolean {
+  try {
+    execFileSync(entry.command, [...entry.args.slice(0, -1), "probe-embeddings"], {
+      stdio: "ignore",
+      timeout: 60_000,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// How the Claude clients will launch the server. With local embeddings chosen,
+// a candidate that cannot load the model is not a candidate: registering it
+// would mean a configured, downloaded, fully indexed model that never runs.
+export function serverEntryFor(needsLocalEmbeddings: boolean): ServerEntry {
+  const list = candidates();
+  if (needsLocalEmbeddings) {
+    for (const c of list) {
+      if (canEmbed(c)) return c;
+    }
+    warn(
+      "no way of launching agent-julia on this machine can load the local embedding model; " +
+        "registering the default. `agent-julia doctor` will keep saying so until you run " +
+        "`npm i -g agent-julia @huggingface/transformers` and re-run `agent-julia sync`.",
+    );
+  }
+  return list[0]!;
+}
+
+function serverEntry(): ServerEntry {
+  return candidates()[0]!;
 }
 
 // Claude Desktop config — the file that registers the MCP server for Cowork.
@@ -74,7 +130,7 @@ export function coreHash(core: string): string {
 
 // Returns false (without throwing) if the file exists but isn't valid JSON, so
 // the caller can fall back to a manual step instead of reporting a false success.
-export async function mergeMcpServerForTest(path: string, name: string): Promise<boolean> {
+export async function mergeMcpServerForTest(path: string, name: string, entry: ServerEntry = serverEntry()): Promise<boolean> {
   await mkdir(dirname(path), { recursive: true });
   let data: Record<string, unknown> = {};
   if (existsSync(path)) {
@@ -86,7 +142,7 @@ export async function mergeMcpServerForTest(path: string, name: string): Promise
     }
   }
   const servers = (data.mcpServers as Record<string, unknown>) ?? {};
-  servers[name] = serverEntry();
+  servers[name] = entry;
   data.mcpServers = servers;
   // Same care as the markdown files this package writes: a one-time backup of
   // the original, and a temp-file rename. ~/.claude.json is Claude Code's live
@@ -141,6 +197,10 @@ export interface InstallStep {
 export async function install(config: Config): Promise<InstallStep[]> {
   const steps: InstallStep[] = [];
   const name = "agent-julia";
+  // Chosen once, and probed when it has to be: with local embeddings selected,
+  // registering a launcher that cannot load the model is how a fully configured
+  // and fully indexed semantic search ends up never running.
+  const entry = serverEntryFor(config.embedding.provider === "local");
   const core = await buildInjectedCore(storePaths(config.memoryDir), config);
   const wantCode = config.surfaces.includes("code");
   const wantDesktop = config.surfaces.includes("cowork") || config.surfaces.includes("dispatch");
@@ -148,17 +208,17 @@ export async function install(config: Config): Promise<InstallStep[]> {
   // --- MCP registration ---
   if (wantCode) {
     const p = claudeCodeConfigPath();
-    const wrote = await mergeMcpServerForTest(p, name);
+    const wrote = await mergeMcpServerForTest(p, name, entry);
     steps.push(
       wrote
-        ? { surface: "code", action: "register MCP", status: "done", detail: p }
+        ? { surface: "code", action: "register MCP", status: "done", detail: `${p} — ${entry.command} ${entry.args.join(" ")}` }
         : manualMcpStep("code", "register MCP", p),
     );
   }
   if (wantDesktop) {
     const p = desktopConfigPath();
     if (p) {
-      const wrote = await mergeMcpServerForTest(p, name);
+      const wrote = await mergeMcpServerForTest(p, name, entry);
       steps.push(
         wrote
           ? {
@@ -250,8 +310,8 @@ export async function refreshInjectedCore(
 }
 
 // The mcpServers snippet to add to a Claude client config, as pretty JSON.
-function mcpSnippet(): string {
-  return JSON.stringify({ mcpServers: { "agent-julia": serverEntry() } }, null, 2);
+function mcpSnippet(entry: ServerEntry = serverEntry()): string {
+  return JSON.stringify({ mcpServers: { "agent-julia": entry } }, null, 2);
 }
 
 // Produce a manual setup guide instead of writing the files, for users who prefer

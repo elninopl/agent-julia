@@ -198,10 +198,14 @@ changes, which always ship an automatic, backup-protected data migration.
   that cannot resolve an optional peer dependency installed anywhere else. The
   warning went to stderr, which for an MCP server is a log nobody opens.
   `doctor` now opens the index, loads the configured provider, and reports how
-  many pages are embedded against how many exist; `init` and `sync` register the
-  installed binary by path when the wizard is not itself running through npx, so
-  the server can see its own dependencies; and the wizard's install line says to
-  install both packages together and why.
+  many pages are embedded against how many exist. When local embeddings are
+  chosen, `init` and `sync` no longer guess: each candidate way of launching the
+  server is asked, in its own process, whether it can load the model, and the
+  first that can is what gets registered. That closes the hole in the documented
+  path — `npx agent-julia init` registered npx, and npx could never load it — so
+  a user who follows the README and picks the local model now gets a working
+  one. If nothing on the machine can load it, the wizard says so instead of
+  registering a launcher that will fail silently.
 - **A page the product lists is a page it can open.** Page identity was computed
   two different ways: the catalog and `doctor` counted raw filenames, while
   every reader normalized them first. Any adopted file that was not already

@@ -175,3 +175,17 @@ describe("writing into files other people own", () => {
     expect(readdirSync(dir).filter((f) => f.includes(".tmp"))).toEqual([]);
   });
 });
+
+describe("registering a launcher that can do the job", () => {
+  it("writes the entry it was handed, and keeps the rest of the file", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "aj-entry-"));
+    const file = join(dir, "claude.json");
+    writeFileSync(file, JSON.stringify({ keep: "me" }), "utf8");
+
+    await mergeMcpServerForTest(file, "agent-julia", { command: "/opt/x/agent-julia", args: ["serve"] });
+
+    const after = JSON.parse(readFileSync(file, "utf8"));
+    expect(after.keep).toBe("me");
+    expect(after.mcpServers["agent-julia"]).toEqual({ command: "/opt/x/agent-julia", args: ["serve"] });
+  });
+});
