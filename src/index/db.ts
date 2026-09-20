@@ -38,7 +38,7 @@ function loadDatabaseSync(): new (path: string) => DB {
 // Bump when the derived index's shape changes in a way the tokenizer signature
 // doesn't already capture. The index is disposable: on a signature mismatch we
 // drop and rebuild from the markdown.
-export const INDEX_SCHEMA_VERSION = 4;
+export const INDEX_SCHEMA_VERSION = 5;
 const INDEX_SIG_KEY = "index_signature";
 
 // Letters that carry a stroke or a bar rather than a combining accent. SQLite's
@@ -117,11 +117,18 @@ function initSchema(db: DB, tokenizer: string): void {
       tokenize = '${tokenizer}'
     );
 
+    -- One row per CHUNK, not per page. The embedding models this ships with cut
+    -- their input at 512 tokens, so a whole page in one vector meant everything
+    -- past the first screen was unsearchable by meaning — on a store whose
+    -- average page is twenty times that length, that is most of it.
     CREATE TABLE IF NOT EXISTS embeddings (
-      id     TEXT PRIMARY KEY,
+      id     TEXT NOT NULL,
+      chunk  INTEGER NOT NULL,
+      label  TEXT NOT NULL,
       model  TEXT NOT NULL,
       dims   INTEGER NOT NULL,
-      vector BLOB NOT NULL
+      vector BLOB NOT NULL,
+      PRIMARY KEY (id, chunk)
     );
 
     -- Content fingerprint per page, so incremental sync can detect pages changed

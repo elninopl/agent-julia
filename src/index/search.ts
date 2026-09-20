@@ -39,7 +39,10 @@ export async function search(
       id: h.id,
       title: byId.get(h.id)?.title ?? ftsTitle(db, h.id) ?? h.id,
       score: h.score,
-      snippet: byId.get(h.id)?.snippet,
+      // A semantic hit used to come back with no snippet at all, so the caller
+      // got an id and a number. The matching chunk's heading at least says which
+      // part of the page answered.
+      snippet: byId.get(h.id)?.snippet ?? h.label,
       via: "semantic" as const,
     }));
   }
@@ -61,7 +64,14 @@ export async function search(
     const existing = merged.get(h.id);
     const add = 0.5 * rrf(i);
     if (existing) existing.score += add;
-    else merged.set(h.id, { id: h.id, title: ftsTitle(db, h.id) ?? h.id, score: add, via: "hybrid" });
+    else
+      merged.set(h.id, {
+        id: h.id,
+        title: ftsTitle(db, h.id) ?? h.id,
+        score: add,
+        snippet: h.label,
+        via: "hybrid",
+      });
   });
 
   return [...merged.values()].sort((a, b) => b.score - a.score).slice(0, limit);

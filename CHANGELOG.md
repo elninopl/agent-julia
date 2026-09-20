@@ -90,6 +90,18 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ### Fixed
 
+- **Pages are embedded in parts.** One page was one vector, and the models this
+  ships with cut their input at 512 tokens — so on a store whose average page is
+  many times that, everything past the first screen was invisible to semantic
+  search. Pages are now split on their own headings, each chunk carries that
+  heading as a label, and a page scores as its best-matching part. The provider
+  interface was batch-capable from the first release and had only ever been
+  called with one element; now a page is one batch.
+- **Semantic results have a floor and a snippet.** Every query returned a full
+  page of hits however weak, so "I don't have anything on that" was not an
+  answer the product could give; results now stop where they fall away from the
+  best match. A semantic-only hit used to come back as an id and a number, with
+  no text at all — it now carries the heading of the part that matched.
 - **A server whose client is gone exits.** Claude starts one server per session
   and does not always close the pipe or signal on the way out. On one machine
   that left 88 live servers, the oldest twelve days old, holding 954 MB between
