@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile, readdir, rename, stat, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
-import matter from "gray-matter";
+import { ParsedFrontmatter, parseFrontmatter, stringifyFrontmatter } from "./frontmatter.js";
 import { warn } from "../util/log.js";
 import { StorePaths, pageFilePath, pageId } from "./paths.js";
 import { detectLanguage } from "./lang.js";
@@ -110,28 +110,13 @@ export async function latestStoreMtime(paths: StorePaths): Promise<number> {
   return latest;
 }
 
-// gray-matter ships a `javascript` engine that parses front matter with `eval`,
-// picked by the language token right after the opening delimiter (`---js`). Both
-// call sites below take content nobody on this machine wrote: a page pulled from
-// a remote, a file adopted from an existing notes folder, or the body a model
-// passed to `ingest`. Pin the language to YAML and make the code engines throw,
-// so a crafted page is a parse error instead of code execution in a process that
-// can write to ~/.claude.
-const REFUSE_CODE_FRONTMATTER = () => {
-  throw new Error("front matter in a scripting language is not allowed; use YAML");
-};
-const MATTER_OPTIONS = {
-  language: "yaml",
-  engines: { javascript: REFUSE_CODE_FRONTMATTER, js: REFUSE_CODE_FRONTMATTER },
-};
-
 export async function readPage(paths: StorePaths, page: string): Promise<Page | null> {
   const path = await resolvePagePath(paths, page);
   if (!path) return null;
   const raw = await readFile(path, "utf8");
   let parsed;
   try {
-    parsed = matter(raw, MATTER_OPTIONS);
+    parsed = parseFrontmatter(raw);
   } catch (err) {
     // One unreadable page must not take down a sync, a search or the whole boot.
     warn(`skipping ${path}: ${(err as Error).message}`);
@@ -287,7 +272,7 @@ export async function writePage(
     ...stripCoreKeys(fm),
   };
 
-  const out = matter.stringify("\n" + body + "\n", merged, MATTER_OPTIONS);
+  const out = stringifyFrontmatter("\n" + body + "\n", merged as Record<string, unknown>);
   await writeFile(path, out, "utf8");
   return {
     path,
@@ -303,9 +288,9 @@ function countLines(text: string): number {
   return text ? text.split("\n").length : 0;
 }
 
-function parseMatter(raw: string, what: string): matter.GrayMatterFile<string> {
+function parseMatter(raw: string, what: string): ParsedFrontmatter {
   try {
-    return matter(raw, MATTER_OPTIONS);
+    return parseFrontmatter(raw);
   } catch (err) {
     throw new Error(`cannot parse front matter in ${what}: ${(err as Error).message}`);
   }

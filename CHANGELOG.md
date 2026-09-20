@@ -37,6 +37,13 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ### Security
 
+- **gray-matter is gone.** Front matter is now split by hand over `js-yaml@4`
+  (`src/store/frontmatter.ts`, about sixty lines — the part of gray-matter this
+  project actually used). That removes the `eval`-based engine entirely rather
+  than disabling it by configuration, and with it `js-yaml@3.14.2`, which is
+  end of life and carried a high-severity advisory `npm audit fix` could not
+  resolve. Verified against all 192 pages of a real store: both parsers return
+  identical data and identical bodies. `npm audit --omit=dev` is clean.
 - **Front matter is data again, not code.** `gray-matter` ships a `javascript`
   engine that parses with `eval`, selected by the language token right after the
   opening delimiter (`---js`). Both call sites took content nobody on the
