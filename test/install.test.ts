@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, readdirSync, writeFileSync, existsSync } from "node:fs";
+import { lstatSync, mkdtempSync, readFileSync, readdirSync, symlinkSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -187,5 +187,48 @@ describe("registering a launcher that can do the job", () => {
     const after = JSON.parse(readFileSync(file, "utf8"));
     expect(after.keep).toBe("me");
     expect(after.mcpServers["agent-julia"]).toEqual({ command: "/opt/x/agent-julia", args: ["serve"] });
+  });
+});
+
+describe("the files this package writes in someone else's home", () => {
+  it("creates a missing parent directory instead of failing on the lock", async () => {
+    // The lockfile lives next to the target, so a missing parent used to fail
+    // there with ENOENT — which is every fresh install, where neither ~/.claude
+    // nor ~/.config/agent-julia exists yet.
+    const dir = join(mkdtempSync(join(tmpdir(), "aj-fresh-")), "never", "existed");
+    const res = await upsertManagedBlock(join(dir, "CLAUDE.md"), "persona-core", "hello");
+    expect(res.created).toBe(true);
+    expect(readFileSync(join(dir, "CLAUDE.md"), "utf8")).toContain("hello");
+  });
+
+  it("writes through a symlink instead of replacing it", async () => {
+    // A dotfiles repo commonly symlinks ~/.claude/CLAUDE.md. Renaming onto the
+    // link would replace it with a regular file and quietly detach the repo.
+    const dir = mkdtempSync(join(tmpdir(), "aj-link-"));
+    const real = join(dir, "real.md");
+    const link = join(dir, "CLAUDE.md");
+    writeFileSync(real, "# from the dotfiles repo\n", "utf8");
+    symlinkSync(real, link);
+
+    await upsertManagedBlock(link, "persona-core", "the persona");
+
+    expect(lstatSync(link).isSymbolicLink()).toBe(true);
+    expect(readFileSync(real, "utf8")).toContain("the persona");
+    expect(readFileSync(real, "utf8")).toContain("from the dotfiles repo");
+  });
+
+  it("lets two concurrent writers both land", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "aj-conc-"));
+    const file = join(dir, "CLAUDE.md");
+    writeFileSync(file, "# mine\n", "utf8");
+    await Promise.all([
+      upsertManagedBlock(file, "persona-core", "core body"),
+      upsertManagedBlock(file, "other-block", "other body"),
+    ]);
+    const after = readFileSync(file, "utf8");
+    expect(after).toContain("# mine");
+    expect(after).toContain("core body");
+    expect(after).toContain("other body");
+    expect(readdirSync(dir).filter((f) => f.includes(".tmp") || f.includes("lock"))).toEqual([]);
   });
 });

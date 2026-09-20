@@ -58,13 +58,19 @@ export function fingerprintLine(coreText: string): string {
 // layer: who the agent is, what language it replies in, what it must never
 // store, and the order to fetch the rest. Pure — config only, no disk — because
 // it runs before connect() and the startup path must stay free of I/O.
-const INSTRUCTIONS_BUDGET = 1_800;
+export const INSTRUCTIONS_BUDGET = 1_800;
 
 export function serverInstructions(config: Config): string {
-  const identity =
+  const who = config.pronouns.trim() ? `${config.name} (${config.pronouns})` : config.name;
+  const head =
     `agent-julia holds this user's persona and memory.\n\n` +
-    `You are ${config.name} (${config.pronouns}). You reply in ${config.language}; code, docs and ` +
-    `commit messages stay in English. You never store ${config.privacyHardOff.join("; ")}.`;
+    `You are ${who}. You reply in ${config.language}; code, docs and commit messages stay in English.`;
+  // The privacy rail is the one thing that must survive every branch, so it is
+  // trimmed entry by entry rather than dropped whole, and an empty list simply
+  // produces no sentence instead of "You never store .".
+  const privacyFor = (entries: string[]): string =>
+    entries.length === 0 ? "" : ` You never store ${entries.join("; ")}.`;
+  const identity = head + privacyFor(config.privacyHardOff);
 
   const voice =
     "Voice: the line above is all you know about how you sound. Call `get_core` before your first " +
@@ -96,10 +102,35 @@ export function serverInstructions(config: Config): string {
 
   const shortVoice = voice.split(". ").slice(0, 3).join(". ") + ".";
   const trimmed = [identity, shortVoice].join("\n\n");
-  warn(`server instructions are ${full.length} chars; trimmed to ${trimmed.length}. Shorten privacyHardOff.`);
-  // Identity is never cut, even if it alone exceeds the budget: a client that
-  // truncates is still better served by the privacy rail than by nothing.
-  return trimmed;
+  if (trimmed.length <= INSTRUCTIONS_BUDGET) {
+    warn(`server instructions are ${full.length} chars; trimmed to ${trimmed.length}. Shorten privacyHardOff.`);
+    return trimmed;
+  }
+
+  // Still over: the overflow is the privacy list itself, so trim the thing that
+  // overflows instead of the two paragraphs that are already bounded. Dropping
+  // the list whole would leave a client with no idea what it must not keep.
+  const tailFor = (dropped: number): string =>
+    dropped > 0 ? ` …and ${dropped} more category(ies) recorded in the config.` : "";
+  const render = (kept: string[]): string => {
+    const dropped = config.privacyHardOff.length - kept.length;
+    return [head + privacyFor(kept) + tailFor(dropped), shortVoice].join("\n\n");
+  };
+  const kept: string[] = [];
+  for (const entry of config.privacyHardOff) {
+    // Measure the whole thing, tail included: the summary sentence is part of
+    // what is sent, and counting it afterwards is how a budget gets exceeded by
+    // exactly the length of the sentence that says it was respected.
+    if (render([...kept, entry]).length > INSTRUCTIONS_BUDGET) break;
+    kept.push(entry);
+  }
+  const dropped = config.privacyHardOff.length - kept.length;
+  const clipped = render(kept);
+  warn(
+    `server instructions are ${full.length} chars, over ${INSTRUCTIONS_BUDGET}; sent ${clipped.length} ` +
+      `with ${dropped} privacy entry(ies) summarised. Shorten privacyHardOff.`,
+  );
+  return clipped;
 }
 
 // Stable id for the managed block across all surfaces.

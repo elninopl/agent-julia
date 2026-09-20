@@ -70,7 +70,8 @@ async function migrationNotice(client: string): Promise<string> {
       "> Tell the user once, in their language, then carry on: their pasted Claude Desktop instructions",
       "> are the old long layout. Running `npx agent-julia paste` in a terminal and replacing the block",
       "> between the two agent-julia markers cuts it from ~2,700 tokens to ~470, and their voice is",
-      "> fetched live instead.",
+      "> fetched live instead. Mention that if they also use Claude on the web or the phone, where this",
+      "> connector does not reach, `npx agent-julia paste --with-voice` keeps the voice in the pasted text.",
     ].join("\n");
   } catch {
     return "";
@@ -134,8 +135,14 @@ export function registerTools(server: McpServer, rt: Runtime): void {
       // block does not crowd out the system prompt, and a tool result is not in
       // the system prompt. Nothing should be dropped here for a reason that does
       // not apply.
+      // Two renderings, one identity. The injected block is composed at
+      // contextBudget and its fingerprint is what a caller passes as `since`;
+      // the tool returns a wider rendering because a tool result is not in the
+      // system prompt. Hashing the wide one would mean `since` never matched for
+      // anyone whose core is clamped — which is exactly the user this helps.
+      const canonical = await composeCore(paths, config);
       const core = await composeCore(paths, config, { budget: config.contextBudget * 2 });
-      const hash = coreHashOf(core.text);
+      const hash = coreHashOf(canonical.text);
       const short = hash.slice(0, 8);
       const client = clientName(server);
       await recordFetch(client, hash);

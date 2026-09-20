@@ -12,7 +12,7 @@ import { EXPORT_BLOCK_ID, exportText } from "../export/export.js";
 import { isGitRepo, getRemoteUrl, gitAvailable } from "../store/git.js";
 import { injectedCoreFrom, STARTUP_BLOCK_ID } from "../persona/startup.js";
 import { composeCore } from "../persona/compose.js";
-import { coreHashOf, serverInstructions } from "../persona/startup.js";
+import { INSTRUCTIONS_BUDGET, coreHashOf, serverInstructions } from "../persona/startup.js";
 import { PASTE_LAYOUT, configFingerprint, pasteBody, pasteHash } from "../persona/paste.js";
 import { probeCoworkSession } from "../surfaces/cowork-probe.js";
 import { estimateTokens } from "../util/tokens.js";
@@ -332,6 +332,17 @@ export async function runDoctor(config: Config, t: DoctorTargets = defaultTarget
         detail: `no record that agent-julia ever asked you to paste anything on this machine. ${CANNOT_READ}`,
         fix: "npx agent-julia paste",
       });
+    } else if (marker.variant === "with-voice") {
+      // A deliberate choice, not drift: the long variant carries the voice on
+      // purpose, for accounts that reach surfaces with no connector.
+      checks.push({
+        name: "paste (desktop)",
+        status: "ok",
+        detail:
+          `you chose the long variant on ${marker.askedAt.slice(0, 10)}; it carries a frozen copy of your ` +
+          `voice, so it does go stale as you record corrections. Re-run \`agent-julia paste --with-voice\` ` +
+          `after a batch of them. ${CANNOT_READ}`,
+      });
     } else if (marker.layout !== PASTE_LAYOUT) {
       checks.push({
         name: "paste (desktop)",
@@ -436,7 +447,7 @@ export async function runDoctor(config: Config, t: DoctorTargets = defaultTarget
   // --- What every client is told on connect ---
   {
     const instructions = serverInstructions(config);
-    const BUDGET = 1_800;
+    const BUDGET = INSTRUCTIONS_BUDGET;
     checks.push({
       name: "mcp instructions",
       status: instructions.length <= BUDGET ? "ok" : "warn",

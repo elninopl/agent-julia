@@ -1,8 +1,10 @@
 import { existsSync, realpathSync } from "node:fs";
 import { createHash } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { copyFile, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { homedir, hostname, platform } from "node:os";
+import { withFileLock } from "../managed/lock.js";
+import { homedir, hostname, platform, tmpdir } from "node:os";
 import { dirname, join, sep } from "node:path";
 import { Config, Surface } from "../config/schema.js";
 import { log, warn } from "../util/log.js";
@@ -157,11 +159,9 @@ export async function readPasteMarker(path = coworkPasteMarkerPath()): Promise<P
   }
 }
 
-export async function writePasteMarker(marker: PasteMarker): Promise<void> {
-  const path = coworkPasteMarkerPath();
-  await mkdir(dirname(path), { recursive: true });
-  const prior = await readPasteMarker();
-  await writeFile(path, JSON.stringify({ ...prior, ...marker }, null, 2) + "\n", "utf8");
+export async function writePasteMarker(marker: PasteMarker, path = coworkPasteMarkerPath()): Promise<void> {
+  const prior = await readPasteMarker(path);
+  await writeJsonSafely(path, { ...prior, ...marker });
 }
 
 export interface SurfacesState {
@@ -178,10 +178,32 @@ export async function readSurfaces(path = surfacesStatePath()): Promise<Surfaces
   }
 }
 
-export async function writeSurfaces(next: SurfacesState): Promise<void> {
-  const path = surfacesStatePath();
+export async function writeSurfaces(next: SurfacesState, path = surfacesStatePath()): Promise<void> {
+  await writeJsonSafely(path, next);
+}
+
+// Read-modify-write from every boot and every get_core, across a long-lived
+// Desktop server and every fresh Code server. Locked and renamed into place, or
+// two of them lose each other's records — and a half-written file would then
+// read back as "never fetched", which is a lie doctor would repeat.
+async function writeJsonSafely(path: string, value: unknown): Promise<void> {
+  // The same rail saveConfig has. A scratch script or a test that forgets to
+  // point these somewhere temporary would otherwise rewrite a real person's
+  // paste marker, and doctor would then report on a machine that is not theirs.
+  if ((process.env.VITEST || process.env.NODE_ENV === "test") && !path.startsWith(tmpdir())) {
+    throw new Error(`refusing to write ${path} from a test run — pass an explicit temp path`);
+  }
   await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, JSON.stringify(next, null, 2) + "\n", "utf8");
+  await withFileLock(path, async () => {
+    const tmp = `${path}.${process.pid}.${randomUUID().slice(0, 8)}.tmp`;
+    try {
+      await writeFile(tmp, JSON.stringify(value, null, 2) + "\n", "utf8");
+      await rename(tmp, path);
+    } catch (err) {
+      await rm(tmp, { force: true }).catch(() => undefined);
+      throw err;
+    }
+  });
 }
 
 export function coreHash(core: string): string {
@@ -307,7 +329,11 @@ export async function install(config: Config): Promise<InstallStep[]> {
   }
   if (config.surfaces.includes("cowork") || config.surfaces.includes("dispatch")) {
     const mirror = coworkMirrorPath();
-    await upsertManagedBlock(mirror, STARTUP_BLOCK_ID, core);
+    // The stable layer, not the core: this file is what the user copies by hand,
+    // and anything in it that changes between pastes is stale by construction.
+    // The next boot's refresh writes the same body, so the two cannot disagree.
+    const pasteText = await pasteBody(config);
+    await upsertManagedBlock(mirror, STARTUP_BLOCK_ID, pasteText);
     // Cowork keeps Global instructions inside the app — we can't write that field,
     // so the user pastes it. Put it on the clipboard to make that one action, not
     // a file hunt. Best-effort: if there's no clipboard, fall back to the path.
@@ -336,14 +362,16 @@ export async function install(config: Config): Promise<InstallStep[]> {
     });
     // Record what we ASKED for. It is the only thing we can know: the field
     // itself is unreadable from outside the app.
-    const body = await pasteBody(config);
     await writePasteMarker({
       layout: PASTE_LAYOUT,
       variant: "stable",
-      stableHash: pasteHash(body),
+      stableHash: pasteHash(pasteText),
       configFingerprint: configFingerprint(config),
       askedAt: new Date().toISOString(),
       askedOn: hostname(),
+      // F4: the merge in writePasteMarker would otherwise keep a previousLayout
+      // from before this paste, and the migration notice would fire forever.
+      previousLayout: undefined,
     });
   }
 
