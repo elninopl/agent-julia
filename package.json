@@ -33,7 +33,7 @@
     "dev": "tsx src/index.ts",
     "wizard": "tsx src/index.ts init",
     "serve": "tsx src/index.ts serve",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json",
     "test": "vitest run",
     "prepublishOnly": "npm run build"
   },

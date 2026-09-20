@@ -19,6 +19,8 @@ import { fileURLToPath } from "node:url";
 const MAINT_MTIME_KEY = "maint_mtime";
 // How long a shutdown waits for an in-flight write before exiting anyway.
 const DRAIN_MS = 5_000;
+// How often to check that the client that spawned us is still alive.
+const WATCHDOG_MS = 30_000;
 
 // The package version, read from package.json (two levels up from dist/ and
 // src/ alike). Best-effort — the server must boot even if the read fails.
@@ -76,9 +78,20 @@ async function runStartupTasks(rt: Runtime): Promise<void> {
   // touch copies carrying the agent-julia ownership marker; the persona refresh
   // never creates a block, only updates existing ones. Non-fatal.
   try {
-    const steps = await installSkills(skillsTargetDir());
-    const cores = await refreshInjectedCore(rt.config);
-    const exports = await refreshExports(rt.config);
+    // Under the store lock: every Claude session spawns its own server, and on a
+    // busy machine a dozen of them boot at once and rewrite ~/.claude/CLAUDE.md
+    // and ~/.claude/skills at the same moment.
+    const { withStoreLock } = await import("./store/lock.js");
+    const refreshed = await withStoreLock(rt.config.memoryDir, async () => ({
+      steps: await installSkills(skillsTargetDir()),
+      cores: await refreshInjectedCore(rt.config),
+      exports: await refreshExports(rt.config),
+    }));
+    if (!refreshed) {
+      log("refresh: another server was doing it — skipped");
+      return;
+    }
+    const { steps, cores, exports } = refreshed;
     log(
       `refresh: ${steps.filter((s) => s.status === "done").length}/${steps.length} skill(s), ` +
         `${cores} persona block(s), ${exports} export(s)`,
@@ -86,6 +99,24 @@ async function runStartupTasks(rt: Runtime): Promise<void> {
   } catch (err) {
     warn("startup refresh failed (continuing):", (err as Error).message);
   }
+}
+
+// Exit when the process that spawned us does. Claude starts one server per
+// session and does not always close the pipe or send a signal on the way out:
+// on one machine this left 88 live servers, the oldest twelve days old, holding
+// 954 MB and a WAL handle each, every one of them having rewritten the user's
+// CLAUDE.md and skills directory at boot. A reparented process (ppid changed,
+// usually to 1) is an orphan.
+function startParentWatchdog(onOrphaned: () => void): void {
+  const parent = process.ppid;
+  const timer = setInterval(() => {
+    if (process.ppid !== parent) {
+      clearInterval(timer);
+      onOrphaned();
+    }
+  }, WATCHDOG_MS);
+  // Never hold the process open for the watchdog itself.
+  timer.unref?.();
 }
 
 // Boot the MCP stdio server. Runs migrations, opens the index, registers tools,
@@ -125,6 +156,8 @@ export async function startServer(): Promise<void> {
   };
   await server.connect(transport);
   log(`agent-julia serving "${rt.config.name}" — memory: ${rt.config.memoryDir}`);
+
+  startParentWatchdog(() => shutdown("the client that started this server is gone"));
 
   await runStartupTasks(rt);
 
