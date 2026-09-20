@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdir, readFile, readdir, rename, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { ParsedFrontmatter, parseFrontmatter, stringifyFrontmatter } from "./frontmatter.js";
 import { warn } from "../util/log.js";
@@ -312,7 +312,7 @@ export async function writePage(
   };
 
   const out = stringifyFrontmatter("\n" + body + "\n", merged as Record<string, unknown>);
-  await writeFile(path, out, "utf8");
+  await writeFileAtomic(path, out);
   return {
     path,
     mode,
@@ -338,4 +338,19 @@ function parseMatter(raw: string, what: string): ParsedFrontmatter {
 function stripCoreKeys(fm: PageFrontmatter): PageFrontmatter {
   const { title, status, updated, ...rest } = fm;
   return rest;
+}
+
+// Write through a temp file in the same directory, then rename. writeFile
+// truncates in place, so a crash, a full disk or a machine losing power halfway
+// leaves a half-written page where a whole one used to be — in the store that is
+// the product's only copy of what it knows.
+export async function writeFileAtomic(path: string, content: string): Promise<void> {
+  const tmp = `${path}.${process.pid}.tmp`;
+  try {
+    await writeFile(tmp, content, "utf8");
+    await rename(tmp, path);
+  } catch (err) {
+    await unlink(tmp).catch(() => undefined);
+    throw err;
+  }
 }
