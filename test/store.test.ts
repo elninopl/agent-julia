@@ -254,11 +254,15 @@ describe("front matter is data, never code", () => {
     );
     writeFileSync(join(paths.pagesDir, "healthy.md"), "---\ntitle: healthy\n---\n\nbody\n", "utf8");
 
-    expect(await readPage(paths, "poisoned")).toBeNull();
+    // Nothing is evaluated, and nothing disappears: the page comes back with its
+    // front matter flagged as unreadable and its text intact.
+    const poisoned = await readPage(paths, "poisoned");
     expect(existsSync(marker)).toBe(false);
+    expect(poisoned).not.toBeNull();
+    expect(poisoned!.frontmatterError).toMatch(/not supported|use YAML/i);
 
-    // One bad file must not take the store down with it.
-    expect((await listPages(paths)).map((p) => p.id)).toEqual(["healthy"]);
+    // And the healthy neighbour is unaffected.
+    expect((await listPages(paths)).map((p) => p.id).sort()).toEqual(["healthy", "poisoned"]);
   });
 
   it("refuses javascript front matter arriving through ingest", async () => {
@@ -398,5 +402,40 @@ describe("a page the product can see, it can open", () => {
     writeFileSync(join(paths.pagesDir, "Prive Game.md"), "---\ntitle: a\n---\n\na\n", "utf8");
     writeFileSync(join(paths.pagesDir, "prive-game.md"), "---\ntitle: b\n---\n\nb\n", "utf8");
     expect((await listPageIds(paths)).filter((i) => i === "prive-game").length).toBe(1);
+  });
+});
+
+describe("a page with broken front matter is still a page", () => {
+  it("keeps a page whose YAML will not parse, instead of hiding it", async () => {
+    // An ordinary slip, not an attack: a colon in an unquoted title. Returning
+    // null here would delete the page from the catalog, the index, the digest
+    // and the read tool, with a stderr line as the only trace.
+    const dir = mkdtempSync(join(tmpdir(), "aj-badfm-"));
+    const paths = storePaths(dir);
+    mkdirSync(paths.pagesDir, { recursive: true });
+    writeFileSync(join(paths.pagesDir, "slip.md"), "---\ntitle: Privé: the game\n---\n\nthe body survives\n", "utf8");
+
+    const page = await readPage(paths, "slip");
+    expect(page).not.toBeNull();
+    expect(page!.body).toContain("the body survives");
+    expect(page!.frontmatterError).toBeTruthy();
+    expect(await listPageIds(paths)).toContain("slip");
+  });
+
+  it("keeps a page that opens with a horizontal rule", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "aj-hr-"));
+    const paths = storePaths(dir);
+    mkdirSync(paths.pagesDir, { recursive: true });
+    writeFileSync(join(paths.pagesDir, "note.md"), "---\n\nAdopted note starting with a rule.\n\n---\n\nmore text\n", "utf8");
+    const page = await readPage(paths, "note");
+    expect(page).not.toBeNull();
+    expect(page!.body).toContain("Adopted note");
+  });
+
+  it("still refuses to WRITE front matter in a scripting language", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "aj-writejs-"));
+    await expect(writePage(storePaths(dir), "evil", '---js\n{ title: "x" }\n---\n\nbody\n', {})).rejects.toThrow(
+      /not supported|use YAML/i,
+    );
   });
 });
