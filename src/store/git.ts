@@ -106,8 +106,17 @@ export async function getRemoteUrl(root: string): Promise<string | null> {
 // Point origin at `url`, adding or updating it as needed.
 export async function setRemoteUrl(root: string, url: string): Promise<void> {
   if (!isGitRepo(root)) await ensureGitRepo(root);
-  if (await getRemoteUrl(root)) await git(root, ["remote", "set-url", "origin", url]);
-  else await git(root, ["remote", "add", "origin", url]);
+  const current = await getRemoteUrl(root);
+  if (current === url) return;
+  if (current) {
+    // An adopted repo already pointing somewhere is not ours to repoint in
+    // silence. Record what it was, so the user can put it back.
+    warn(`changing this store's origin from ${current} to ${url} (the previous URL is saved as remote "pre-agent-julia")`);
+    await git(root, ["remote", "add", "pre-agent-julia", current]).catch(() => undefined);
+    await git(root, ["remote", "set-url", "origin", url]);
+    return;
+  }
+  await git(root, ["remote", "add", "origin", url]);
 }
 
 // Check the remote is reachable + authenticated, without pushing. Used at setup
@@ -215,6 +224,14 @@ export async function commitAll(root: string, message: string): Promise<boolean>
   if (!isGitRepo(root)) await ensureGitRepo(root);
   const res = await withGitLock(root, async () => {
     try {
+      // A tree left mid-merge holds conflict markers in the files. Committing it
+      // would write "<<<<<<< HEAD" into the user's memory and call it a save.
+      for (const ref of ["MERGE_HEAD", "REVERT_HEAD", "CHERRY_PICK_HEAD"]) {
+        if (existsSync(join(root, ".git", ref))) {
+          warn(`not committing: the store is in the middle of a ${ref.replace("_HEAD", "").toLowerCase()}. Finish or abort it by hand.`);
+          return false;
+        }
+      }
       // Inside the try: a transient failure here (index.lock contention) must not
       // report a write as failed when the page is already on disk and journalled.
       await git(root, ["add", "-A"]);

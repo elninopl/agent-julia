@@ -80,6 +80,26 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ### Fixed
 
+- **Adopting a repo no longer commits the search index.** The store's
+  `.gitignore` was written only when none existed, so a folder that already had
+  one staged `.agent-julia/index.sqlite` and its `-wal`/`-shm` on every write —
+  and then fought the other machine's copy on every pull. Missing rules are
+  appended now, and `.agent-julia/` carries a `.gitignore` of its own.
+- **`setRemoteUrl` no longer hijacks an adopted repo's origin in silence.** The
+  previous URL is kept as a remote named `pre-agent-julia` and the change is
+  announced.
+- **`commitAll` refuses a tree that is mid-merge**, instead of committing
+  conflict markers into the user's memory and calling it a save.
+- **An orphaned start marker is cleaned up** rather than left to collect a
+  second block below it on every refresh.
+- **`~/.claude.json` is backed up once and written through a temp file**, the
+  same care this package already took with the markdown files it edits. It is
+  Claude Code's live state, and a truncated one is a broken install.
+- **`uninstall` finishes the job.** It never loaded the config, so a persona
+  exported into `~/.codex/AGENTS.md` stayed there forever and the Cowork paste
+  marker survived to make a later reinstall claim the in-app copy was current.
+  It now removes recorded exports and the marker, and says plainly what it
+  deliberately leaves alone: your store, your config and every backup.
 - **A question asked in a sentence finds something.** Every term was quoted and
   ANDed, with no stopwords, no fallback and no title weighting — so the
   product's own headline example ("What did we decide about auth?") returned

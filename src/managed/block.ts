@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { warn } from "../util/log.js";
 import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
@@ -54,6 +55,19 @@ export async function upsertManagedBlock(
   const safeBody = body.replace(/<!--\s*agent-julia:[\s\S]*?-->/g, "").trim();
   const block = `${startMarker(id)}\n${safeBody}\n${endMarker(id)}`;
   let current = existed ? await readFile(filePath, "utf8") : "";
+
+  // A file with a start marker and no end marker (a half-finished hand edit, a
+  // truncated write) is not a block. Left alone, the next upsert's region regex
+  // would not match, the block would be appended below it, and every later
+  // uninstall or refresh would see two starts and one end.
+  const strayStart = new RegExp(`agent-julia:${escapeRe(id)}:start`);
+  if (!hasManagedBlock(current, id) && strayStart.test(current)) {
+    warn(`${filePath} has an agent-julia start marker with no end marker; removing the stray line`);
+    current = current
+      .split("\n")
+      .filter((l) => !strayStart.test(l))
+      .join("\n");
+  }
 
   if (hasManagedBlock(current, id)) {
     // Function replacement: a plain string would reinterpret `$&`/`$'` inside
