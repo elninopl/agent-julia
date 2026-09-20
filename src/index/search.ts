@@ -9,7 +9,7 @@ export interface SearchResult {
   title: string;
   score: number;
   snippet?: string;
-  via: "fts" | "semantic" | "hybrid";
+  via: "fts" | "fts-loose" | "semantic" | "hybrid";
 }
 
 // Reciprocal-rank-style fusion of FTS and semantic results. When semantic is
@@ -31,7 +31,7 @@ export async function search(
 
   // Pure modes: return directly (semantic with no provider falls through to []).
   if (mode === "fts" || (mode === "semantic" && !provider.enabled)) {
-    return fts.slice(0, limit).map((h) => ({ ...h, via: "fts" as const }));
+    return fts.slice(0, limit).map((h) => ({ ...h, via: h.via }));
   }
   if (mode === "semantic") {
     const byId = new Map(fts.map((f) => [f.id, f]));
@@ -52,7 +52,9 @@ export async function search(
       title: h.title,
       snippet: h.snippet,
       score: 0.5 * rrf(i),
-      via: "hybrid",
+      // A loose keyword hit stays labelled loose even after fusion, so a caller
+      // can tell "this is what you asked for" from "this is the closest I have".
+      via: h.via === "fts-loose" ? "fts-loose" : "hybrid",
     });
   });
   sem.forEach((h, i) => {
