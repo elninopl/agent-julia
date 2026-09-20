@@ -9,6 +9,40 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ### Added
 
+- **The persona reaches Claude Desktop without going stale.** The field that can
+  only be updated by hand was carrying the content that changes fastest: every
+  correction reached Claude Code automatically and Claude Desktop never. On the
+  maintainer's machine the Cowork sessions had been running since 2026-08-23 on
+  a block with zero of his eleven corrections. The split is now by volatility.
+  The paste holds identity, pronouns, reply language, the never-store list and
+  the instruction to load the rest — about 470 tokens that only change if you
+  rename your agent. The voice and the corrections are fetched with `get_core`
+  at the start of a conversation.
+- **The server introduces itself on connect.** Every client now receives short
+  instructions with the identity, the privacy rail and the order to load the
+  voice. It needs no paste, so a machine where the wizard was never finished
+  still gets a named agent that knows what it must not store. Paragraph order is
+  the degradation order: a client that truncates loses memory guidance, never
+  the identity or the privacy list.
+- **`agent-julia paste [--with-voice]`** prints and copies the block to put in
+  Claude Desktop, and records what was asked for. `--with-voice` keeps the old
+  long form for accounts that reach surfaces with no connector at all; it does
+  go stale, and now says so.
+- **`get_core` takes `since`.** A surface that already carries the persona block
+  passes its hash and gets one line back instead of 2,700 tokens. The block ends
+  with that hash for exactly this purpose.
+- **`doctor` stops claiming to know what it cannot.** The old check asserted
+  "in-app paste matches the current core", which was unknowable. Three separate
+  questions now — what agent-julia last asked for, what the last Desktop session
+  was actually seen running with (read from the session files Claude Desktop
+  leaves on disk), and whether the voice has genuinely been fetched there — plus
+  a new `unknown` status, counted in neither total, for the things it cannot see.
+- **`correct_voice` closes its own loop.** It refreshes the Claude Code block
+  immediately and says, in the reply, that the correction applies from this turn
+  on and how it reaches the other surfaces.
+
+### Added
+
 - **`agent-julia undo`.** Lists the last changes to your memory with the pages
   each one touched, and undoes one by id. It records an inverse commit rather
   than rewriting history, because the store may already be pushed and shared

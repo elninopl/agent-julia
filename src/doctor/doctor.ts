@@ -12,19 +12,28 @@ import { EXPORT_BLOCK_ID, exportText } from "../export/export.js";
 import { isGitRepo, getRemoteUrl, gitAvailable } from "../store/git.js";
 import { injectedCoreFrom, STARTUP_BLOCK_ID } from "../persona/startup.js";
 import { composeCore } from "../persona/compose.js";
+import { coreHashOf, serverInstructions } from "../persona/startup.js";
+import { PASTE_LAYOUT, configFingerprint, pasteBody, pasteHash } from "../persona/paste.js";
+import { probeCoworkSession } from "../surfaces/cowork-probe.js";
 import { estimateTokens } from "../util/tokens.js";
 import { endMarker, hasManagedBlock, startMarker } from "../managed/block.js";
 import { SHIPPED_SKILLS, shippedSkillsDir, skillsTargetDir } from "../skills/install.js";
 import {
   claudeCodeConfigPath,
   claudeCodeMemoryPath,
-  coreHash,
   coworkMirrorPath,
   coworkPasteMarkerPath,
   desktopConfigPath,
+  surfacesStatePath,
+  readPasteMarker,
+  readSurfaces,
 } from "../wizard/register.js";
 
-export type DoctorStatus = "ok" | "warn" | "fail";
+// "unknown" exists because the whole failure mode of the old design was a check
+// claiming knowledge it did not have. agent-julia cannot read Claude Desktop's
+// in-app instruction field; a check that cannot know must be able to say so
+// without dressing it as health. It counts toward neither total.
+export type DoctorStatus = "ok" | "warn" | "fail" | "unknown";
 
 export interface DoctorCheck {
   name: string;
@@ -40,6 +49,7 @@ export interface DoctorTargets {
   desktopConfig: string | null;
   coworkMirror: string;
   pasteMarker: string;
+  surfaces: string;
   skillsDir: string;
 }
 
@@ -50,6 +60,7 @@ export function defaultTargets(): DoctorTargets {
     desktopConfig: desktopConfigPath(),
     coworkMirror: coworkMirrorPath(),
     pasteMarker: coworkPasteMarkerPath(),
+    surfaces: surfacesStatePath(),
     skillsDir: skillsTargetDir(),
   };
 }
@@ -307,29 +318,134 @@ export async function runDoctor(config: Config, t: DoctorTargets = defaultTarget
     }
   }
 
-  // --- Persona: Cowork drift ---
+  // --- Claude Desktop: what we asked for, what a session was seen with, and
+  // whether the voice ever actually arrives. Three separate questions, because
+  // agent-julia cannot read the in-app field and must never pretend otherwise.
   if (wantDesktop) {
-    if (!existsSync(t.pasteMarker)) {
+    const CANNOT_READ = "agent-julia cannot read the in-app field, so this is about the request, not the field.";
+    const marker = await readPasteMarker(t.pasteMarker);
+    const body = await pasteBody(config);
+    if (!marker) {
       checks.push({
-        name: "persona (cowork)",
+        name: "paste (desktop)",
         status: "warn",
-        detail: "no record of a Cowork paste — the in-app Global instructions may be empty or stale",
-        fix: "npx agent-julia sync, then paste as instructed",
+        detail: `no record that agent-julia ever asked you to paste anything on this machine. ${CANNOT_READ}`,
+        fix: "npx agent-julia paste",
+      });
+    } else if (marker.layout !== PASTE_LAYOUT) {
+      checks.push({
+        name: "paste (desktop)",
+        status: "warn",
+        detail:
+          `you were last asked to paste layout ${marker.layout} (the old long block with a frozen copy of ` +
+          `your voice). get_core overrides it, so nothing breaks, but it costs roughly 2,400 tokens a conversation.`,
+        fix: "npx agent-julia paste",
+      });
+    } else if (marker.configFingerprint !== configFingerprint(config)) {
+      checks.push({
+        name: "paste (desktop)",
+        status: "warn",
+        detail:
+          "the stable layer changed since you were asked to paste it (name, output language or never-store list). " +
+          CANNOT_READ,
+        fix: "npx agent-julia paste",
+      });
+    } else if (marker.stableHash !== pasteHash(body)) {
+      checks.push({
+        name: "paste (desktop)",
+        status: "warn",
+        detail:
+          "the wording of the shipped template changed in this package release. Your existing paste is still " +
+          "correct; re-pasting is optional. " +
+          CANNOT_READ,
+        fix: "npx agent-julia paste",
       });
     } else {
-      const pasted = (await readFile(t.pasteMarker, "utf8")).trim();
-      if (pasted === coreHash(core)) {
-        checks.push({ name: "persona (cowork)", status: "ok", detail: "in-app paste matches the current core" });
-      } else {
-        checks.push({
-          name: "persona (cowork)",
-          status: "warn",
-          detail:
-            "the persona core changed since you last pasted it into Cowork — the in-app copy has drifted",
-          fix: "npx agent-julia sync, then re-paste into Claude Desktop → Settings → Cowork → Global instructions",
-        });
-      }
+      checks.push({
+        name: "paste (desktop)",
+        status: "ok",
+        detail: `last asked on ${marker.askedAt.slice(0, 10)} for layout ${marker.layout}, still current. ${CANNOT_READ}`,
+      });
     }
+
+    // The only real evidence: what Claude Desktop seeded its last session with.
+    const probe = await probeCoworkSession();
+    if (probe.status === "unreadable") {
+      checks.push({
+        name: "paste seen",
+        status: "unknown",
+        detail: "could not read Claude Desktop's session files (undocumented path, it may have moved). No signal either way.",
+      });
+    } else if (probe.status === "none") {
+      checks.push({
+        name: "paste seen",
+        status: "unknown",
+        detail: "no Cowork session on this machine carried an agent-julia block, so there is nothing to read.",
+      });
+    } else if (probe.layout === PASTE_LAYOUT) {
+      checks.push({
+        name: "paste seen",
+        status: "ok",
+        detail: `the last Cowork session (${probe.newest}) was seeded with the current layout-${probe.layout} paste. That is what that session got, not what the field holds now.`,
+      });
+    } else {
+      const mine = (await composeCore(paths, config)).text.match(/^- /gm)?.length ?? 0;
+      checks.push({
+        name: "paste seen",
+        status: "warn",
+        detail:
+          `the last Cowork session (${probe.newest}) ran with a layout-${probe.layout} block, ${probe.chars} chars, ` +
+          `unchanged since ${probe.unchangedSince} — carrying ${probe.corrections} voice correction(s) against ${mine} lines of voice here.`,
+        fix: "npx agent-julia paste",
+      });
+    }
+
+    // Does the volatile half actually arrive? Absolute numbers only: Desktop
+    // runs one long-lived process for many conversations, so there is no
+    // denominator worth quoting.
+    const surfaces = await readSurfaces(t.surfaces);
+    const desktopBoot = Object.entries(surfaces.boots ?? {}).find(([k]) => k !== "claude-code");
+    const desktopFetch = Object.entries(surfaces.fetches ?? {}).find(([k]) => k !== "claude-code");
+    if (!desktopBoot) {
+      checks.push({
+        name: "voice fetch",
+        status: "unknown",
+        detail: "the server has never started from Claude Desktop on this machine, so nothing can be said about it.",
+      });
+    } else if (!desktopFetch) {
+      checks.push({
+        name: "voice fetch",
+        status: "warn",
+        detail:
+          `the server has started from Claude Desktop (${desktopBoot[0]}) but get_core has never been called there ` +
+          "— the paste is probably missing, or the connector is off in your conversations.",
+        fix: "npx agent-julia paste",
+      });
+    } else {
+      const current = coreHashOf(composed.text).slice(0, 8) === desktopFetch[1].coreHash.slice(0, 8);
+      checks.push({
+        name: "voice fetch",
+        status: current ? "ok" : "warn",
+        detail: current
+          ? `${desktopFetch[0]} last loaded the voice ${desktopFetch[1].at.slice(0, 16).replace("T", " ")} (core ${desktopFetch[1].coreHash.slice(0, 8)}, current).`
+          : `${desktopFetch[0]} last loaded the voice ${desktopFetch[1].at.slice(0, 10)} (core ${desktopFetch[1].coreHash.slice(0, 8)}), which is not the current one.`,
+      });
+    }
+  }
+
+  // --- What every client is told on connect ---
+  {
+    const instructions = serverInstructions(config);
+    const BUDGET = 1_800;
+    checks.push({
+      name: "mcp instructions",
+      status: instructions.length <= BUDGET ? "ok" : "warn",
+      detail:
+        instructions.length <= BUDGET
+          ? `${instructions.length} chars of ${BUDGET} (clients truncate around 2,048).`
+          : `${instructions.length} chars — over budget, so paragraphs were dropped from what clients receive. Shorten your privacyHardOff list.`,
+      ...(instructions.length <= BUDGET ? {} : { fix: "shorten privacyHardOff in the config" }),
+    });
   }
 
   // --- Skills ---
@@ -419,7 +535,7 @@ export async function runDoctor(config: Config, t: DoctorTargets = defaultTarget
   return checks;
 }
 
-const ICONS: Record<DoctorStatus, string> = { ok: "✓", warn: "!", fail: "✗" };
+const ICONS: Record<DoctorStatus, string> = { ok: "✓", warn: "!", fail: "✗", unknown: "?" };
 
 export function formatChecks(checks: DoctorCheck[]): string {
   const lines = checks.map((c) => {
@@ -428,11 +544,15 @@ export function formatChecks(checks: DoctorCheck[]): string {
   });
   const fails = checks.filter((c) => c.status === "fail").length;
   const warns = checks.filter((c) => c.status === "warn").length;
+  // "unknown" counts toward neither: a question that cannot be answered is not
+  // a problem and is certainly not health.
+  const unknown = checks.filter((c) => c.status === "unknown").length;
+  const tail = unknown > 0 ? ` ${unknown} thing(s) agent-julia cannot check.` : "";
   const summary =
     fails > 0
-      ? `${fails} problem(s), ${warns} warning(s).`
+      ? `${fails} problem(s), ${warns} warning(s).${tail}`
       : warns > 0
-        ? `Healthy, with ${warns} warning(s).`
-        : "Everything looks healthy.";
+        ? `Healthy, with ${warns} warning(s).${tail}`
+        : `Everything looks healthy.${tail}`;
   return [...lines, "", summary].join("\n");
 }

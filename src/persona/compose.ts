@@ -65,7 +65,15 @@ const SEPARATOR_TOKENS = 10;
 // not a serialized config. Precedence is by ordering: corrections (last, labeled
 // as overriding) win over the universal core, which sits over the style voice.
 // The full knowledge base stays on disk; only this compact core enters context.
-export async function composeCore(paths: StorePaths, config: Config): Promise<ComposedCore> {
+export async function composeCore(
+  paths: StorePaths,
+  config: Config,
+  opts: { budget?: number } = {},
+): Promise<ComposedCore> {
+  // The ceiling is a parameter because it means different things in different
+  // places: the injected block sits in the system prompt and must not crowd it
+  // out, while a tool result does not and should not be trimmed for that reason.
+  const budget = opts.budget ?? config.contextBudget;
   const coreVoice = await loadCoreVoice();
   const voice = await loadVoice(paths, config);
   const corrections = await readCorrections(paths);
@@ -79,7 +87,7 @@ export async function composeCore(paths: StorePaths, config: Config): Promise<Co
   const privacy = `## Never store\n` + config.privacyHardOff.map((p) => `- ${p}`).join("\n");
 
   const remaining = Math.max(
-    config.contextBudget - estimateTokens(identity) - estimateTokens(privacy) - SEPARATOR_TOKENS,
+    budget - estimateTokens(identity) - estimateTokens(privacy) - SEPARATOR_TOKENS,
     0,
   );
 
@@ -142,7 +150,7 @@ export async function composeCore(paths: StorePaths, config: Config): Promise<Co
   return {
     text,
     tokens: estimateTokens(text),
-    budget: config.contextBudget,
+    budget,
     // Measured, not predicted: the old check compared against a budget the clamp
     // had already been given, and was read by nothing.
     truncated: clampedCore.length < coreBlock.length || clampedVoice.length < voiceBlock.length,

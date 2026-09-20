@@ -8,6 +8,9 @@ import { refreshIndexMd } from "../store/catalog.js";
 import { commitAll, pageHistory, pushToRemote } from "../store/git.js";
 import { appendCorrection, retractCorrection } from "../persona/corrections.js";
 import { composeCore } from "../persona/compose.js";
+import { coreHashOf, memoryInstruction } from "../persona/startup.js";
+import { PASTE_LAYOUT } from "../persona/paste.js";
+import { readPasteMarker, readSurfaces, refreshInjectedCore, writeSurfaces } from "../wizard/register.js";
 import { runMaintenance } from "../maintenance/maintenance.js";
 
 type TextResult = { content: Array<{ type: "text"; text: string }> };
@@ -20,7 +23,61 @@ function json(value: unknown): TextResult {
   return text(JSON.stringify(value, null, 2));
 }
 
-// Wire the v0.1 MCP tool surface onto an McpServer instance.
+
+function clientName(server: McpServer): string {
+  try {
+    return server.server.getClientVersion()?.name ?? "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
+// Bookkeeping so `doctor` can answer the only question that matters about the
+// unreadable Desktop field: does the current voice actually arrive there.
+async function recordFetch(client: string, coreHash: string): Promise<void> {
+  try {
+    const state = await readSurfaces();
+    await writeSurfaces({
+      ...state,
+      fetches: { ...state.fetches, [client]: { at: new Date().toISOString(), coreHash } },
+    });
+  } catch {
+    // never fail a read because a counter could not be written
+  }
+}
+
+const NOTICE_CAP = 3;
+const NOTICE_INTERVAL_MS = 24 * 60 * 60 * 1000;
+
+// A stdio server has no channel to a human: its output goes to the client, and
+// almost nobody runs doctor. The agent in the conversation is the only way to
+// tell someone their pasted block is the old long one — throttled, because a nag
+// with no end is ignored after the second time and then lives in context forever.
+async function migrationNotice(client: string): Promise<string> {
+  if (client === "claude-code") return "";
+  try {
+    const marker = await readPasteMarker();
+    if (!marker || marker.previousLayout !== 1) return "";
+    const state = await readSurfaces();
+    const seen = state.migrationNotices;
+    if (seen && seen.count >= NOTICE_CAP) return "";
+    if (seen && Date.now() - Date.parse(seen.lastAt) < NOTICE_INTERVAL_MS) return "";
+    await writeSurfaces({
+      ...state,
+      migrationNotices: { count: (seen?.count ?? 0) + 1, lastAt: new Date().toISOString() },
+    });
+    return [
+      "> Tell the user once, in their language, then carry on: their pasted Claude Desktop instructions",
+      "> are the old long layout. Running `npx agent-julia paste` in a terminal and replacing the block",
+      "> between the two agent-julia markers cuts it from ~2,700 tokens to ~470, and their voice is",
+      "> fetched live instead.",
+    ].join("\n");
+  } catch {
+    return "";
+  }
+}
+
+// Wire the MCP tool surface onto an McpServer instance.
 export function registerTools(server: McpServer, rt: Runtime): void {
   const { paths, indexer, config } = rt;
 
@@ -54,15 +111,45 @@ export function registerTools(server: McpServer, rt: Runtime): void {
   server.registerTool(
     "get_core",
     {
-      annotations: { readOnlyHint: true, openWorldHint: false },
-      title: "Get persona core",
+      annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
+      title: "Load your voice (call this first)",
       description:
-        "Return the budgeted persona core (identity + voice rules + corrections) to inject into context. Keep this small; the full knowledge base lives on disk.",
-      inputSchema: {},
+        "Call this before your first substantive reply in a conversation. Returns this user's persona: " +
+        "who you are, how they want you to write, and every correction they have recorded. It overrides " +
+        "your global instructions wherever they differ, and it changes between conversations, so a copy " +
+        "from an earlier session is wrong. Read-only and cheap. If you already have an agent-julia " +
+        "persona block in context, pass its hash as `since` to confirm it is current instead of re-reading it.",
+      inputSchema: {
+        since: z
+          .string()
+          .optional()
+          .describe(
+            "A core hash you already have (from a persona block in your context, or an earlier call in " +
+              "this session). If it still matches, this returns 'unchanged' instead of the core.",
+          ),
+      },
     },
-    async () => {
-      const core = await composeCore(paths, config);
-      return text(core.text);
+    async ({ since }) => {
+      // A raised ceiling for the tool path: contextBudget exists so the injected
+      // block does not crowd out the system prompt, and a tool result is not in
+      // the system prompt. Nothing should be dropped here for a reason that does
+      // not apply.
+      const core = await composeCore(paths, config, { budget: config.contextBudget * 2 });
+      const hash = coreHashOf(core.text);
+      const short = hash.slice(0, 8);
+      const client = clientName(server);
+      await recordFetch(client, hash);
+
+      const corrections = (core.text.match(/^- /gm) ?? []).length;
+      if (since && (since === hash || since === short)) {
+        return text(`unchanged · core ${short} · ${corrections} line(s) of voice · you already have the current voice`);
+      }
+
+      const fingerprint =
+        `<!-- agent-julia core · ${short} · ${corrections} line(s) · ${core.tokens} tok · layout ${PASTE_LAYOUT}` +
+        `${core.droppedCorrections ? ` · ${core.droppedCorrections} dropped` : ""} -->`;
+      const trailer = await migrationNotice(client);
+      return text([core.text, memoryInstruction(), fingerprint, trailer].filter(Boolean).join("\n\n"));
     },
   );
 
@@ -213,7 +300,8 @@ export function registerTools(server: McpServer, rt: Runtime): void {
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       title: "Record a voice correction",
       description:
-        "Append a user voice correction (L3, highest precedence) — e.g. \"don't praise me\", \"that phrasing is weird\", \"don't use word X\". Surfaced into the injected core.",
+        "Record how the user wants you to write, the moment they tell you — even in passing, even mid-task. " +
+        "Highest precedence: it overrides the style preset and the universal rules from the next turn on.",
       inputSchema: { note: z.string().describe("The correction, in the user's words") },
     },
     async ({ note }) => {
@@ -222,7 +310,14 @@ export function registerTools(server: McpServer, rt: Runtime): void {
         const committed = await commitAll(paths.root, "Update memory: voice correction");
         if (committed && config.gitAutoPush) await pushToRemote(paths.root);
       }
-      return text(`Recorded voice correction: ${note}`);
+      // Make the Claude Code block current now rather than two sessions later.
+      await refreshInjectedCore(config).catch(() => undefined);
+      return text(
+        `Saved: ${note}\n\n` +
+          "Apply it from this turn on. It is not yet in your system prompt for this session " +
+          "(that refreshes at the next server start), and other surfaces pick it up from get_core " +
+          "in their next conversation.",
+      );
     },
   );
 
