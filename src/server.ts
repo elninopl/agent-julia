@@ -1,5 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { Config } from "./config/schema.js";
 import { Runtime, buildRuntime } from "./runtime.js";
 import { registerTools } from "./tools/register.js";
 import { composeCore } from "./persona/compose.js";
@@ -45,8 +46,12 @@ async function packageVersion(): Promise<string> {
 // Evidence only — the mirror file exists for everyone with the cowork surface,
 // including people who never pasted at all, so it is not evidence and is not
 // used as such.
-async function detectLegacyPaste(): Promise<void> {
+async function detectLegacyPaste(config: Config): Promise<void> {
   try {
+    // Nothing to migrate for an install that never had a Desktop surface, and
+    // walking Claude Desktop's session tree on every boot to learn that is work
+    // nobody asked for.
+    if (!config.surfaces.includes("cowork") && !config.surfaces.includes("dispatch")) return;
     const { readPasteMarker, writePasteMarker, legacyPasteMarkerPath } = await import(
       "./wizard/register.js"
     );
@@ -58,12 +63,13 @@ async function detectLegacyPaste(): Promise<void> {
     const askedUnderLayout1 = existsSync(legacyPasteMarkerPath());
     const { probeCoworkSession } = await import("./surfaces/cowork-probe.js");
     const probe = await probeCoworkSession();
+    // A layout-2 sighting settles it, even when the old sha1 marker is still on
+    // disk: the account-scoped field may have been fixed from another machine.
+    if (probe.status === "found" && (probe.layout ?? 1) >= 2) return;
     const seenLayout1 = probe.status === "found" && probe.layout === 1;
     if (!askedUnderLayout1 && !seenLayout1) return;
 
     const { pasteBody, pasteHash, configFingerprint, PASTE_LAYOUT } = await import("./persona/paste.js");
-    const cfg = (await import("./config/config.js")).loadConfig;
-    const config = await cfg();
     await writePasteMarker({
       layout: marker?.layout ?? 1,
       variant: "stable",
@@ -80,7 +86,7 @@ async function detectLegacyPaste(): Promise<void> {
 }
 
 async function runStartupTasks(rt: Runtime): Promise<void> {
-  await detectLegacyPaste();
+  await detectLegacyPaste(rt.config);
   // Two-machine sync: pull the store from its remote before maintenance reads
   // it, so a session on this machine starts from what the other machine pushed.
   // Best-effort — offline is a quiet skip, a conflict is aborted and warned.

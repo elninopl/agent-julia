@@ -258,16 +258,40 @@ describe("what every client is told on connect", () => {
     expect(text).toContain("never store");
   });
 
-  it("degrades in a fixed order instead of throwing, and never drops the privacy list", () => {
-    // Paragraph order is the degradation order: a client that truncates loses
-    // memory guidance, never identity and never what must not be stored.
-    const privacyHardOff = Array.from({ length: 12 }, (_, i) => `a very long category of secret number ${i} `.repeat(3));
+  it("stays inside the budget by trimming what overflows, not what is already bounded", () => {
+    // The overflow is always the privacy list, so that is what gets trimmed —
+    // entry by entry, with a count of what was left out. Dropping it whole would
+    // leave a client with no idea what it must not keep, which is the one thing
+    // in here that exists for safety rather than for tone.
+    const privacyHardOff = Array.from(
+      { length: 12 },
+      (_, i) => `a very long category of secret number ${i} `.repeat(3).trim(),
+    );
     const text = serverInstructions(
       ConfigSchema.parse({ memoryDir: "/unused", name: "X".repeat(40), language: "pl", privacyHardOff }),
     );
+    expect(text.length).toBeLessThanOrEqual(1800);
     expect(text).toContain("X".repeat(40));
-    for (const p of privacyHardOff) expect(text).toContain(p.trim());
+    expect(text).toContain("You never store");
+    expect(text).toContain(privacyHardOff[0]!);
+    expect(text).toMatch(/and \d+ more category/);
+    expect(text).toContain("get_core");
+  });
+
+  it("drops the memory paragraph before it touches identity or privacy", () => {
+    // Sized so the whole thing overflows but identity plus voice still fits:
+    // that is the rung where the memory paragraph is the right thing to lose.
+    const privacyHardOff = Array.from({ length: 12 }, (_, i) => `secret category number ${i} `.repeat(4).trim());
+    const text = serverInstructions(ConfigSchema.parse({ memoryDir: "/unused", privacyHardOff }));
+    expect(text.length).toBeLessThanOrEqual(1800);
+    for (const p of privacyHardOff) expect(text).toContain(p);
     expect(text).not.toContain("Memory: `search`");
+  });
+
+  it("says nothing about storing when there is nothing on the list", () => {
+    const text = serverInstructions(ConfigSchema.parse({ memoryDir: "/unused", privacyHardOff: [] }));
+    expect(text).not.toContain("You never store .");
+    expect(text).not.toMatch(/never store\s*\./);
   });
 
   it("is pure — the same config gives the same text and it reads no disk", () => {

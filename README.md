@@ -4,7 +4,7 @@
 
 # Agent Julia
 
-**Give your AI a name, a voice, and a memory that stays.** Build a persona once — what it is called, how it speaks, what it must never store — and talk to it by name across Claude Code and Claude Desktop. It is yours: plain markdown in a git repo you own, kept small in the model's context, corrected in passing and remembered for good.
+**Give your AI a name, a voice, and a memory that stays.** You start by building the persona: what it is called, its pronouns, the language it answers in, how it writes, what it must never store. From then on you address it by that name instead of prompting an assistant, and the same character answers on Claude Code and on Claude Desktop. It is yours: plain markdown in a git repo you own, kept small in the model's context, corrected in passing and remembered for good.
 
 [![npm](https://img.shields.io/npm/v/agent-julia.svg)](https://www.npmjs.com/package/agent-julia)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
@@ -15,11 +15,11 @@ npx agent-julia init
 
 Every Claude surface forgets between sessions and keeps its own separate notes, so the same person gets a slightly different, amnesiac assistant on each one — one that has to be re-taught the same preferences and called nothing in particular. The usual fix, piling everything into `CLAUDE.md` and global instructions, backfires: long context measurably degrades the model, and a pasted block goes stale the moment you correct something.
 
-Agent Julia gives your AI an identity instead of a configuration. You name it, choose how it speaks, and correct it the way you would correct a colleague — "stop hedging", "don't open with my name" — and it keeps that, everywhere, from the next turn on. Its memory is one folder of markdown you own, with a small budgeted slice of persona riding each message and the rest recalled only when it is needed.
+Agent Julia gives your AI an identity instead of a configuration. The first thing the wizard asks is what to call it, and from then on that is who answers: you write "Julia, take a look at this" and Julia replies, in her own voice, on Claude Code and on Claude Desktop alike. You build that voice by talking, correcting it the way you would correct a colleague ("stop hedging", "don't open with my name"), and it keeps the correction everywhere from the next turn on. Its memory is one folder of markdown you own, with a small budgeted slice of persona riding each message and the rest recalled only when it is needed.
 
 ## Highlights
 
-- **A persona with a name** — you set what it is called, its pronouns, the language it replies in and how it writes. You address it by name, and it answers as that, not as "the assistant".
+- **A persona you build, then call by name** — the wizard asks what it is called before it asks anything else, then pronouns, the language it replies in and how it writes. You open with "Julia, look at this" the way you would with a person, it answers as that name rather than as "the assistant", and it is the same character on every surface. Renaming it later is a line in `~/.config/agent-julia/config.json` plus `agent-julia sync`.
 - **A voice you shape by talking** — "stop hedging", "don't use that word", "write to my co-founder, not to an engineer". Say it once, in passing, and it holds. Withdraw it the same way.
 - **One memory, every surface** — Claude Code and Claude Desktop share the same brain; a fact saved in one is known in the other.
 - **You own it** — plain markdown in a git repo you control, not a database locked inside an app. Readable, portable, `git log`-able, and no write can silently destroy what it was meant to extend.
@@ -35,13 +35,13 @@ npx agent-julia init
 
 Requires **Node.js 24+** (it uses the built-in `node:sqlite` — no native module to compile or rebuild). There's no separate install step: `npx` fetches agent-julia into its own cache and runs the wizard in one go, and the MCP server launches the same way (`npx -y agent-julia@latest serve`), so it stays current. Prefer it installed permanently? `npm i -g agent-julia`.
 
-The wizard walks you through your agent's name, pronouns, language, and voice; where your memory lives and whether to version it with git; search; and which Claude apps to register. It either writes a small persona block into each app's startup context — backed up first, inside a marked block, fully reversible — or prints the exact changes for you to make by hand (see [Manual setup](#manual-setup)).
+The wizard starts with the name you will be calling it by, then pronouns, language, and voice; where your memory lives and whether to version it with git; search; and which Claude apps to register. It either writes a small persona block into each app's startup context — backed up first, inside a marked block, fully reversible — or prints the exact changes for you to make by hand (see [Manual setup](#manual-setup)).
 
 When you're done, restart your Claude apps so they pick up the new MCP server.
 
 ## Usage
 
-You don't call tools or memorize commands — you talk to your agent, and it reaches into memory on its own. A few natural examples:
+You don't call tools or memorize commands. You talk to your agent by name, and it reaches into memory on its own. A few natural examples:
 
 **Save something** *(→ `ingest`)*
 

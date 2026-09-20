@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { warn } from "../util/log.js";
-import { copyFile, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { copyFile, mkdir, readFile, realpath, rename, unlink, writeFile } from "node:fs/promises";
 import { withFileLock } from "./lock.js";
 import { dirname } from "node:path";
 
@@ -45,6 +46,11 @@ export async function upsertManagedBlock(
   id: string,
   body: string,
 ): Promise<{ created: boolean; backedUp: boolean }> {
+  // Before the lock, not inside it: withFileLock puts its lockfile next to the
+  // target, so a missing parent directory fails there with ENOENT instead of
+  // being created — which is every fresh install, where neither ~/.claude nor
+  // ~/.config/agent-julia exists yet.
+  await mkdir(dirname(filePath), { recursive: true });
   return withFileLock(filePath, () => upsertLocked(filePath, id, body));
 }
 
@@ -53,7 +59,6 @@ async function upsertLocked(
   id: string,
   body: string,
 ): Promise<{ created: boolean; backedUp: boolean }> {
-  await mkdir(dirname(filePath), { recursive: true });
   const existed = existsSync(filePath);
   await backupOnce(filePath);
 
@@ -103,10 +108,15 @@ export async function removeManagedBlock(filePath: string, id: string): Promise<
 // Temp file plus rename. These files belong to the user, not to us: a truncated
 // ~/.claude/CLAUDE.md is a broken Claude install and a lost profile.
 async function writeFileAtomic(path: string, content: string): Promise<void> {
-  const tmp = `${path}.${process.pid}.tmp`;
+  // Follow a symlink before renaming onto it. A dotfiles repo commonly has
+  // ~/.claude/CLAUDE.md symlinked into it; renaming onto the link replaces the
+  // link with a regular file and silently detaches the user's repo.
+  const target = await realpath(path).catch(() => path);
+  // pid alone is not unique: one process can be writing two blocks at once.
+  const tmp = `${target}.${process.pid}.${randomUUID().slice(0, 8)}.tmp`;
   try {
     await writeFile(tmp, content, "utf8");
-    await rename(tmp, path);
+    await rename(tmp, target);
   } catch (err) {
     await unlink(tmp).catch(() => undefined);
     throw err;

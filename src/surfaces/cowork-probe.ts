@@ -40,14 +40,18 @@ export interface CoworkProbe {
 }
 
 const MAX_COMPARED = 50;
-const MAX_SCANNED = 500;
+// Bound the WALK, not the result set. Capping collected files meant the cap fell
+// wherever directory order happened to reach it, so "the newest session" became
+// "the newest among an arbitrary subset" — on this machine, 500 of 448 files was
+// fine and the next user with more would have silently got a wrong answer.
+const MAX_DIRS = 20_000;
 
 export async function probeCoworkSession(): Promise<CoworkProbe> {
   try {
     const files: Array<{ path: string; mtime: number }> = [];
     for (const root of sessionRoots()) {
       if (!existsSync(root)) continue;
-      await collect(root, files, 0);
+      await collect(root, files, 0, { dirs: MAX_DIRS });
     }
     if (files.length === 0) return { status: "none" };
     files.sort((a, b) => b.mtime - a.mtime);
@@ -95,13 +99,17 @@ async function collect(
   dir: string,
   out: Array<{ path: string; mtime: number }>,
   depth: number,
+  budget: { dirs: number },
 ): Promise<void> {
-  if (depth > 6 || out.length > MAX_SCANNED) return;
+  if (depth > 6 || budget.dirs <= 0) return;
+  budget.dirs--;
   for (const entry of await readdir(dir, { withFileTypes: true }).catch(() => [])) {
     const full = join(dir, entry.name);
-    if (entry.isDirectory()) {
-      await collect(full, out, depth + 1);
-    } else if (entry.name === "CLAUDE.md") {
+    // Not followed: a symlink loop under a directory nobody documents should not
+    // be able to hang a server boot.
+    if (entry.isDirectory() && !entry.isSymbolicLink()) {
+      await collect(full, out, depth + 1, budget);
+    } else if (entry.isFile() && entry.name === "CLAUDE.md") {
       const st = await stat(full).catch(() => null);
       if (st) out.push({ path: full, mtime: st.mtimeMs });
     }
