@@ -300,3 +300,56 @@ export async function revertCommit(
   });
   return res ?? { ok: false, error: "another git operation held the lock — try again" };
 }
+
+export interface PageChange {
+  sha: string;
+  date: string;
+  subject: string;
+  added: string[];
+  removed: string[];
+}
+
+// How one page changed over time, from the commits the product has been writing
+// since v0.1 and had never read. Diffs are capped per commit: the point is to
+// answer "when did I decide that, and what did I think before", not to print a
+// patch.
+export async function pageHistory(
+  root: string,
+  relPath: string,
+  limit = 10,
+  linesPerCommit = 12,
+): Promise<PageChange[]> {
+  if (!isGitRepo(root)) return [];
+  try {
+    const out = await git(root, [
+      "log",
+      `-n${limit}`,
+      "--follow",
+      "--date=short",
+      "--pretty=format:%H\u0001%ad\u0001%s",
+      "-p",
+      "--unified=0",
+      "--",
+      relPath,
+    ]);
+    if (!out) return [];
+    const changes: PageChange[] = [];
+    let current: PageChange | null = null;
+    for (const line of out.split("\n")) {
+      const head = line.match(/^([0-9a-f]{40})\u0001([^\u0001]*)\u0001(.*)$/);
+      if (head) {
+        current = { sha: head[1]!, date: head[2]!, subject: head[3]!, added: [], removed: [] };
+        changes.push(current);
+        continue;
+      }
+      if (!current) continue;
+      if (line.startsWith("+++") || line.startsWith("---")) continue;
+      if (line.startsWith("+") && current.added.length < linesPerCommit) current.added.push(line.slice(1));
+      else if (line.startsWith("-") && current.removed.length < linesPerCommit) current.removed.push(line.slice(1));
+    }
+    return changes;
+  } catch (err) {
+    warn("could not read the page history:", gitError(err));
+    return [];
+  }
+}

@@ -90,6 +90,26 @@ export async function archivePage(paths: StorePaths, page: string): Promise<stri
   return target;
 }
 
+// Bring a retired page back into the active store. The counterpart archive has
+// never had: a page could be retired by one confirmation and needed a file
+// manager to get back.
+export async function unarchivePage(paths: StorePaths, page: string): Promise<string | null> {
+  const from = await resolvePagePath(paths, `archive/${pageId(page)}`);
+  if (!from) return null;
+  await mkdir(paths.pagesDir, { recursive: true });
+  const id = pageId(page);
+  let target = pageFilePath(paths.root, id);
+  for (let n = 2; existsSync(target); n++) target = pageFilePath(paths.root, `${id}-${n}`);
+  await rename(from, target);
+  return target;
+}
+
+export async function listArchivedIds(paths: StorePaths): Promise<string[]> {
+  if (!existsSync(paths.archiveDir)) return [];
+  const files = await readdir(paths.archiveDir);
+  return [...new Set(files.filter((f) => f.endsWith(".md")).map((f) => pageId(basename(f, ".md"))))].sort();
+}
+
 export async function listPageIds(paths: StorePaths): Promise<string[]> {
   if (!existsSync(paths.pagesDir)) return [];
   const files = await readdir(paths.pagesDir);

@@ -1,12 +1,12 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { Runtime } from "../runtime.js";
-import { archivePage, listPages, readPage, readPageRaw, relatedPages } from "../store/markdown.js";
+import { archivePage, listPages, readPage, readPageRaw, relatedPages, resolvePagePath } from "../store/markdown.js";
 import { pageId } from "../store/paths.js";
 import { ingest } from "../store/ingest.js";
 import { refreshIndexMd } from "../store/catalog.js";
-import { commitAll, pushToRemote } from "../store/git.js";
-import { appendCorrection } from "../persona/corrections.js";
+import { commitAll, pageHistory, pushToRemote } from "../store/git.js";
+import { appendCorrection, retractCorrection } from "../persona/corrections.js";
 import { composeCore } from "../persona/compose.js";
 import { runMaintenance } from "../maintenance/maintenance.js";
 
@@ -23,6 +23,33 @@ function json(value: unknown): TextResult {
 // Wire the v0.1 MCP tool surface onto an McpServer instance.
 export function registerTools(server: McpServer, rt: Runtime): void {
   const { paths, indexer, config } = rt;
+
+  server.registerTool(
+    "retract_correction",
+    {
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      title: "Withdraw a voice correction",
+      description:
+        "Take one recorded voice correction out of the persona. Use when the user says a rule no longer applies, " +
+        "or asks to undo something they told you about how to write. Pass enough of the correction's text to identify it. " +
+        "The line is kept in voice-corrections.md, commented out with the date, so the record of having had the rule survives.",
+      inputSchema: {
+        match: z.string().describe("Text from the correction to withdraw, e.g. 'don't open with my name'"),
+      },
+    },
+    async ({ match }) => {
+      const res = await retractCorrection(paths, match);
+      if (res.status === "none") return text(`No correction matches "${match}".`);
+      if (res.status === "ambiguous") {
+        return text(
+          `"${match}" matches ${res.candidates.length} corrections. Be more specific:\n` +
+            res.candidates.map((c) => `- ${c}`).join("\n"),
+        );
+      }
+      if (config.git) await commitAll(paths.root, `Retract voice correction`);
+      return text(`Withdrawn, from the next turn on:\n${res.retracted}`);
+    },
+  );
 
   server.registerTool(
     "get_core",
@@ -108,6 +135,31 @@ export function registerTools(server: McpServer, rt: Runtime): void {
       inputSchema: { page: z.string().describe("Page id, e.g. 'prive-game'") },
     },
     async ({ page }) => json(await relatedPages(paths, page)),
+  );
+
+  server.registerTool(
+    "history",
+    {
+      annotations: { readOnlyHint: true, openWorldHint: false },
+      title: "How a page changed",
+      description:
+        "The recent changes to one page: when each was made, what was added and what was removed. " +
+        "Use it to answer \"when did we decide that, and what did we think before\", or to check whether a fact is current. " +
+        "Only available when the store is versioned with git.",
+      inputSchema: {
+        page: z.string().describe("Page id, e.g. 'prive-game'"),
+        limit: z.number().int().positive().max(30).optional().describe("How many changes (default 8)"),
+      },
+    },
+    async ({ page, limit }) => {
+      if (!config.git) return text("This store is not versioned, so there is no history to show.");
+      const path = await resolvePagePath(paths, page);
+      if (!path) return text(`No page found: ${page}`);
+      const rel = path.replace(`${paths.root}/`, "");
+      const changes = await pageHistory(paths.root, rel, limit ?? 8);
+      if (changes.length === 0) return text(`No recorded changes for ${page}.`);
+      return text(JSON.stringify({ page: pageId(page), changes }));
+    },
   );
 
   server.registerTool(

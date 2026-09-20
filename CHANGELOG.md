@@ -19,6 +19,23 @@ changes, which always ship an automatic, backup-protected data migration.
   actually means. `replace` (still the default) makes the payload the whole
   page. The tool description now says so in as many words.
 
+- **`history` tool** — the recent changes to one page, with what each added and
+  removed, read out of the commits the product has been writing on every save
+  since v0.1 and had never once read back. It answers "when did we decide that,
+  and what did we think before", and whether a fact is still current.
+- **`retract_correction` tool** — withdraw one voice correction. The line is
+  commented out with the date rather than deleted, so the record of having had
+  the rule survives. Until now the only way to take a rule out of the always-on
+  prompt of every surface was to hand-edit markdown.
+- **A recovery surface.** `agent-julia reindex` rebuilds the search index from
+  the markdown — wiring up `Indexer.rebuild()`, which had existed with zero
+  callers. `agent-julia unarchive [page]` lists what is archived and brings one
+  back. `agent-julia relocate <path>` moves the store and repoints the config.
+  `agent-julia doctor --fix` applies the repairs that are safe to make without
+  asking: rebuild a broken index, refresh the persona blocks, reinstall the
+  shipped skills. A dozen findings in the audit behind this release ended with
+  "there is no recovery path".
+
 ### Changed
 
 - **A save can no longer quietly destroy the page it was meant to extend.** A
@@ -29,6 +46,10 @@ changes, which always ship an automatic, backup-protected data migration.
   success. Every write returns its size delta, and a write that removed lines
   carries that delta into the commit message, so `git log` shows it without a
   diff.
+- **Voice corrections are bounded and single-line at the boundary.** The reader
+  only ever took the first line, so a multi-line correction was silently
+  half-applied, and nothing capped the length of text that goes straight into
+  the always-on prompt of every surface with no review step.
 - **`read` returns the page exactly as stored**, front matter included, and
   `ingest` merges the payload's front matter over what is already on the page.
   Before, a read-modify-write cycle through the tools silently dropped every
