@@ -49,6 +49,14 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ### Fixed
 
+- **The config cannot be lost by accident any more.** `saveConfig` was a plain
+  overwrite of the one file that holds the identity, the voice and the path to
+  everything the user owns. It is now written to a temp file and renamed, the
+  previous five versions are kept beside it, and a write from a test run that
+  would land on the real path is refused outright. When the configured memory
+  directory does not exist, the server says so loudly at boot and points at the
+  backups, instead of creating an empty store and letting the agent insist it
+  knows nothing about you.
 - **The second machine pulls again.** `pullFromRemote` ran `git pull origin`
   with no branch, which needs an upstream — and a store agent-julia set up
   itself (`git init`, then a remote) has none, because the first `push -u` has
