@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile, readdir, rename, stat, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import matter from "gray-matter";
+import { warn } from "../util/log.js";
 import { StorePaths, pageFilePath, pageId } from "./paths.js";
 import { detectLanguage } from "./lang.js";
 
@@ -109,11 +110,33 @@ export async function latestStoreMtime(paths: StorePaths): Promise<number> {
   return latest;
 }
 
+// gray-matter ships a `javascript` engine that parses front matter with `eval`,
+// picked by the language token right after the opening delimiter (`---js`). Both
+// call sites below take content nobody on this machine wrote: a page pulled from
+// a remote, a file adopted from an existing notes folder, or the body a model
+// passed to `ingest`. Pin the language to YAML and make the code engines throw,
+// so a crafted page is a parse error instead of code execution in a process that
+// can write to ~/.claude.
+const REFUSE_CODE_FRONTMATTER = () => {
+  throw new Error("front matter in a scripting language is not allowed; use YAML");
+};
+const MATTER_OPTIONS = {
+  language: "yaml",
+  engines: { javascript: REFUSE_CODE_FRONTMATTER, js: REFUSE_CODE_FRONTMATTER },
+};
+
 export async function readPage(paths: StorePaths, page: string): Promise<Page | null> {
   const path = pageFilePath(paths.root, page);
   if (!existsSync(path)) return null;
   const raw = await readFile(path, "utf8");
-  const parsed = matter(raw);
+  let parsed;
+  try {
+    parsed = matter(raw, MATTER_OPTIONS);
+  } catch (err) {
+    // One unreadable page must not take down a sync, a search or the whole boot.
+    warn(`skipping ${path}: ${(err as Error).message}`);
+    return null;
+  }
   return {
     id: pageId(page),
     path,
@@ -150,7 +173,7 @@ export async function writePage(
   const path = pageFilePath(paths.root, id);
   await mkdir(paths.pagesDir, { recursive: true });
 
-  const parsed = matter(content);
+  const parsed = matter(content, MATTER_OPTIONS);
   const fm = parsed.data as PageFrontmatter;
   // Body may have come without frontmatter; in that case parsed.content === content.
   const body = parsed.content.trim();
@@ -166,7 +189,7 @@ export async function writePage(
     ...stripCoreKeys(fm),
   };
 
-  const out = matter.stringify("\n" + body + "\n", merged);
+  const out = matter.stringify("\n" + body + "\n", merged, MATTER_OPTIONS);
   await writeFile(path, out, "utf8");
   return path;
 }

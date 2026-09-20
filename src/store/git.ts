@@ -12,6 +12,41 @@ async function git(root: string, args: string[]): Promise<string> {
   return stdout.trim();
 }
 
+// Every call that touches the network gets a deadline and a non-interactive
+// environment. GIT_TERMINAL_PROMPT silences git's own prompt; ssh has a separate
+// one, so BatchMode is what stops an ssh remote from parking the process on a
+// passphrase prompt forever — on a stdio MCP server that is a Claude session
+// with no memory tools, with nothing on screen to explain why.
+const NETWORK_TIMEOUT_MS = 20_000;
+function networkExec(): { encoding: "utf8"; timeout: number; env: NodeJS.ProcessEnv } {
+  return {
+    encoding: "utf8",
+    timeout: NETWORK_TIMEOUT_MS,
+    env: {
+      ...process.env,
+      GIT_TERMINAL_PROMPT: "0",
+      GIT_SSH_COMMAND: process.env.GIT_SSH_COMMAND ?? "ssh -o BatchMode=yes",
+    },
+  };
+}
+
+// Is git on PATH at all? Probed once. A product whose store is a git repo still
+// has to start on a machine without git: Claude Desktop launched from Finder
+// inherits launchd's PATH, and a fresh mac ships a /usr/bin/git shim that fails
+// until the command line tools are installed.
+let gitOnPath: boolean | null = null;
+export async function gitAvailable(): Promise<boolean> {
+  if (gitOnPath === null) {
+    try {
+      await exec("git", ["--version"], { encoding: "utf8", timeout: 5_000 });
+      gitOnPath = true;
+    } catch {
+      gitOnPath = false;
+    }
+  }
+  return gitOnPath;
+}
+
 const delay = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 const LOCK_STALE_MS = 30_000;
 const LOCK_WAIT_MS = 15_000;
@@ -100,10 +135,7 @@ export async function verifyRemote(root: string): Promise<{ ok: boolean; error?:
   try {
     // No --exit-code: an empty but reachable+authenticated repo (no refs yet) is
     // fine to push to; we only care that the connection and auth succeed.
-    await exec("git", ["-C", root, "ls-remote", "origin"], {
-      encoding: "utf8",
-      env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
-    });
+    await exec("git", ["-C", root, "ls-remote", "origin"], networkExec());
     return { ok: true };
   } catch (err) {
     return { ok: false, error: (err as Error).message.split("\n")[0] };
@@ -119,10 +151,7 @@ export async function pushToRemote(root: string): Promise<boolean> {
   const res = await withGitLock(root, async () => {
     try {
       const branch = await git(root, ["rev-parse", "--abbrev-ref", "HEAD"]);
-      await exec("git", ["-C", root, "push", "-u", "origin", branch], {
-        encoding: "utf8",
-        env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
-      });
+      await exec("git", ["-C", root, "push", "-u", "origin", branch], networkExec());
       return true;
     } catch (err) {
       const msg = (err as Error).message.split("\n").find((l) => l.trim()) ?? "";
@@ -149,11 +178,11 @@ export async function pullFromRemote(
   if (!(await getRemoteUrl(root))) return "skipped";
   const res = await withGitLock(root, async (): Promise<"pulled" | "up-to-date" | "conflict" | "skipped"> => {
     try {
-      const { stdout } = await exec("git", ["-C", root, "pull", "--no-rebase", "--no-edit", "origin"], {
-        encoding: "utf8",
-        timeout: 20_000,
-        env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
-      });
+      const { stdout } = await exec(
+        "git",
+        ["-C", root, "pull", "--no-rebase", "--no-edit", "origin"],
+        networkExec(),
+      );
       return /Already up to date/i.test(stdout) ? "up-to-date" : "pulled";
     } catch (err) {
       if (existsSync(join(root, ".git", "MERGE_HEAD"))) {
@@ -178,8 +207,10 @@ export async function pullFromRemote(
 export async function commitAll(root: string, message: string): Promise<boolean> {
   if (!isGitRepo(root)) await ensureGitRepo(root);
   const res = await withGitLock(root, async () => {
-    await git(root, ["add", "-A"]);
     try {
+      // Inside the try: a transient failure here (index.lock contention) must not
+      // report a write as failed when the page is already on disk and journalled.
+      await git(root, ["add", "-A"]);
       const status = await git(root, ["status", "--porcelain"]);
       if (!status) return false;
       await git(root, ["commit", "-q", "-m", message]);

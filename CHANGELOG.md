@@ -7,7 +7,41 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ## [Unreleased]
 
+### Security
+
+- **Front matter is data again, not code.** `gray-matter` ships a `javascript`
+  engine that parses with `eval`, selected by the language token right after the
+  opening delimiter (`---js`). Both call sites took content nobody on the
+  machine wrote: a page arriving through `git pull`, a file adopted from an
+  existing notes folder, or the body a model handed to `ingest` — and the
+  process that parsed it can write to `~/.claude.json`, `~/.claude/CLAUDE.md`
+  and `~/.claude/skills`. Parsing is now pinned to YAML with the scripting
+  engines refused, and a page that trips the guard is skipped with a warning
+  instead of taking down the sync that touched it.
+
 ### Fixed
+
+- A tokenizer or index-schema change dropped the derived tables but left the
+  maintenance watermark in `meta`, so the next boot decided the store was
+  unchanged, skipped the rebuild, and search returned nothing for the entire
+  store until an unrelated write happened to move the watermark. The watermark
+  is cleared with the tables it describes.
+- Every git call that touches the network now carries a deadline and a
+  non-interactive environment. `push` had no timeout at all, and
+  `GIT_TERMINAL_PROMPT` does not reach ssh — so an ssh remote asking for a
+  passphrase parked the server forever, which on a stdio MCP server is a Claude
+  session with no memory tools and nothing on screen to explain why.
+- Startup work (pull, maintenance, skill and persona refresh) runs *after* the
+  transport is connected instead of before it. Any slow step used to cost the
+  session its tools before the client finished the handshake.
+- `git add -A` sits inside `commitAll`'s try block, so contention on
+  `.git/index.lock` no longer reports a write as failed when the page is already
+  on disk and already journalled.
+- The server starts on a machine without `git` instead of exiting on
+  `spawn git ENOENT`: git is probed once, history is disabled for the session
+  with a warning, and `doctor` reports it. A product whose store is a git repo
+  still has to boot when Claude Desktop is launched from Finder and inherits
+  launchd's PATH.
 
 - **The persona core no longer deletes the user's voice to protect the shipped
   rules.** `composeCore` sized voice corrections against the whole

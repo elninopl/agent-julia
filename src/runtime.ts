@@ -3,8 +3,8 @@ import { loadConfig } from "./config/config.js";
 import { migrate } from "./migrations/runner.js";
 import { Indexer } from "./index/indexer.js";
 import { StorePaths, storePaths } from "./store/paths.js";
-import { ensureGitRepo } from "./store/git.js";
-import { log } from "./util/log.js";
+import { ensureGitRepo, gitAvailable } from "./store/git.js";
+import { log, warn } from "./util/log.js";
 
 // Shared runtime: config + store paths + the derived index handle. Built once on
 // startup, after migrations have brought the store up to the current schema.
@@ -22,6 +22,13 @@ export async function buildRuntime(): Promise<Runtime> {
   config = migrated.config;
   if (migrated.ranAny) log("migrations applied on startup");
 
+  if (config.git && !(await gitAvailable())) {
+    warn(
+      "git is not on PATH — history is off for this session. Your memory is still written as plain " +
+        "markdown; install git (on macOS: xcode-select --install) to get versioning back.",
+    );
+    config = { ...config, git: false };
+  }
   if (config.git) await ensureGitRepo(config.memoryDir);
 
   const paths = storePaths(config.memoryDir);

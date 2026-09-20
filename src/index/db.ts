@@ -75,6 +75,11 @@ export function openDb(paths: StorePaths, tokenizer: string): DB {
   const signature = `${INDEX_SCHEMA_VERSION}:${tokenizer}`;
   if (getMeta(db, INDEX_SIG_KEY) !== signature) {
     db.exec("DROP TABLE IF EXISTS pages_fts; DROP TABLE IF EXISTS page_meta; DROP TABLE IF EXISTS embeddings;");
+    // `meta` survives the drop, and it holds the startup watermark that decides
+    // whether maintenance runs. Leaving it behind means the next boot sees an
+    // unchanged store, skips the rebuild, and search returns nothing for the
+    // whole store until some unrelated write happens to move the watermark.
+    db.exec("DELETE FROM meta WHERE key = 'maint_mtime';");
   }
   initSchema(db, tokenizer);
   setMeta(db, INDEX_SIG_KEY, signature);

@@ -6,7 +6,7 @@ import { storePaths } from "../store/paths.js";
 import { listPageIds } from "../store/markdown.js";
 import { readCorrections } from "../persona/corrections.js";
 import { EXPORT_BLOCK_ID, exportText } from "../export/export.js";
-import { isGitRepo, getRemoteUrl } from "../store/git.js";
+import { isGitRepo, getRemoteUrl, gitAvailable } from "../store/git.js";
 import { injectedCoreFrom, STARTUP_BLOCK_ID } from "../persona/startup.js";
 import { composeCore } from "../persona/compose.js";
 import { estimateTokens } from "../util/tokens.js";
@@ -97,7 +97,16 @@ export async function runDoctor(config: Config, t: DoctorTargets = defaultTarget
   const pageCount = (await listPageIds(paths)).length;
   checks.push({ name: "store", status: "ok", detail: `${config.memoryDir} — ${pageCount} page(s)` });
 
-  if (config.git) {
+  if (config.git && !(await gitAvailable())) {
+    checks.push({
+      name: "store git",
+      status: "warn",
+      detail:
+        "git is on in config but not on PATH — the server runs without history this session " +
+        "(Claude Desktop launched from Finder inherits launchd's PATH, not your shell's)",
+      fix: "install git (macOS: xcode-select --install), or turn git off in the config",
+    });
+  } else if (config.git) {
     if (!isGitRepo(config.memoryDir)) {
       checks.push({
         name: "store git",

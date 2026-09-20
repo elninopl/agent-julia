@@ -1,6 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { buildRuntime } from "./runtime.js";
+import { Runtime, buildRuntime } from "./runtime.js";
 import { registerTools } from "./tools/register.js";
 import { composeCore } from "./persona/compose.js";
 import { getMeta, setMeta } from "./index/db.js";
@@ -29,12 +29,13 @@ async function packageVersion(): Promise<string> {
   }
 }
 
-// Boot the MCP stdio server. Runs migrations, opens the index, registers tools,
-// and exposes the budgeted persona core as a resource for clients that prefer
-// resources over a tool call.
-export async function startServer(): Promise<void> {
-  const rt = await buildRuntime();
-
+// Startup housekeeping: pull, maintenance, and refreshing what init/sync
+// installed. Deliberately run AFTER the transport is connected. Every step here
+// touches the network or the whole store, and any one of them stalling used to
+// cost the session its memory tools before the client ever finished the
+// handshake — invisibly, because a stdio server's diagnostics go nowhere the
+// user looks. Tools answer while this runs; the index is already open.
+async function runStartupTasks(rt: Runtime): Promise<void> {
   // Two-machine sync: pull the store from its remote before maintenance reads
   // it, so a session on this machine starts from what the other machine pushed.
   // Best-effort — offline is a quiet skip, a conflict is aborted and warned.
@@ -82,6 +83,13 @@ export async function startServer(): Promise<void> {
   } catch (err) {
     warn("startup refresh failed (continuing):", (err as Error).message);
   }
+}
+
+// Boot the MCP stdio server. Runs migrations, opens the index, registers tools,
+// and exposes the budgeted persona core as a resource for clients that prefer
+// resources over a tool call.
+export async function startServer(): Promise<void> {
+  const rt = await buildRuntime();
 
   const server = new McpServer({
     name: "agent-julia",
@@ -107,6 +115,8 @@ export async function startServer(): Promise<void> {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   log(`agent-julia serving "${rt.config.name}" — memory: ${rt.config.memoryDir}`);
+
+  await runStartupTasks(rt);
 
   let down = false;
   const shutdown = () => {

@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { Indexer } from "../src/index/indexer.js";
+import { allIndexedIds, getMeta, setMeta } from "../src/index/db.js";
 import { storePaths, pageFilePath } from "../src/store/paths.js";
 import { writePage } from "../src/store/markdown.js";
 import { ConfigSchema } from "../src/config/schema.js";
@@ -82,3 +83,30 @@ describe("incremental sync", () => {
     expect((await indexer.search("机器学", 5)).map((h) => h.id)).toContain("epsilon");
   });
 });
+
+describe("index signature change", () => {
+  it("clears the maintenance watermark so the dropped index is actually rebuilt", async () => {
+    // The old failure: a tokenizer/schema change drops pages_fts, page_meta and
+    // embeddings, but `meta` survives — and it holds the watermark the server
+    // checks to decide whether to run maintenance. Result: an empty index that
+    // reports "store unchanged", and search returning nothing for the whole
+    // store until some unrelated write happened to move the watermark.
+    const dir = mkdtempSync(join(tmpdir(), "aj-sig-"));
+    const paths = storePaths(dir);
+
+    const en = ConfigSchema.parse({ memoryDir: dir, search: "fts", language: "en" });
+    const first = Indexer.open(paths, en);
+    await writePage(paths, "alpha", "a page about billing", {});
+    await first.sync();
+    setMeta(first.db, "maint_mtime", "9999999999999");
+    expect(allIndexedIds(first.db).length).toBe(1);
+    first.close();
+
+    // Switching to a language with a different tokenizer changes the signature.
+    const ja = ConfigSchema.parse({ memoryDir: dir, search: "fts", language: "ja" });
+    const second = Indexer.open(paths, ja);
+    expect(allIndexedIds(second.db).length).toBe(0); // tables dropped, as designed
+    expect(getMeta(second.db, "maint_mtime")).toBeUndefined(); // ...and so is the watermark
+    second.close();
+  });
+})

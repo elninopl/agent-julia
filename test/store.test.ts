@@ -1,11 +1,12 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { Indexer } from "../src/index/indexer.js";
 import { storePaths } from "../src/store/paths.js";
 import { ingest } from "../src/store/ingest.js";
+import { listPages, readPage, writePage } from "../src/store/markdown.js";
 import { pushToRemote, setRemoteUrl } from "../src/store/git.js";
 import { migrate } from "../src/migrations/runner.js";
 import { ConfigSchema } from "../src/config/schema.js";
@@ -187,5 +188,40 @@ describe("relatedPages", () => {
     const spokeA = await relatedPages(paths, "spoke-a");
     expect(spokeA.links).toEqual([]);
     expect(spokeA.backlinks).toEqual(["hub"]);
+  });
+});
+
+describe("front matter is data, never code", () => {
+  it("refuses a page whose front matter is javascript, and keeps reading the rest", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "aj-fm-"));
+    const paths = storePaths(dir);
+    mkdirSync(paths.pagesDir, { recursive: true });
+    const marker = join(dir, "pwned.txt");
+
+    // gray-matter's `javascript` engine parses with eval(). This is exactly what
+    // arrives from `git pull`, from adopting someone's notes folder, or from a
+    // model pasting web content into `ingest`.
+    writeFileSync(
+      join(paths.pagesDir, "poisoned.md"),
+      `---js\n{ title: (require("fs").writeFileSync(${JSON.stringify(marker)}, "x"), "ok") }\n---\n\nbody\n`,
+      "utf8",
+    );
+    writeFileSync(join(paths.pagesDir, "healthy.md"), "---\ntitle: healthy\n---\n\nbody\n", "utf8");
+
+    expect(await readPage(paths, "poisoned")).toBeNull();
+    expect(existsSync(marker)).toBe(false);
+
+    // One bad file must not take the store down with it.
+    expect((await listPages(paths)).map((p) => p.id)).toEqual(["healthy"]);
+  });
+
+  it("refuses javascript front matter arriving through ingest", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "aj-fm2-"));
+    const paths = storePaths(dir);
+    const marker = join(dir, "pwned2.txt");
+    await expect(
+      writePage(paths, "evil", `---js\n{ title: (require("fs").writeFileSync(${JSON.stringify(marker)}, "x"), "ok") }\n---\n\nbody\n`, {}),
+    ).rejects.toThrow(/scripting language/i);
+    expect(existsSync(marker)).toBe(false);
   });
 });
