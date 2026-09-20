@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { Runtime } from "../runtime.js";
-import { archivePage, listPages, readPage, relatedPages } from "../store/markdown.js";
+import { archivePage, listPages, readPage, readPageRaw, relatedPages } from "../store/markdown.js";
 import { pageId } from "../store/paths.js";
 import { ingest } from "../store/ingest.js";
 import { refreshIndexMd } from "../store/catalog.js";
@@ -52,13 +52,15 @@ export function registerTools(server: McpServer, rt: Runtime): void {
     "read",
     {
       title: "Read a memory page",
-      description: "Read the full markdown of one page by id (e.g. 'elnino').",
+      description:
+        "Read one page by id (e.g. 'elnino'), exactly as stored, front matter included. " +
+        "To edit a page, read it, change what you mean to change, and write the whole thing back with ingest mode 'replace'.",
       inputSchema: { page: z.string().describe("Page id, e.g. 'elnino' or 'pages/elnino'") },
     },
     async ({ page }) => {
-      const found = await readPage(paths, page);
-      if (!found) return text(`No page found: ${page}`);
-      return text(`# ${found.frontmatter.title ?? found.id}\n\n${found.body}`);
+      const raw = await readPageRaw(paths, page);
+      if (raw === null) return text(`No page found: ${page}`);
+      return text(raw);
     },
   );
 
@@ -92,22 +94,42 @@ export function registerTools(server: McpServer, rt: Runtime): void {
     {
       title: "Ingest / update a memory page",
       description:
-        "Create or update a page. Enforces the store schema: writes the page, refreshes index.md, appends log.md, updates the search index, and git-commits. Content may include YAML frontmatter (title/status/tags); 'updated' is set automatically.",
+        "Write a page. Enforces the store schema: writes the page, refreshes index.md, appends log.md, updates the search index, and git-commits. " +
+        "MODE MATTERS. 'append' adds your content under what the page already holds — this is what saving a new fact about an existing topic means. " +
+        "'replace' (the default, for backwards compatibility) makes your content the ENTIRE page: everything already there is gone. " +
+        "Use 'replace' only when you are rewriting a page whose current text you have just read. A replace that would destroy most of an existing page is refused; " +
+        "the error tells you how to proceed deliberately. Content may include YAML frontmatter (title/status/tags); 'updated' is set automatically and existing frontmatter is preserved.",
       inputSchema: {
         page: z.string().describe("Page id, kebab-case, e.g. 'prive-game'"),
         content: z.string().describe("Markdown body (optionally with frontmatter)"),
+        mode: z
+          .enum(["append", "replace"])
+          .optional()
+          .describe("'append' to add to the page (use this for a new fact), 'replace' to overwrite it entirely. Default: replace"),
+        confirm: z
+          .boolean()
+          .optional()
+          .describe("Set true to carry out a replace that the destructive-write guard refused"),
         title: z.string().optional().describe("Page title if not in frontmatter"),
         status: z.string().optional().describe("Status header, e.g. 'active' (default)"),
       },
     },
-    async ({ page, content, title, status }) => {
-      const res = await ingest(paths, indexer, page, content, {
-        title,
-        status,
-        git: config.git,
-        autoPush: config.gitAutoPush,
-      });
-      return json({ ok: true, ...res });
+    async ({ page, content, mode, confirm, title, status }) => {
+      try {
+        const res = await ingest(paths, indexer, page, content, {
+          title,
+          status,
+          mode,
+          confirm,
+          git: config.git,
+          autoPush: config.gitAutoPush,
+        });
+        return json({ ok: true, ...res });
+      } catch (err) {
+        // A refusal is an answer, not a crash: the model needs to read it and
+        // choose append or confirm, rather than see a dead tool.
+        return json({ ok: false, error: (err as Error).message });
+      }
     },
   );
 

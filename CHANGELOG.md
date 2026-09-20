@@ -7,6 +7,34 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ## [Unreleased]
 
+### Added
+
+- **`agent-julia undo`.** Lists the last changes to your memory with the pages
+  each one touched, and undoes one by id. It records an inverse commit rather
+  than rewriting history, because the store may already be pushed and shared
+  with a second machine, and reindexes afterwards. The product has written a
+  commit on every single write since v0.1 and had never once read one back.
+- **`ingest` takes a `mode`.** `append` adds your content under what the page
+  already holds, which is what saving a new fact about an existing topic
+  actually means. `replace` (still the default) makes the payload the whole
+  page. The tool description now says so in as many words.
+
+### Changed
+
+- **A save can no longer quietly destroy the page it was meant to extend.** A
+  `replace` that would drop an established page to under 40% of its size is
+  refused, and the error names both ways forward (`mode: "append"`, or
+  `confirm: true` for a deliberate rewrite). Empty content is refused outright
+  instead of leaving a page with frontmatter and nothing else and reporting
+  success. Every write returns its size delta, and a write that removed lines
+  carries that delta into the commit message, so `git log` shows it without a
+  diff.
+- **`read` returns the page exactly as stored**, front matter included, and
+  `ingest` merges the payload's front matter over what is already on the page.
+  Before, a read-modify-write cycle through the tools silently dropped every
+  key the model had not been shown: three cycles were enough to lose a page's
+  title, its tags and its status.
+
 ### Security
 
 - **Front matter is data again, not code.** `gray-matter` ships a `javascript`
