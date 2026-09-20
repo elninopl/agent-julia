@@ -7,6 +7,15 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ## [Unreleased]
 
+## [0.1.39] - 2026-09-20
+
+> **One thing to do after upgrading.** The text you paste into Claude Desktop's
+> "Instructions for Claude" changed shape: it is now the part that never goes
+> stale (name, pronouns, reply language, never-store list) and your voice and
+> corrections are fetched at runtime instead. Run `agent-julia paste` and
+> replace the old block between the two agent-julia markers. Claude Code needs
+> nothing — its block is rewritten on every server start.
+
 ### Added
 
 - **The persona reaches Claude Desktop without going stale.** The field that can
