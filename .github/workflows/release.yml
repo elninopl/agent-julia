@@ -22,7 +22,9 @@ jobs:
       # A vX.Y.Z tag published whatever commit it pointed at, from any branch.
       - name: Refuse a tag that is not on main
         run: |
-          git fetch origin main --depth=0
+          # checkout above already fetched the full history (fetch-depth: 0);
+          # `--depth=0` is not a valid depth and fails the step outright.
+          git fetch origin main
           git merge-base --is-ancestor "$GITHUB_SHA" origin/main || {
             echo "::error::this tag is not an ancestor of main; refusing to publish"
             exit 1
