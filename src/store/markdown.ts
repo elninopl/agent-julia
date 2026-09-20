@@ -16,6 +16,9 @@ export interface PageFrontmatter {
 }
 
 export interface Page {
+  // Set when the front matter could not be read. The page is still returned in
+  // full; this says why its title and status are missing.
+  frontmatterError?: string;
   id: string;
   path: string;
   frontmatter: PageFrontmatter;
@@ -114,19 +117,26 @@ export async function readPage(paths: StorePaths, page: string): Promise<Page | 
   const path = await resolvePagePath(paths, page);
   if (!path) return null;
   const raw = await readFile(path, "utf8");
-  let parsed;
+  // A page whose front matter will not parse is still a page. Returning null
+  // here would delete it from the catalog, the index, the digest and the read
+  // tool, with a stderr line as the only trace — and an ordinary YAML slip (a
+  // bare colon in a title, a stray horizontal rule at the top of an adopted
+  // note) is far more common than a crafted one.
+  let parsed: ParsedFrontmatter;
+  let frontmatterError: string | undefined;
   try {
     parsed = parseFrontmatter(raw);
   } catch (err) {
-    // One unreadable page must not take down a sync, a search or the whole boot.
-    warn(`skipping ${path}: ${(err as Error).message}`);
-    return null;
+    frontmatterError = (err as Error).message;
+    warn(`front matter in ${path} could not be read (${frontmatterError}); keeping the page, ignoring its front matter`);
+    parsed = { data: {}, content: raw };
   }
   return {
     id: pageId(page),
     path,
     frontmatter: parsed.data as PageFrontmatter,
     body: parsed.content.trim(),
+    ...(frontmatterError ? { frontmatterError } : {}),
   };
 }
 
@@ -239,7 +249,18 @@ export async function writePage(
 
   const mode: WriteMode = opts.mode ?? "replace";
   const existingRaw = existsSync(path) ? await readFile(path, "utf8") : null;
-  const existing = existingRaw ? parseMatter(existingRaw, path) : null;
+  // The existing file is about to have its front matter rewritten anyway, so a
+  // broken one must not block the write. The payload is a different matter:
+  // refusing it is the boundary that keeps unparseable content out of the store.
+  let existing: ParsedFrontmatter | null = null;
+  if (existingRaw !== null) {
+    try {
+      existing = parseFrontmatter(existingRaw);
+    } catch (err) {
+      warn(`front matter in ${path} could not be read (${(err as Error).message}); rewriting it`);
+      existing = { data: {}, content: existingRaw };
+    }
+  }
   const existingBody = existing?.content.trim() ?? "";
   const existingFm = (existing?.data ?? {}) as PageFrontmatter;
 

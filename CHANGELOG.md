@@ -51,8 +51,11 @@ changes, which always ship an automatic, backup-protected data migration.
   existing notes folder, or the body a model handed to `ingest` — and the
   process that parsed it can write to `~/.claude.json`, `~/.claude/CLAUDE.md`
   and `~/.claude/skills`. Parsing is now pinned to YAML with the scripting
-  engines refused, and a page that trips the guard is skipped with a warning
-  instead of taking down the sync that touched it.
+  engines refused. A page whose front matter will not parse — whether that is a
+  crafted `---js` block or an ordinary stray colon in a title — keeps its text
+  and loses only its front matter, because making the page disappear from the
+  catalog, the index and the read tool with a stderr line as the only trace is
+  the worse failure. `doctor` lists the pages this happened to.
 
 ### Fixed
 

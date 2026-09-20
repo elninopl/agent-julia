@@ -130,16 +130,28 @@ export async function runDoctor(config: Config, t: DoctorTargets = defaultTarget
   // --- Every page the catalog lists must actually open ---
   {
     const ids = await listPageIds(paths);
-    const unreadable: string[] = [];
+    const missing: string[] = [];
+    const unparsed: string[] = [];
     for (const id of ids) {
-      if ((await readPage(paths, id)) === null) unreadable.push(id);
+      const page = await readPage(paths, id);
+      if (page === null) missing.push(id);
+      else if (page.frontmatterError) unparsed.push(id);
     }
-    if (unreadable.length) {
+    if (missing.length) {
       checks.push({
         name: "pages readable",
         status: "fail",
-        detail: `${unreadable.length} page(s) are listed but cannot be opened: ${unreadable.slice(0, 5).join(", ")}${unreadable.length > 5 ? ", …" : ""}`,
-        fix: "check those files for broken front matter, or rename them to plain kebab-case",
+        detail: `${missing.length} page(s) are listed but cannot be opened: ${missing.slice(0, 5).join(", ")}${missing.length > 5 ? ", …" : ""}`,
+        fix: "check those files exist and are readable",
+      });
+    } else if (unparsed.length) {
+      checks.push({
+        name: "pages readable",
+        status: "warn",
+        detail:
+          `${ids.length} page(s) open; ${unparsed.length} have front matter that will not parse, so their title and status are ignored: ` +
+          `${unparsed.slice(0, 5).join(", ")}${unparsed.length > 5 ? ", …" : ""}`,
+        fix: "fix the YAML between the --- delimiters in those files",
       });
     } else if (ids.length) {
       checks.push({ name: "pages readable", status: "ok", detail: `all ${ids.length} page(s) open` });
