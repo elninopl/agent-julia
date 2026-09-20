@@ -328,6 +328,13 @@ async function main(): Promise<void> {
       console.log("Config updated (previous versions kept as .1.bak). Restart your Claude apps.");
       break;
     }
+    // Hidden: used by the wizard to pick a registration that can actually load
+    // the local embedding model. Exits 0 when it can, 1 when it cannot.
+    case "probe-embeddings": {
+      const { checkLocalEmbeddingsAvailable } = await import("./index/embeddings.js");
+      process.exit((await checkLocalEmbeddingsAvailable()) ? 0 : 1);
+      break;
+    }
     case "doctor": {
       const cfg = await loadConfig();
       const { runDoctor, formatChecks } = await import("./doctor/doctor.js");
