@@ -332,7 +332,7 @@ export async function runDoctor(config: Config, t: DoctorTargets = defaultTarget
         detail: `no record that agent-julia ever asked you to paste anything on this machine. ${CANNOT_READ}`,
         fix: "npx agent-julia paste",
       });
-    } else if (marker.variant === "with-voice") {
+    } else if (marker.variant === "with-voice" && marker.configFingerprint === configFingerprint(config)) {
       // A deliberate choice, not drift: the long variant carries the voice on
       // purpose, for accounts that reach surfaces with no connector.
       checks.push({
@@ -393,11 +393,14 @@ export async function runDoctor(config: Config, t: DoctorTargets = defaultTarget
         status: "unknown",
         detail: "no Cowork session on this machine carried an agent-julia block, so there is nothing to read.",
       });
-    } else if (probe.layout === PASTE_LAYOUT) {
+    } else if (probe.layout === PASTE_LAYOUT || marker?.variant === "with-voice") {
       checks.push({
         name: "paste seen",
         status: "ok",
-        detail: `the last Cowork session (${probe.newest}) was seeded with the current layout-${probe.layout} paste. That is what that session got, not what the field holds now.`,
+        detail:
+          marker?.variant === "with-voice"
+            ? `the last Cowork session (${probe.newest}) was seeded with your long paste. That is what that session got, not what the field holds now.`
+            : `the last Cowork session (${probe.newest}) was seeded with the current layout-${probe.layout} paste. That is what that session got, not what the field holds now.`,
       });
     } else {
       const mine = (await composeCore(paths, config)).text.match(/^- /gm)?.length ?? 0;

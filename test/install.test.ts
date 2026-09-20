@@ -232,3 +232,30 @@ describe("the files this package writes in someone else's home", () => {
     expect(readdirSync(dir).filter((f) => f.includes(".tmp") || f.includes("lock"))).toEqual([]);
   });
 });
+
+describe("the lock protects the file it is named after", () => {
+  it("skips a write it cannot take the lock for, rather than racing the holder", async () => {
+    // Writing unlocked is a read-modify-write against a live writer on a file
+    // holding someone's hand-written profile. A skipped refresh costs one boot;
+    // a raced one costs lines the user typed.
+    const dir = mkdtempSync(join(tmpdir(), "aj-busy-"));
+    const file = join(dir, "CLAUDE.md");
+    writeFileSync(file, "# my own notes\n", "utf8");
+    writeFileSync(`${file}.agent-julia-lock`, "99999:someone-else", "utf8");
+
+    await expect(upsertManagedBlock(file, "persona-core", "should not land")).rejects.toThrow(/lock/i);
+    expect(readFileSync(file, "utf8")).toBe("# my own notes\n");
+  }, 15_000);
+
+  it("removes a block under the same lock, atomically", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "aj-rm-"));
+    const file = join(dir, "CLAUDE.md");
+    writeFileSync(file, "# mine\n", "utf8");
+    await upsertManagedBlock(file, "persona-core", "the persona");
+    expect(await removeManagedBlock(file, "persona-core")).toBe(true);
+    const after = readFileSync(file, "utf8");
+    expect(after).toContain("# mine");
+    expect(after).not.toContain("the persona");
+    expect(readdirSync(dir).filter((f) => f.includes(".tmp") || f.includes("lock"))).toEqual([]);
+  });
+});

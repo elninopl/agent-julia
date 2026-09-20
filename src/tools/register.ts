@@ -10,7 +10,7 @@ import { appendCorrection, retractCorrection } from "../persona/corrections.js";
 import { composeCore } from "../persona/compose.js";
 import { coreHashOf, memoryInstruction } from "../persona/startup.js";
 import { PASTE_LAYOUT } from "../persona/paste.js";
-import { readPasteMarker, readSurfaces, refreshInjectedCore, writeSurfaces } from "../wizard/register.js";
+import { mergeSurfaces, readPasteMarker, readSurfaces, refreshInjectedCore } from "../wizard/register.js";
 import { runMaintenance } from "../maintenance/maintenance.js";
 
 type TextResult = { content: Array<{ type: "text"; text: string }> };
@@ -36,11 +36,10 @@ function clientName(server: McpServer): string {
 // unreadable Desktop field: does the current voice actually arrive there.
 async function recordFetch(client: string, coreHash: string): Promise<void> {
   try {
-    const state = await readSurfaces();
-    await writeSurfaces({
-      ...state,
-      fetches: { ...state.fetches, [client]: { at: new Date().toISOString(), coreHash } },
-    });
+    await mergeSurfaces((prev) => ({
+      ...prev,
+      fetches: { ...prev.fetches, [client]: { at: new Date().toISOString(), coreHash } },
+    }));
   } catch {
     // never fail a read because a counter could not be written
   }
@@ -62,10 +61,10 @@ async function migrationNotice(client: string): Promise<string> {
     const seen = state.migrationNotices;
     if (seen && seen.count >= NOTICE_CAP) return "";
     if (seen && Date.now() - Date.parse(seen.lastAt) < NOTICE_INTERVAL_MS) return "";
-    await writeSurfaces({
-      ...state,
-      migrationNotices: { count: (seen?.count ?? 0) + 1, lastAt: new Date().toISOString() },
-    });
+    await mergeSurfaces((prev) => ({
+      ...prev,
+      migrationNotices: { count: (prev.migrationNotices?.count ?? 0) + 1, lastAt: new Date().toISOString() },
+    }));
     return [
       "> Tell the user once, in their language, then carry on: their pasted Claude Desktop instructions",
       "> are the old long layout. Running `npx agent-julia paste` in a terminal and replacing the block",

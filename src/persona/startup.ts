@@ -61,10 +61,15 @@ export function fingerprintLine(coreText: string): string {
 export const INSTRUCTIONS_BUDGET = 1_800;
 
 export function serverInstructions(config: Config): string {
-  const who = config.pronouns.trim() ? `${config.name} (${config.pronouns})` : config.name;
+  // Bounded: name and language are interpolated into the one paragraph that is
+  // never dropped, so an unbounded value there makes the budget unenforceable no
+  // matter what the rungs below do.
+  const name = clip(config.name, 120);
+  const language = clip(config.language, 80);
+  const who = config.pronouns.trim() ? `${name} (${clip(config.pronouns, 60)})` : name;
   const head =
     `agent-julia holds this user's persona and memory.\n\n` +
-    `You are ${who}. You reply in ${config.language}; code, docs and commit messages stay in English.`;
+    `You are ${who}. You reply in ${language}; code, docs and commit messages stay in English.`;
   // The privacy rail is the one thing that must survive every branch, so it is
   // trimmed entry by entry rather than dropped whole, and an empty list simply
   // produces no sentence instead of "You never store .".
@@ -110,18 +115,27 @@ export function serverInstructions(config: Config): string {
   // Still over: the overflow is the privacy list itself, so trim the thing that
   // overflows instead of the two paragraphs that are already bounded. Dropping
   // the list whole would leave a client with no idea what it must not keep.
-  const tailFor = (dropped: number): string =>
-    dropped > 0 ? ` …and ${dropped} more category(ies) recorded in the config.` : "";
+  // A standalone sentence when nothing was kept: the tail used to be a trailing
+  // clause with no subject, so a user whose first entry was oversized ended up
+  // with no never-store instruction at all.
+  const tailFor = (dropped: number, kept: number): string => {
+    if (dropped <= 0) return "";
+    return kept > 0
+      ? ` There are ${dropped} more categories on this user's never-store list; treat anything of that kind the same way.`
+      : ` You never store this user's recorded never-store categories; when in doubt about anything secret or personal, do not keep it.`;
+  };
   const render = (kept: string[]): string => {
     const dropped = config.privacyHardOff.length - kept.length;
-    return [head + privacyFor(kept) + tailFor(dropped), shortVoice].join("\n\n");
+    return [head + privacyFor(kept) + tailFor(dropped, kept.length), shortVoice].join("\n\n");
   };
   const kept: string[] = [];
   for (const entry of config.privacyHardOff) {
     // Measure the whole thing, tail included: the summary sentence is part of
     // what is sent, and counting it afterwards is how a budget gets exceeded by
     // exactly the length of the sentence that says it was respected.
-    if (render([...kept, entry]).length > INSTRUCTIONS_BUDGET) break;
+    // `continue`, not `break`: one oversized entry must not hide the shorter
+    // ones after it.
+    if (render([...kept, entry]).length > INSTRUCTIONS_BUDGET) continue;
     kept.push(entry);
   }
   const dropped = config.privacyHardOff.length - kept.length;
@@ -135,3 +149,8 @@ export function serverInstructions(config: Config): string {
 
 // Stable id for the managed block across all surfaces.
 export const STARTUP_BLOCK_ID = "persona-core";
+
+function clip(value: string, max: number): string {
+  const one = value.replace(/\s+/g, " ").trim();
+  return one.length <= max ? one : `${one.slice(0, max - 1)}…`;
+}

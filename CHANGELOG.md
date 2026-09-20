@@ -136,6 +136,12 @@ changes, which always ship an automatic, backup-protected data migration.
   answer the product could give; results now stop where they fall away from the
   best match. A semantic-only hit used to come back as an id and a number, with
   no text at all — it now carries the heading of the part that matched.
+- **The Windows checkout carried the wrong persona.** `core-voice.md` is split
+  on a `---` rule to drop its credits section, and the split was anchored on
+  `\n`; git checks the shipped assets out with CRLF on Windows, so the credits
+  rode inside the injected persona of every Windows user. Assets are normalized
+  on read now. Page ids also accept a backslash path, which is what a Windows
+  caller naturally passes.
 - **A server whose client is gone exits.** Claude starts one server per session
   and does not always close the pipe or signal on the way out. On one machine
   that left 88 live servers, the oldest twelve days old, holding 954 MB between
