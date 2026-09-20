@@ -3,23 +3,37 @@ import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { Config } from "../config/schema.js";
 import { storePaths } from "../store/paths.js";
-import { listPageIds } from "../store/markdown.js";
+import { listPageIds, readPage } from "../store/markdown.js";
+import { checkLocalEmbeddingsAvailable, LOCAL_EMBEDDINGS_PACKAGE, makeEmbeddingProvider } from "../index/embeddings.js";
+import { ftsTokenizerFor, openDb } from "../index/db.js";
+import { embeddedIds } from "../index/semantic.js";
 import { readCorrections } from "../persona/corrections.js";
 import { EXPORT_BLOCK_ID, exportText } from "../export/export.js";
-import { isGitRepo, getRemoteUrl } from "../store/git.js";
-import { buildInjectedCore, STARTUP_BLOCK_ID } from "../persona/startup.js";
+import { isGitRepo, getRemoteUrl, gitAvailable } from "../store/git.js";
+import { injectedCoreFrom, STARTUP_BLOCK_ID } from "../persona/startup.js";
+import { composeCore } from "../persona/compose.js";
+import { INSTRUCTIONS_BUDGET, coreHashOf, serverInstructions } from "../persona/startup.js";
+import { PASTE_LAYOUT, configFingerprint, pasteBody, pasteHash } from "../persona/paste.js";
+import { probeCoworkSession } from "../surfaces/cowork-probe.js";
+import { estimateTokens } from "../util/tokens.js";
 import { endMarker, hasManagedBlock, startMarker } from "../managed/block.js";
 import { SHIPPED_SKILLS, shippedSkillsDir, skillsTargetDir } from "../skills/install.js";
 import {
   claudeCodeConfigPath,
   claudeCodeMemoryPath,
-  coreHash,
   coworkMirrorPath,
   coworkPasteMarkerPath,
   desktopConfigPath,
+  surfacesStatePath,
+  readPasteMarker,
+  readSurfaces,
 } from "../wizard/register.js";
 
-export type DoctorStatus = "ok" | "warn" | "fail";
+// "unknown" exists because the whole failure mode of the old design was a check
+// claiming knowledge it did not have. agent-julia cannot read Claude Desktop's
+// in-app instruction field; a check that cannot know must be able to say so
+// without dressing it as health. It counts toward neither total.
+export type DoctorStatus = "ok" | "warn" | "fail" | "unknown";
 
 export interface DoctorCheck {
   name: string;
@@ -35,6 +49,7 @@ export interface DoctorTargets {
   desktopConfig: string | null;
   coworkMirror: string;
   pasteMarker: string;
+  surfaces: string;
   skillsDir: string;
 }
 
@@ -45,6 +60,7 @@ export function defaultTargets(): DoctorTargets {
     desktopConfig: desktopConfigPath(),
     coworkMirror: coworkMirrorPath(),
     pasteMarker: coworkPasteMarkerPath(),
+    surfaces: surfacesStatePath(),
     skillsDir: skillsTargetDir(),
   };
 }
@@ -95,7 +111,16 @@ export async function runDoctor(config: Config, t: DoctorTargets = defaultTarget
   const pageCount = (await listPageIds(paths)).length;
   checks.push({ name: "store", status: "ok", detail: `${config.memoryDir} — ${pageCount} page(s)` });
 
-  if (config.git) {
+  if (config.git && !(await gitAvailable())) {
+    checks.push({
+      name: "store git",
+      status: "warn",
+      detail:
+        "git is on in config but not on PATH — the server runs without history this session " +
+        "(Claude Desktop launched from Finder inherits launchd's PATH, not your shell's)",
+      fix: "install git (macOS: xcode-select --install), or turn git off in the config",
+    });
+  } else if (config.git) {
     if (!isGitRepo(config.memoryDir)) {
       checks.push({
         name: "store git",
@@ -113,16 +138,110 @@ export async function runDoctor(config: Config, t: DoctorTargets = defaultTarget
     }
   }
 
-  // --- Derived index ---
-  checks.push(
-    existsSync(paths.dbPath)
-      ? { name: "index", status: "ok", detail: paths.dbPath }
-      : {
-          name: "index",
-          status: "warn",
-          detail: "no index database yet — it is built on the first server start",
-        },
-  );
+  // --- Every page the catalog lists must actually open ---
+  {
+    const ids = await listPageIds(paths);
+    const missing: string[] = [];
+    const unparsed: string[] = [];
+    for (const id of ids) {
+      const page = await readPage(paths, id);
+      if (page === null) missing.push(id);
+      else if (page.frontmatterError) unparsed.push(id);
+    }
+    if (missing.length) {
+      checks.push({
+        name: "pages readable",
+        status: "fail",
+        detail: `${missing.length} page(s) are listed but cannot be opened: ${missing.slice(0, 5).join(", ")}${missing.length > 5 ? ", …" : ""}`,
+        fix: "check those files exist and are readable",
+      });
+    } else if (unparsed.length) {
+      checks.push({
+        name: "pages readable",
+        status: "warn",
+        detail:
+          `${ids.length} page(s) open; ${unparsed.length} have front matter that will not parse, so their title and status are ignored: ` +
+          `${unparsed.slice(0, 5).join(", ")}${unparsed.length > 5 ? ", …" : ""}`,
+        fix: "fix the YAML between the --- delimiters in those files",
+      });
+    } else if (ids.length) {
+      checks.push({ name: "pages readable", status: "ok", detail: `all ${ids.length} page(s) open` });
+    }
+  }
+
+  // --- Derived index: open it, don't just look for the file ---
+  let embedded: number | null = null;
+  if (!existsSync(paths.dbPath)) {
+    checks.push({
+      name: "index",
+      status: "warn",
+      detail: "no index database yet — it is built on the first server start",
+    });
+  } else {
+    try {
+      const db = openDb(paths, ftsTokenizerFor(config.language));
+      embedded = embeddedIds(db).length;
+      db.close();
+      checks.push({ name: "index", status: "ok", detail: paths.dbPath });
+    } catch (err) {
+      checks.push({
+        name: "index",
+        status: "fail",
+        detail: `the index database will not open: ${(err as Error).message.split("\n")[0]}`,
+        fix: `delete ${paths.dbPath} — the index is disposable and rebuilds from your markdown`,
+      });
+    }
+  }
+
+  // --- Semantic search: does the configured provider actually load? ---
+  // Checking the config says nothing. The failure this catches is silent by
+  // construction: the provider throws on first use, the warning goes to stderr,
+  // which for an MCP server is a log nobody opens, and search quietly drops back
+  // to keywords while the vectors sit in the database unused.
+  {
+    const provider = config.embedding.provider;
+    if (provider === "none") {
+      checks.push({
+        name: "semantic search",
+        status: "ok",
+        detail: "off — keyword search only (no model, no network)",
+      });
+    } else if (provider === "local") {
+      if (!(await checkLocalEmbeddingsAvailable())) {
+        checks.push({
+          name: "semantic search",
+          status: "fail",
+          detail:
+            `configured as "local", but ${LOCAL_EMBEDDINGS_PACKAGE} cannot be loaded by this process — ` +
+            "if the registered server runs from the same install, every search there silently falls back to keywords",
+          fix:
+            `install both in the same place, then re-run init: npm i -g agent-julia ${LOCAL_EMBEDDINGS_PACKAGE}. ` +
+            "A server registered as `npx agent-julia@latest` cannot see a globally installed model package.",
+        });
+      } else {
+        const pages = (await listPageIds(paths)).length;
+        const gap = embedded === null ? "" : `, ${embedded}/${pages} page(s) embedded`;
+        checks.push({
+          name: "semantic search",
+          status: embedded !== null && pages > 0 && embedded < pages ? "warn" : "ok",
+          detail: `local model ${makeEmbeddingProvider(config.embedding).id}${gap}`,
+          ...(embedded !== null && pages > 0 && embedded < pages
+            ? { fix: "run `agent-julia maintenance` to embed the pages that are missing" }
+            : {}),
+        });
+      }
+    } else {
+      const key = process.env[config.embedding.apiKeyEnv];
+      checks.push({
+        name: "semantic search",
+        status: key ? "ok" : "warn",
+        detail: key
+          ? `hosted endpoint ${config.embedding.baseUrl ?? "https://api.openai.com/v1"} (every page is sent there)`
+          : `hosted endpoint configured but ${config.embedding.apiKeyEnv} is not set — search falls back to keywords`,
+        ...(key ? {} : { fix: `export ${config.embedding.apiKeyEnv}=… before starting the server` }),
+      });
+    }
+  }
 
   // --- MCP registration ---
   if (wantCode) {
@@ -151,7 +270,32 @@ export async function runDoctor(config: Config, t: DoctorTargets = defaultTarget
   }
 
   // --- Persona block: Claude Code ---
-  const core = await buildInjectedCore(paths, config);
+  const composed = await composeCore(paths, config);
+  const core = injectedCoreFrom(composed.text);
+
+  // --- Persona: does the core fit the budget it declares? ---
+  // Checked before the block checks below, because a block that is present and
+  // current is still wrong if the voice inside it was cut in half.
+  if (composed.truncated || composed.droppedCorrections > 0) {
+    const lost = [
+      composed.truncated ? "the style voice was cut off" : null,
+      composed.droppedCorrections > 0
+        ? `${composed.droppedCorrections} correction(s) left out of context`
+        : null,
+    ].filter(Boolean);
+    checks.push({
+      name: "persona budget",
+      status: "warn",
+      detail: `core needs more than contextBudget ${config.contextBudget} — ${lost.join(", ")}`,
+      fix: "raise contextBudget in the config, or shorten persona.md / voice-corrections.md",
+    });
+  } else {
+    checks.push({
+      name: "persona budget",
+      status: "ok",
+      detail: `core ${composed.tokens}/${config.contextBudget} tokens; injected block ${estimateTokens(core)} (core + memory instruction)`,
+    });
+  }
   const block = `${startMarker(STARTUP_BLOCK_ID)}\n${core.trim()}\n${endMarker(STARTUP_BLOCK_ID)}`;
   if (wantCode) {
     const content = existsSync(t.claudeCodeMemory) ? await readFile(t.claudeCodeMemory, "utf8") : "";
@@ -174,29 +318,148 @@ export async function runDoctor(config: Config, t: DoctorTargets = defaultTarget
     }
   }
 
-  // --- Persona: Cowork drift ---
+  // --- Claude Desktop: what we asked for, what a session was seen with, and
+  // whether the voice ever actually arrives. Three separate questions, because
+  // agent-julia cannot read the in-app field and must never pretend otherwise.
   if (wantDesktop) {
-    if (!existsSync(t.pasteMarker)) {
+    const CANNOT_READ = "agent-julia cannot read the in-app field, so this is about the request, not the field.";
+    const marker = await readPasteMarker(t.pasteMarker);
+    const body = await pasteBody(config);
+    if (!marker) {
       checks.push({
-        name: "persona (cowork)",
+        name: "paste (desktop)",
         status: "warn",
-        detail: "no record of a Cowork paste — the in-app Global instructions may be empty or stale",
-        fix: "npx agent-julia sync, then paste as instructed",
+        detail: `no record that agent-julia ever asked you to paste anything on this machine. ${CANNOT_READ}`,
+        fix: "npx agent-julia paste",
+      });
+    } else if (marker.variant === "with-voice" && marker.configFingerprint === configFingerprint(config)) {
+      // A deliberate choice, not drift: the long variant carries the voice on
+      // purpose, for accounts that reach surfaces with no connector.
+      checks.push({
+        name: "paste (desktop)",
+        status: "ok",
+        detail:
+          `you chose the long variant on ${marker.askedAt.slice(0, 10)}; it carries a frozen copy of your ` +
+          `voice, so it does go stale as you record corrections. Re-run \`agent-julia paste --with-voice\` ` +
+          `after a batch of them. ${CANNOT_READ}`,
+      });
+    } else if (marker.layout !== PASTE_LAYOUT) {
+      checks.push({
+        name: "paste (desktop)",
+        status: "warn",
+        detail:
+          `you were last asked to paste layout ${marker.layout} (the old long block with a frozen copy of ` +
+          `your voice). get_core overrides it, so nothing breaks, but it costs roughly 2,400 tokens a conversation.`,
+        fix: "npx agent-julia paste",
+      });
+    } else if (marker.configFingerprint !== configFingerprint(config)) {
+      checks.push({
+        name: "paste (desktop)",
+        status: "warn",
+        detail:
+          "the stable layer changed since you were asked to paste it (name, output language or never-store list). " +
+          CANNOT_READ,
+        fix: "npx agent-julia paste",
+      });
+    } else if (marker.stableHash !== pasteHash(body)) {
+      checks.push({
+        name: "paste (desktop)",
+        status: "warn",
+        detail:
+          "the wording of the shipped template changed in this package release. Your existing paste is still " +
+          "correct; re-pasting is optional. " +
+          CANNOT_READ,
+        fix: "npx agent-julia paste",
       });
     } else {
-      const pasted = (await readFile(t.pasteMarker, "utf8")).trim();
-      if (pasted === coreHash(core)) {
-        checks.push({ name: "persona (cowork)", status: "ok", detail: "in-app paste matches the current core" });
-      } else {
-        checks.push({
-          name: "persona (cowork)",
-          status: "warn",
-          detail:
-            "the persona core changed since you last pasted it into Cowork — the in-app copy has drifted",
-          fix: "npx agent-julia sync, then re-paste into Claude Desktop → Settings → Cowork → Global instructions",
-        });
-      }
+      checks.push({
+        name: "paste (desktop)",
+        status: "ok",
+        detail: `last asked on ${marker.askedAt.slice(0, 10)} for layout ${marker.layout}, still current. ${CANNOT_READ}`,
+      });
     }
+
+    // The only real evidence: what Claude Desktop seeded its last session with.
+    const probe = await probeCoworkSession();
+    if (probe.status === "unreadable") {
+      checks.push({
+        name: "paste seen",
+        status: "unknown",
+        detail: "could not read Claude Desktop's session files (undocumented path, it may have moved). No signal either way.",
+      });
+    } else if (probe.status === "none") {
+      checks.push({
+        name: "paste seen",
+        status: "unknown",
+        detail: "no Cowork session on this machine carried an agent-julia block, so there is nothing to read.",
+      });
+    } else if (probe.layout === PASTE_LAYOUT || marker?.variant === "with-voice") {
+      checks.push({
+        name: "paste seen",
+        status: "ok",
+        detail:
+          marker?.variant === "with-voice"
+            ? `the last Cowork session (${probe.newest}) was seeded with your long paste. That is what that session got, not what the field holds now.`
+            : `the last Cowork session (${probe.newest}) was seeded with the current layout-${probe.layout} paste. That is what that session got, not what the field holds now.`,
+      });
+    } else {
+      const mine = (await composeCore(paths, config)).text.match(/^- /gm)?.length ?? 0;
+      checks.push({
+        name: "paste seen",
+        status: "warn",
+        detail:
+          `the last Cowork session (${probe.newest}) ran with a layout-${probe.layout} block, ${probe.chars} chars, ` +
+          `unchanged since ${probe.unchangedSince} — carrying ${probe.corrections} voice correction(s) against ${mine} lines of voice here.`,
+        fix: "npx agent-julia paste",
+      });
+    }
+
+    // Does the volatile half actually arrive? Absolute numbers only: Desktop
+    // runs one long-lived process for many conversations, so there is no
+    // denominator worth quoting.
+    const surfaces = await readSurfaces(t.surfaces);
+    const desktopBoot = Object.entries(surfaces.boots ?? {}).find(([k]) => k !== "claude-code");
+    const desktopFetch = Object.entries(surfaces.fetches ?? {}).find(([k]) => k !== "claude-code");
+    if (!desktopBoot) {
+      checks.push({
+        name: "voice fetch",
+        status: "unknown",
+        detail: "the server has never started from Claude Desktop on this machine, so nothing can be said about it.",
+      });
+    } else if (!desktopFetch) {
+      checks.push({
+        name: "voice fetch",
+        status: "warn",
+        detail:
+          `the server has started from Claude Desktop (${desktopBoot[0]}) but get_core has never been called there ` +
+          "— the paste is probably missing, or the connector is off in your conversations.",
+        fix: "npx agent-julia paste",
+      });
+    } else {
+      const current = coreHashOf(composed.text).slice(0, 8) === desktopFetch[1].coreHash.slice(0, 8);
+      checks.push({
+        name: "voice fetch",
+        status: current ? "ok" : "warn",
+        detail: current
+          ? `${desktopFetch[0]} last loaded the voice ${desktopFetch[1].at.slice(0, 16).replace("T", " ")} (core ${desktopFetch[1].coreHash.slice(0, 8)}, current).`
+          : `${desktopFetch[0]} last loaded the voice ${desktopFetch[1].at.slice(0, 10)} (core ${desktopFetch[1].coreHash.slice(0, 8)}), which is not the current one.`,
+      });
+    }
+  }
+
+  // --- What every client is told on connect ---
+  {
+    const instructions = serverInstructions(config);
+    const BUDGET = INSTRUCTIONS_BUDGET;
+    checks.push({
+      name: "mcp instructions",
+      status: instructions.length <= BUDGET ? "ok" : "warn",
+      detail:
+        instructions.length <= BUDGET
+          ? `${instructions.length} chars of ${BUDGET} (clients truncate around 2,048).`
+          : `${instructions.length} chars — over budget, so paragraphs were dropped from what clients receive. Shorten your privacyHardOff list.`,
+      ...(instructions.length <= BUDGET ? {} : { fix: "shorten privacyHardOff in the config" }),
+    });
   }
 
   // --- Skills ---
@@ -286,7 +549,7 @@ export async function runDoctor(config: Config, t: DoctorTargets = defaultTarget
   return checks;
 }
 
-const ICONS: Record<DoctorStatus, string> = { ok: "✓", warn: "!", fail: "✗" };
+const ICONS: Record<DoctorStatus, string> = { ok: "✓", warn: "!", fail: "✗", unknown: "?" };
 
 export function formatChecks(checks: DoctorCheck[]): string {
   const lines = checks.map((c) => {
@@ -295,11 +558,15 @@ export function formatChecks(checks: DoctorCheck[]): string {
   });
   const fails = checks.filter((c) => c.status === "fail").length;
   const warns = checks.filter((c) => c.status === "warn").length;
+  // "unknown" counts toward neither: a question that cannot be answered is not
+  // a problem and is certainly not health.
+  const unknown = checks.filter((c) => c.status === "unknown").length;
+  const tail = unknown > 0 ? ` ${unknown} thing(s) agent-julia cannot check.` : "";
   const summary =
     fails > 0
-      ? `${fails} problem(s), ${warns} warning(s).`
+      ? `${fails} problem(s), ${warns} warning(s).${tail}`
       : warns > 0
-        ? `Healthy, with ${warns} warning(s).`
-        : "Everything looks healthy.";
+        ? `Healthy, with ${warns} warning(s).${tail}`
+        : `Everything looks healthy.${tail}`;
   return [...lines, "", summary].join("\n");
 }

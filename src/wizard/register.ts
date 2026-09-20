@@ -1,19 +1,94 @@
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { homedir, platform } from "node:os";
-import { dirname, join } from "node:path";
+import { randomUUID } from "node:crypto";
+import { execFileSync } from "node:child_process";
+import { copyFile, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { withFileLock } from "../managed/lock.js";
+import { homedir, hostname, platform, tmpdir } from "node:os";
+import { dirname, join, sep } from "node:path";
 import { Config, Surface } from "../config/schema.js";
 import { log, warn } from "../util/log.js";
 import { copyToClipboard } from "../util/clipboard.js";
 import { buildInjectedCore, STARTUP_BLOCK_ID } from "../persona/startup.js";
+import { PASTE_LAYOUT, configFingerprint, pasteBody, pasteHash } from "../persona/paste.js";
 import { storePaths } from "../store/paths.js";
 import { endMarker, hasManagedBlock, removeManagedBlock, startMarker, upsertManagedBlock } from "../managed/block.js";
 import { installSkills, skillsTargetDir, uninstallSkills } from "../skills/install.js";
+import { EXPORT_BLOCK_ID as EXPORTED_BLOCK_ID } from "../export/export.js";
 
-// The MCP entry every surface gets. Floating @latest auto-propagates next session.
-function serverEntry(): { command: string; args: string[] } {
-  return { command: "npx", args: ["-y", "agent-julia@latest", "serve"] };
+export interface ServerEntry {
+  command: string;
+  args: string[];
+}
+
+// Candidate ways to launch the server, best first. The running copy is stable
+// and can see its own siblings; a globally installed one likewise; npx keeps
+// everyone on @latest but runs from a cache directory that cannot resolve an
+// optional peer dependency installed anywhere else — which is exactly why local
+// embeddings could be chosen, downloaded, indexed, and still never load.
+function candidates(): ServerEntry[] {
+  const out: ServerEntry[] = [];
+  const entry = process.argv[1];
+  if (entry && !entry.includes(`${sep}_npx${sep}`) && existsSync(entry)) {
+    try {
+      out.push({ command: process.execPath, args: [realpathSync(entry), "serve"] });
+    } catch {
+      // unreadable — skip it
+    }
+  }
+  const global = globalBinary();
+  if (global && !out.some((c) => c.args[0] === global)) {
+    out.push({ command: process.execPath, args: [global, "serve"] });
+  }
+  out.push({ command: "npx", args: ["-y", "agent-julia@latest", "serve"] });
+  return out;
+}
+
+function globalBinary(): string | null {
+  try {
+    const root = execFileSync("npm", ["root", "-g"], { encoding: "utf8" }).trim();
+    const entry = join(root, "agent-julia", "dist", "index.js");
+    return existsSync(entry) ? realpathSync(entry) : null;
+  } catch {
+    return null;
+  }
+}
+
+// Can the server this command would start load the local embedding model?
+// Asking the candidate itself is the only honest test: resolution depends on
+// where that copy lives, not on where the wizard is running.
+function canEmbed(entry: ServerEntry): boolean {
+  try {
+    execFileSync(entry.command, [...entry.args.slice(0, -1), "probe-embeddings"], {
+      stdio: "ignore",
+      timeout: 60_000,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// How the Claude clients will launch the server. With local embeddings chosen,
+// a candidate that cannot load the model is not a candidate: registering it
+// would mean a configured, downloaded, fully indexed model that never runs.
+export function serverEntryFor(needsLocalEmbeddings: boolean): ServerEntry {
+  const list = candidates();
+  if (needsLocalEmbeddings) {
+    for (const c of list) {
+      if (canEmbed(c)) return c;
+    }
+    warn(
+      "no way of launching agent-julia on this machine can load the local embedding model; " +
+        "registering the default. `agent-julia doctor` will keep saying so until you run " +
+        "`npm i -g agent-julia @huggingface/transformers` and re-run `agent-julia sync`.",
+    );
+  }
+  return list[0]!;
+}
+
+function serverEntry(): ServerEntry {
+  return candidates()[0]!;
 }
 
 // Claude Desktop config — the file that registers the MCP server for Cowork.
@@ -49,7 +124,113 @@ export function coworkMirrorPath(): string {
 // this is the best available signal: when the current core differs from this
 // hash, the Cowork persona has drifted and needs a re-paste — `doctor` flags it.
 export function coworkPasteMarkerPath(): string {
+  return join(homedir(), ".config", "agent-julia", "cowork-paste.json");
+}
+
+// The pre-0.1.39 marker: a bare sha1 of the full block the user was asked to
+// paste. Kept only as evidence that they were once asked under layout 1.
+export function legacyPasteMarkerPath(): string {
   return join(homedir(), ".config", "agent-julia", "cowork-pasted.sha1");
+}
+
+// Bookkeeping about the surfaces that connect: which clients have started the
+// server and when each last loaded the voice. agent-julia's own config dir, not
+// the memory store, and never git-committed.
+export function surfacesStatePath(): string {
+  return join(homedir(), ".config", "agent-julia", "surfaces.json");
+}
+
+export interface PasteMarker {
+  layout: number;
+  variant: "stable" | "with-voice";
+  stableHash: string;
+  configFingerprint: string;
+  askedAt: string;
+  askedOn: string;
+  previousLayout?: number;
+  corrections?: number;
+}
+
+export async function readPasteMarker(path = coworkPasteMarkerPath()): Promise<PasteMarker | null> {
+  try {
+    return JSON.parse(await readFile(path, "utf8")) as PasteMarker;
+  } catch {
+    return null;
+  }
+}
+
+export async function writePasteMarker(marker: PasteMarker, path = coworkPasteMarkerPath()): Promise<void> {
+  await updateJsonSafely(path, (prev) => ({ ...prev, ...marker }));
+}
+
+export interface SurfacesState {
+  boots?: Record<string, { at: string }>;
+  fetches?: Record<string, { at: string; coreHash: string }>;
+  migrationNotices?: { count: number; lastAt: string };
+}
+
+export async function readSurfaces(path = surfacesStatePath()): Promise<SurfacesState> {
+  try {
+    return JSON.parse(await readFile(path, "utf8")) as SurfacesState;
+  } catch {
+    return {};
+  }
+}
+
+export async function writeSurfaces(next: SurfacesState, path = surfacesStatePath()): Promise<void> {
+  await updateJsonSafely(path, (prev) => ({ ...prev, ...next }));
+}
+
+// Merge one client's record without clobbering another's. recordBoot and
+// recordFetch both rewrite the whole object, and a Desktop server and a Code
+// server do it at the same moment.
+export async function mergeSurfaces(
+  patch: (prev: SurfacesState) => SurfacesState,
+  path = surfacesStatePath(),
+): Promise<void> {
+  await updateJsonSafely(path, (prev) => patch(prev as SurfacesState));
+}
+
+// Read-modify-write from every boot and every get_core, across a long-lived
+// Desktop server and every fresh Code server. Locked and renamed into place, or
+// two of them lose each other's records — and a half-written file would then
+// read back as "never fetched", which is a lie doctor would repeat.
+async function updateJsonSafely(
+  path: string,
+  merge: (prev: Record<string, unknown>) => unknown,
+): Promise<void> {
+  // The same rail saveConfig has. A scratch script or a test that forgets to
+  // point these somewhere temporary would otherwise rewrite a real person's
+  // paste marker, and doctor would then report on a machine that is not theirs.
+  if ((process.env.VITEST || process.env.NODE_ENV === "test") && !path.startsWith(tmpdir())) {
+    throw new Error(`refusing to write ${path} from a test run — pass an explicit temp path`);
+  }
+  await mkdir(dirname(path), { recursive: true });
+  // "run": a lost boot record is cheaper than a skipped write, and nothing here
+  // is text the user typed.
+  await withFileLock(
+    path,
+    async () => {
+      // Read INSIDE the lock: every caller used to read first and write after,
+      // so two of them still overwrote each other's records.
+      let prev: Record<string, unknown> = {};
+      try {
+        prev = JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
+      } catch {
+        // absent or unreadable — start from nothing rather than fail a boot
+      }
+      const value = merge(prev);
+      const tmp = `${path}.${process.pid}.${randomUUID().slice(0, 8)}.tmp`;
+      try {
+        await writeFile(tmp, JSON.stringify(value, null, 2) + "\n", "utf8");
+        await rename(tmp, path);
+      } catch (err) {
+        await rm(tmp, { force: true }).catch(() => undefined);
+        throw err;
+      }
+    },
+    "run",
+  );
 }
 
 export function coreHash(core: string): string {
@@ -58,7 +239,7 @@ export function coreHash(core: string): string {
 
 // Returns false (without throwing) if the file exists but isn't valid JSON, so
 // the caller can fall back to a manual step instead of reporting a false success.
-async function mergeMcpServer(path: string, name: string): Promise<boolean> {
+export async function mergeMcpServerForTest(path: string, name: string, entry: ServerEntry = serverEntry()): Promise<boolean> {
   await mkdir(dirname(path), { recursive: true });
   let data: Record<string, unknown> = {};
   if (existsSync(path)) {
@@ -70,9 +251,16 @@ async function mergeMcpServer(path: string, name: string): Promise<boolean> {
     }
   }
   const servers = (data.mcpServers as Record<string, unknown>) ?? {};
-  servers[name] = serverEntry();
+  servers[name] = entry;
   data.mcpServers = servers;
-  await writeFile(path, JSON.stringify(data, null, 2) + "\n", "utf8");
+  // Same care as the markdown files this package writes: a one-time backup of
+  // the original, and a temp-file rename. ~/.claude.json is Claude Code's live
+  // state, and a truncated one is a broken install.
+  const bak = `${path}.agent-julia-bak`;
+  if (existsSync(path) && !existsSync(bak)) await copyFile(path, bak);
+  const tmp = `${path}.${process.pid}.tmp`;
+  await writeFile(tmp, JSON.stringify(data, null, 2) + "\n", "utf8");
+  await rename(tmp, path);
   log(`registered MCP server '${name}' in ${path}`);
   return true;
 }
@@ -118,6 +306,10 @@ export interface InstallStep {
 export async function install(config: Config): Promise<InstallStep[]> {
   const steps: InstallStep[] = [];
   const name = "agent-julia";
+  // Chosen once, and probed when it has to be: with local embeddings selected,
+  // registering a launcher that cannot load the model is how a fully configured
+  // and fully indexed semantic search ends up never running.
+  const entry = serverEntryFor(config.embedding.provider === "local");
   const core = await buildInjectedCore(storePaths(config.memoryDir), config);
   const wantCode = config.surfaces.includes("code");
   const wantDesktop = config.surfaces.includes("cowork") || config.surfaces.includes("dispatch");
@@ -125,17 +317,17 @@ export async function install(config: Config): Promise<InstallStep[]> {
   // --- MCP registration ---
   if (wantCode) {
     const p = claudeCodeConfigPath();
-    const wrote = await mergeMcpServer(p, name);
+    const wrote = await mergeMcpServerForTest(p, name, entry);
     steps.push(
       wrote
-        ? { surface: "code", action: "register MCP", status: "done", detail: p }
+        ? { surface: "code", action: "register MCP", status: "done", detail: `${p} — ${entry.command} ${entry.args.join(" ")}` }
         : manualMcpStep("code", "register MCP", p),
     );
   }
   if (wantDesktop) {
     const p = desktopConfigPath();
     if (p) {
-      const wrote = await mergeMcpServer(p, name);
+      const wrote = await mergeMcpServerForTest(p, name, entry);
       steps.push(
         wrote
           ? {
@@ -164,7 +356,11 @@ export async function install(config: Config): Promise<InstallStep[]> {
   }
   if (config.surfaces.includes("cowork") || config.surfaces.includes("dispatch")) {
     const mirror = coworkMirrorPath();
-    await upsertManagedBlock(mirror, STARTUP_BLOCK_ID, core);
+    // The stable layer, not the core: this file is what the user copies by hand,
+    // and anything in it that changes between pastes is stale by construction.
+    // The next boot's refresh writes the same body, so the two cannot disagree.
+    const pasteText = await pasteBody(config);
+    await upsertManagedBlock(mirror, STARTUP_BLOCK_ID, pasteText);
     // Cowork keeps Global instructions inside the app — we can't write that field,
     // so the user pastes it. Put it on the clipboard to make that one action, not
     // a file hunt. Best-effort: if there's no clipboard, fall back to the path.
@@ -172,15 +368,18 @@ export async function install(config: Config): Promise<InstallStep[]> {
     const detail = copied
       ? [
           "Copied to your clipboard — paste it once:",
-          "  1. Claude Desktop → Settings → Cowork → Global instructions",
-          "  2. paste (⌘V / Ctrl-V) and save",
+          "  1. Claude Desktop → Settings → Instructions for Claude",
+          "  2. replace any earlier agent-julia block, paste (⌘V / Ctrl-V) and save",
           "  3. restart Claude Desktop",
+          "",
+          "It is short on purpose: it carries who you are and what must never be stored.",
+          "Your voice and your corrections are fetched live, so this text does not go stale.",
         ]
       : [
-          "Cowork keeps Global instructions inside the app, so paste it once:",
+          "Claude Desktop keeps that field inside the app, so paste it once:",
           `  1. open this file:  ${mirror}`,
           "  2. copy everything in it",
-          "  3. in Claude Desktop: Settings → Cowork → Global instructions → paste",
+          "  3. in Claude Desktop: Settings → Instructions for Claude → replace the old block",
         ];
     steps.push({
       surface: "cowork",
@@ -188,9 +387,19 @@ export async function install(config: Config): Promise<InstallStep[]> {
       status: "manual",
       detail: detail.join("\n"),
     });
-    // Record what the user was asked to paste, so `doctor` can tell when the
-    // core has drifted from the Cowork field since.
-    await writeFile(coworkPasteMarkerPath(), coreHash(core) + "\n", "utf8");
+    // Record what we ASKED for. It is the only thing we can know: the field
+    // itself is unreadable from outside the app.
+    await writePasteMarker({
+      layout: PASTE_LAYOUT,
+      variant: "stable",
+      stableHash: pasteHash(pasteText),
+      configFingerprint: configFingerprint(config),
+      askedAt: new Date().toISOString(),
+      askedOn: hostname(),
+      // F4: the merge in writePasteMarker would otherwise keep a previousLayout
+      // from before this paste, and the migration notice would fire forever.
+      previousLayout: undefined,
+    });
   }
 
   // --- Shipped skills ---
@@ -209,31 +418,49 @@ export async function install(config: Config): Promise<InstallStep[]> {
 // corrections reach every surface without a manual `sync`. Files are rewritten
 // only when the block's content actually changed. Returns the refresh count.
 // Target paths are injectable for tests; callers use the default.
+export interface RefreshTarget {
+  path: string;
+  body: "core" | "paste";
+}
+
+// Two files, two different bodies, same block id. Claude Code's file is rewritten
+// on every boot and can carry the whole volatile core; the Cowork mirror is only
+// ever copied by hand, so it carries the stable layer and nothing that goes out
+// of date between pastes.
 export async function refreshInjectedCore(
   config: Config,
-  targets: string[] = [claudeCodeMemoryPath(), coworkMirrorPath()],
+  targets: RefreshTarget[] = [
+    { path: claudeCodeMemoryPath(), body: "core" },
+    { path: coworkMirrorPath(), body: "paste" },
+  ],
 ): Promise<number> {
   const core = await buildInjectedCore(storePaths(config.memoryDir), config);
-  const block = `${startMarker(STARTUP_BLOCK_ID)}\n${core.trim()}\n${endMarker(STARTUP_BLOCK_ID)}`;
+  const paste = await pasteBody(config);
   let refreshed = 0;
-  for (const p of targets) {
-    if (!existsSync(p)) continue;
-    const content = await readFile(p, "utf8");
+  for (const t of targets) {
+    if (!existsSync(t.path)) continue;
+    const body = t.body === "core" ? core : paste;
+    const block = `${startMarker(STARTUP_BLOCK_ID)}\n${body.trim()}\n${endMarker(STARTUP_BLOCK_ID)}`;
+    const content = await readFile(t.path, "utf8");
     if (!hasManagedBlock(content, STARTUP_BLOCK_ID) || content.includes(block)) continue;
-    await upsertManagedBlock(p, STARTUP_BLOCK_ID, core);
+    await upsertManagedBlock(t.path, STARTUP_BLOCK_ID, body);
     refreshed++;
   }
   return refreshed;
 }
 
 // The mcpServers snippet to add to a Claude client config, as pretty JSON.
-function mcpSnippet(): string {
-  return JSON.stringify({ mcpServers: { "agent-julia": serverEntry() } }, null, 2);
+function mcpSnippet(entry: ServerEntry = serverEntry()): string {
+  return JSON.stringify({ mcpServers: { "agent-julia": entry } }, null, 2);
 }
 
 // Produce a manual setup guide instead of writing the files, for users who prefer
 // to change their own Claude config. Lists exactly what to add and where.
 export async function buildInstructions(config: Config): Promise<string> {
+  // The manual path is the documented alternative to the wizard, so it must hand
+  // Desktop the same short block install() does — not the full core, which goes
+  // stale the moment a correction is recorded.
+  const pasteForDesktop = await pasteBody(config);
   const core = await buildInjectedCore(storePaths(config.memoryDir), config);
   const out: string[] = [];
   const wantCode = config.surfaces.includes("code");
@@ -252,11 +479,14 @@ export async function buildInstructions(config: Config): Promise<string> {
   if (wantDesktop) {
     const desktop = desktopConfigPath();
     out.push(
-      "Claude Desktop (Cowork)",
+      "Claude Desktop",
       `  1. In ${desktop ?? "<Claude Desktop config>"}, merge this into the top-level object:`,
       mcpSnippet().replace(/^/gm, "     "),
-      "  2. Paste this block into Settings → Cowork → Global instructions:",
-      core.replace(/^/gm, "     "),
+      "  2. Paste this block into Settings → Instructions for Claude:",
+      `${startMarker(STARTUP_BLOCK_ID)}\n${pasteForDesktop}\n${endMarker(STARTUP_BLOCK_ID)}`.replace(/^/gm, "     "),
+      "     It is short on purpose: your voice and corrections are fetched at runtime, so it",
+      "     does not go stale. If you also use Claude on the web or your phone, where this",
+      "     connector does not reach, run `agent-julia paste --with-voice` for the long form.",
       "",
     );
   }
@@ -298,5 +528,47 @@ export async function uninstall(): Promise<InstallStep[]> {
   for (const s of await uninstallSkills(skillsTargetDir())) {
     steps.push({ surface: "shared", action: `remove skill '${s.skill}'`, status: s.status, detail: s.detail });
   }
+
+  // Everything else this package wrote outside the two Claude files. Uninstall
+  // never loaded the config, so a persona exported into ~/.codex/AGENTS.md stayed
+  // there forever while the CLI printed "managed blocks removed".
+  try {
+    const { loadConfig } = await import("../config/config.js");
+    const cfg = await loadConfig();
+    for (const target of cfg.exports) {
+      const removed = await removeManagedBlock(target, EXPORTED_BLOCK_ID);
+      steps.push({
+        surface: "shared",
+        action: "remove exported persona",
+        status: removed ? "done" : "skipped",
+        detail: target,
+      });
+    }
+  } catch {
+    steps.push({
+      surface: "shared",
+      action: "remove exported personas",
+      status: "skipped",
+      detail: "no readable config — check ~/.codex/AGENTS.md and any other export targets by hand",
+    });
+  }
+
+  // The record of what the user was last asked to paste into Claude Desktop.
+  // Leaving it behind makes a later reinstall claim the in-app copy is current.
+  for (const state of [coworkPasteMarkerPath(), legacyPasteMarkerPath(), surfacesStatePath()]) {
+    if (existsSync(state)) {
+      await rm(state, { force: true });
+      steps.push({ surface: "shared", action: "clear local state", status: "done", detail: state });
+    }
+  }
+
+  steps.push({
+    surface: "shared",
+    action: "left in place",
+    status: "skipped",
+    detail:
+      "your memory store, your config (~/.config/agent-julia) and every *.agent-julia-bak backup. " +
+      "Delete them yourself if you want them gone; nothing here touches your data.",
+  });
   return steps;
 }

@@ -1,13 +1,14 @@
-import { mkdtempSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { lstatSync, mkdtempSync, readFileSync, readdirSync, symlinkSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { upsertManagedBlock, removeManagedBlock, hasManagedBlock } from "../src/managed/block.js";
+import { upsertManagedBlock, removeManagedBlock, hasManagedBlock, startMarker } from "../src/managed/block.js";
 import { buildInjectedCore, STARTUP_BLOCK_ID } from "../src/persona/startup.js";
 import { composeCore } from "../src/persona/compose.js";
 import { refreshIndexMd } from "../src/store/catalog.js";
 import { writePage } from "../src/store/markdown.js";
 import { storePaths } from "../src/store/paths.js";
+import { mergeMcpServerForTest } from "../src/wizard/register.js";
 import { ConfigSchema } from "../src/config/schema.js";
 
 function tmp(): string {
@@ -140,5 +141,121 @@ describe("L3 corrections compaction", () => {
     expect(core.text).not.toContain("rule number 1:");
     expect(core.text).toMatch(/\+\d+ older correction/);
     expect(core.text).toContain("## Never store");
+  });
+});
+
+describe("writing into files other people own", () => {
+  it("does not let a stray start marker swallow the rest of the file", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "aj-marker-"));
+    const file = join(dir, "CLAUDE.md");
+    // A half-finished hand edit: the start marker survived, the end marker did not.
+    writeFileSync(file, `# My notes\n\n${startMarker("persona-core")}\n\nimportant user content\n`, "utf8");
+
+    await upsertManagedBlock(file, "persona-core", "the persona");
+    const after = readFileSync(file, "utf8");
+
+    expect(after).toContain("important user content");
+    expect(after).toContain("# My notes");
+    expect(after.match(/persona-core:start/g)!.length).toBe(1);
+    expect(after.match(/persona-core:end/g)!.length).toBe(1);
+  });
+
+  it("backs up and atomically replaces the Claude Code config", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "aj-cfgjson-"));
+    const file = join(dir, "claude.json");
+    writeFileSync(file, JSON.stringify({ existing: "state", mcpServers: { other: {} } }), "utf8");
+
+    await mergeMcpServerForTest(file, "agent-julia");
+
+    const after = JSON.parse(readFileSync(file, "utf8"));
+    expect(after.existing).toBe("state");
+    expect(after.mcpServers.other).toBeDefined();
+    expect(after.mcpServers["agent-julia"]).toBeDefined();
+    expect(existsSync(`${file}.agent-julia-bak`)).toBe(true);
+    expect(readdirSync(dir).filter((f) => f.includes(".tmp"))).toEqual([]);
+  });
+});
+
+describe("registering a launcher that can do the job", () => {
+  it("writes the entry it was handed, and keeps the rest of the file", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "aj-entry-"));
+    const file = join(dir, "claude.json");
+    writeFileSync(file, JSON.stringify({ keep: "me" }), "utf8");
+
+    await mergeMcpServerForTest(file, "agent-julia", { command: "/opt/x/agent-julia", args: ["serve"] });
+
+    const after = JSON.parse(readFileSync(file, "utf8"));
+    expect(after.keep).toBe("me");
+    expect(after.mcpServers["agent-julia"]).toEqual({ command: "/opt/x/agent-julia", args: ["serve"] });
+  });
+});
+
+describe("the files this package writes in someone else's home", () => {
+  it("creates a missing parent directory instead of failing on the lock", async () => {
+    // The lockfile lives next to the target, so a missing parent used to fail
+    // there with ENOENT — which is every fresh install, where neither ~/.claude
+    // nor ~/.config/agent-julia exists yet.
+    const dir = join(mkdtempSync(join(tmpdir(), "aj-fresh-")), "never", "existed");
+    const res = await upsertManagedBlock(join(dir, "CLAUDE.md"), "persona-core", "hello");
+    expect(res.created).toBe(true);
+    expect(readFileSync(join(dir, "CLAUDE.md"), "utf8")).toContain("hello");
+  });
+
+  it("writes through a symlink instead of replacing it", async () => {
+    // A dotfiles repo commonly symlinks ~/.claude/CLAUDE.md. Renaming onto the
+    // link would replace it with a regular file and quietly detach the repo.
+    const dir = mkdtempSync(join(tmpdir(), "aj-link-"));
+    const real = join(dir, "real.md");
+    const link = join(dir, "CLAUDE.md");
+    writeFileSync(real, "# from the dotfiles repo\n", "utf8");
+    symlinkSync(real, link);
+
+    await upsertManagedBlock(link, "persona-core", "the persona");
+
+    expect(lstatSync(link).isSymbolicLink()).toBe(true);
+    expect(readFileSync(real, "utf8")).toContain("the persona");
+    expect(readFileSync(real, "utf8")).toContain("from the dotfiles repo");
+  });
+
+  it("lets two concurrent writers both land", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "aj-conc-"));
+    const file = join(dir, "CLAUDE.md");
+    writeFileSync(file, "# mine\n", "utf8");
+    await Promise.all([
+      upsertManagedBlock(file, "persona-core", "core body"),
+      upsertManagedBlock(file, "other-block", "other body"),
+    ]);
+    const after = readFileSync(file, "utf8");
+    expect(after).toContain("# mine");
+    expect(after).toContain("core body");
+    expect(after).toContain("other body");
+    expect(readdirSync(dir).filter((f) => f.includes(".tmp") || f.includes("lock"))).toEqual([]);
+  });
+});
+
+describe("the lock protects the file it is named after", () => {
+  it("skips a write it cannot take the lock for, rather than racing the holder", async () => {
+    // Writing unlocked is a read-modify-write against a live writer on a file
+    // holding someone's hand-written profile. A skipped refresh costs one boot;
+    // a raced one costs lines the user typed.
+    const dir = mkdtempSync(join(tmpdir(), "aj-busy-"));
+    const file = join(dir, "CLAUDE.md");
+    writeFileSync(file, "# my own notes\n", "utf8");
+    writeFileSync(`${file}.agent-julia-lock`, "99999:someone-else", "utf8");
+
+    await expect(upsertManagedBlock(file, "persona-core", "should not land")).rejects.toThrow(/lock/i);
+    expect(readFileSync(file, "utf8")).toBe("# my own notes\n");
+  }, 15_000);
+
+  it("removes a block under the same lock, atomically", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "aj-rm-"));
+    const file = join(dir, "CLAUDE.md");
+    writeFileSync(file, "# mine\n", "utf8");
+    await upsertManagedBlock(file, "persona-core", "the persona");
+    expect(await removeManagedBlock(file, "persona-core")).toBe(true);
+    const after = readFileSync(file, "utf8");
+    expect(after).toContain("# mine");
+    expect(after).not.toContain("the persona");
+    expect(readdirSync(dir).filter((f) => f.includes(".tmp") || f.includes("lock"))).toEqual([]);
   });
 });

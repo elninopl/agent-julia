@@ -1,6 +1,6 @@
 {
   "name": "agent-julia",
-  "version": "0.1.38",
+  "version": "0.1.39",
   "description": "One brain for your AI — a local-first, owned memory and configurable persona shared across Claude Code and Cowork (Claude Desktop), exposed as an MCP server.",
   "author": "Paweł Gniadkowski (elniño) <el@elnino.pl>",
   "license": "MIT",
@@ -33,14 +33,14 @@
     "dev": "tsx src/index.ts",
     "wizard": "tsx src/index.ts init",
     "serve": "tsx src/index.ts serve",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json",
     "test": "vitest run",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",
     "franc-min": "^6.2.0",
-    "gray-matter": "^4.0.3",
+    "js-yaml": "^4.3.2",
     "zod": "^3.24.0"
   },
   "peerDependencies": {
@@ -52,6 +52,7 @@
     }
   },
   "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
     "@types/node": "^24.0.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",

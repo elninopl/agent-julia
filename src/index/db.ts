@@ -38,8 +38,25 @@ function loadDatabaseSync(): new (path: string) => DB {
 // Bump when the derived index's shape changes in a way the tokenizer signature
 // doesn't already capture. The index is disposable: on a signature mismatch we
 // drop and rebuild from the markdown.
-export const INDEX_SCHEMA_VERSION = 3;
+export const INDEX_SCHEMA_VERSION = 5;
 const INDEX_SIG_KEY = "index_signature";
+
+// Letters that carry a stroke or a bar rather than a combining accent. SQLite's
+// `remove_diacritics 2` folds anything that decomposes — ą, ć, ę, ó, ś, ź, ż all
+// work — but ł, đ, ø and ß do not decompose, so they never folded. The comment
+// in this file used to offer "Lodz finds Łódź" as the example, which was the one
+// case that did not work. Folded on both sides, indexing and query, so the two
+// meet in the middle.
+const FOLD: Record<string, string> = {
+  "ł": "l", "Ł": "l", "đ": "d", "Đ": "d", "ø": "o", "Ø": "o",
+  "ß": "ss", "æ": "ae", "Æ": "ae", "œ": "oe", "Œ": "oe", "ı": "i", "ŧ": "t", "ħ": "h",
+};
+
+export function foldForIndex(text: string): string {
+  let out = "";
+  for (const ch of text) out += FOLD[ch] ?? ch;
+  return out;
+}
 
 // Choose the FTS tokenizer from the store's primary language:
 // - CJK / Thai (no word spacing): the `trigram` tokenizer matches substrings, so
@@ -75,6 +92,11 @@ export function openDb(paths: StorePaths, tokenizer: string): DB {
   const signature = `${INDEX_SCHEMA_VERSION}:${tokenizer}`;
   if (getMeta(db, INDEX_SIG_KEY) !== signature) {
     db.exec("DROP TABLE IF EXISTS pages_fts; DROP TABLE IF EXISTS page_meta; DROP TABLE IF EXISTS embeddings;");
+    // `meta` survives the drop, and it holds the startup watermark that decides
+    // whether maintenance runs. Leaving it behind means the next boot sees an
+    // unchanged store, skips the rebuild, and search returns nothing for the
+    // whole store until some unrelated write happens to move the watermark.
+    db.exec("DELETE FROM meta WHERE key = 'maint_mtime';");
   }
   initSchema(db, tokenizer);
   setMeta(db, INDEX_SIG_KEY, signature);
@@ -87,14 +109,26 @@ function initSchema(db: DB, tokenizer: string): void {
       id UNINDEXED,
       title,
       body,
+      -- A folded shadow of title+body, for the letters SQLite's remove_diacritics
+      -- cannot fold (ł, đ, ø, ß). Matching happens across every indexed column,
+      -- so "lodz" finds "Łódź" — while title and body keep their real spelling,
+      -- so snippets are still readable.
+      fold,
       tokenize = '${tokenizer}'
     );
 
+    -- One row per CHUNK, not per page. The embedding models this ships with cut
+    -- their input at 512 tokens, so a whole page in one vector meant everything
+    -- past the first screen was unsearchable by meaning — on a store whose
+    -- average page is twenty times that length, that is most of it.
     CREATE TABLE IF NOT EXISTS embeddings (
-      id     TEXT PRIMARY KEY,
+      id     TEXT NOT NULL,
+      chunk  INTEGER NOT NULL,
+      label  TEXT NOT NULL,
       model  TEXT NOT NULL,
       dims   INTEGER NOT NULL,
-      vector BLOB NOT NULL
+      vector BLOB NOT NULL,
+      PRIMARY KEY (id, chunk)
     );
 
     -- Content fingerprint per page, so incremental sync can detect pages changed

@@ -1,13 +1,15 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { Indexer } from "../src/index/indexer.js";
 import { storePaths } from "../src/store/paths.js";
 import { ingest } from "../src/store/ingest.js";
-import { pushToRemote, setRemoteUrl } from "../src/store/git.js";
+import { archivePage, listArchivedIds, listPageIds, listPages, readPage, unarchivePage, writePage } from "../src/store/markdown.js";
+import { listStoreCommits, pageHistory, pushToRemote, revertCommit, setRemoteUrl } from "../src/store/git.js";
 import { migrate } from "../src/migrations/runner.js";
+import { appendCorrection, readCorrections, retractCorrection } from "../src/persona/corrections.js";
 import { ConfigSchema } from "../src/config/schema.js";
 
 describe("git gating on ingest", () => {
@@ -134,6 +136,52 @@ describe("pullFromRemote — two-machine sync", () => {
     expect(await pullFromRemote(b)).toBe("up-to-date");
   });
 
+  it("pulls onto a machine that agent-julia set up itself, with no upstream tracking", async () => {
+    // The real second machine: the wizard runs `git init` and points it at the
+    // remote. Nothing ever set an upstream, so `git pull origin` with no branch
+    // failed with "did not specify a branch" — reported to the user as
+    // "offline or no credentials", on every single startup, forever.
+    const { pullFromRemote, setRemoteUrl, ensureGitRepo, pushToRemote } = await import("../src/store/git.js");
+    const { writePage } = await import("../src/store/markdown.js");
+    const { storePaths } = await import("../src/store/paths.js");
+    const { existsSync: fsExists } = await import("node:fs");
+    const { execFileSync } = await import("node:child_process");
+
+    const bare = mkdtempSync(join(tmpdir(), "aj-bare-"));
+    execFileSync("git", ["init", "--bare", "-q", bare]);
+
+    const a = mkdtempSync(join(tmpdir(), "aj-a-"));
+    await ensureGitRepo(a);
+    await writePage(storePaths(a), "shared-fact", "written on machine A", {});
+    execFileSync("git", ["-C", a, "add", "-A"]);
+    execFileSync("git", ["-C", a, "commit", "-q", "-m", "from A"]);
+    await setRemoteUrl(a, bare);
+    expect(await pushToRemote(a)).toBe(true);
+
+    // Machine B exactly as the wizard makes it: init, then a remote. No clone.
+    const b = mkdtempSync(join(tmpdir(), "aj-b-"));
+    await ensureGitRepo(b);
+    await setRemoteUrl(b, bare);
+
+    expect(await pullFromRemote(b)).toBe("pulled");
+    expect(fsExists(join(b, "pages", "shared-fact.md"))).toBe(true);
+    expect(await pullFromRemote(b)).toBe("up-to-date");
+  });
+
+  it("treats a remote with nothing on this branch yet as up-to-date, not as an error", async () => {
+    const { pullFromRemote, setRemoteUrl, ensureGitRepo } = await import("../src/store/git.js");
+    const { execFileSync } = await import("node:child_process");
+
+    const bare = mkdtempSync(join(tmpdir(), "aj-bare-"));
+    execFileSync("git", ["init", "--bare", "-q", bare]);
+    const b = mkdtempSync(join(tmpdir(), "aj-b-"));
+    await ensureGitRepo(b);
+    await setRemoteUrl(b, bare);
+
+    // Nobody has pushed anything yet. That is a new setup, not a failure.
+    expect(await pullFromRemote(b)).toBe("up-to-date");
+  });
+
   it("aborts a conflicted merge and leaves the store clean", async () => {
     const { pullFromRemote, setRemoteUrl, ensureGitRepo, pushToRemote } = await import("../src/store/git.js");
     const { writeFileSync: wf } = await import("node:fs");
@@ -187,5 +235,277 @@ describe("relatedPages", () => {
     const spokeA = await relatedPages(paths, "spoke-a");
     expect(spokeA.links).toEqual([]);
     expect(spokeA.backlinks).toEqual(["hub"]);
+  });
+});
+
+describe("front matter is data, never code", () => {
+  it("refuses a page whose front matter is javascript, and keeps reading the rest", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "aj-fm-"));
+    const paths = storePaths(dir);
+    mkdirSync(paths.pagesDir, { recursive: true });
+    const marker = join(dir, "pwned.txt");
+
+    // gray-matter's `javascript` engine parses with eval(). This is exactly what
+    // arrives from `git pull`, from adopting someone's notes folder, or from a
+    // model pasting web content into `ingest`.
+    writeFileSync(
+      join(paths.pagesDir, "poisoned.md"),
+      `---js\n{ title: (require("fs").writeFileSync(${JSON.stringify(marker)}, "x"), "ok") }\n---\n\nbody\n`,
+      "utf8",
+    );
+    writeFileSync(join(paths.pagesDir, "healthy.md"), "---\ntitle: healthy\n---\n\nbody\n", "utf8");
+
+    // Nothing is evaluated, and nothing disappears: the page comes back with its
+    // front matter flagged as unreadable and its text intact.
+    const poisoned = await readPage(paths, "poisoned");
+    expect(existsSync(marker)).toBe(false);
+    expect(poisoned).not.toBeNull();
+    expect(poisoned!.frontmatterError).toMatch(/not supported|use YAML/i);
+
+    // And the healthy neighbour is unaffected.
+    expect((await listPages(paths)).map((p) => p.id).sort()).toEqual(["healthy", "poisoned"]);
+  });
+
+  it("refuses javascript front matter arriving through ingest", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "aj-fm2-"));
+    const paths = storePaths(dir);
+    const marker = join(dir, "pwned2.txt");
+    await expect(
+      writePage(paths, "evil", `---js\n{ title: (require("fs").writeFileSync(${JSON.stringify(marker)}, "x"), "ok") }\n---\n\nbody\n`, {}),
+    ).rejects.toThrow(/not supported|use YAML/i);
+    expect(existsSync(marker)).toBe(false);
+  });
+});
+
+describe("a save must not silently destroy the page it was meant to extend", () => {
+  function store() {
+    const dir = mkdtempSync(join(tmpdir(), "aj-write-"));
+    return storePaths(dir);
+  }
+
+  const established = [
+    "Fact one: the weekly review is on Mondays.",
+    "Fact two: billing runs on Stripe.",
+    "Fact three: the staging database is reset nightly.",
+    "Fact four: deploys go out through Elastic Beanstalk.",
+  ].join("\n\n");
+
+  it("appends under what is already there", async () => {
+    const paths = store();
+    await writePage(paths, "prive", established, {});
+    const w = await writePage(paths, "prive", "Fact five: the weekly moved to Tuesdays.", { mode: "append" });
+
+    const page = await readPage(paths, "prive");
+    expect(page!.body).toContain("Fact one");
+    expect(page!.body).toContain("Fact five");
+    expect(w.linesRemoved).toBe(0);
+    expect(w.linesAdded).toBeGreaterThan(0);
+  });
+
+  it("refuses a replace that throws the page away, and says how to proceed", async () => {
+    const paths = store();
+    await writePage(paths, "prive", established, {});
+    await expect(
+      writePage(paths, "prive", "Fact five: the weekly moved to Tuesdays.", {}),
+    ).rejects.toThrow(/mode "append"|confirm: true/);
+
+    // The page is untouched by the refusal.
+    expect((await readPage(paths, "prive"))!.body).toContain("Fact one");
+  });
+
+  it("carries out the same write when it is confirmed", async () => {
+    const paths = store();
+    await writePage(paths, "prive", established, {});
+    const w = await writePage(paths, "prive", "Deliberate rewrite.", { confirm: true });
+    expect((await readPage(paths, "prive"))!.body).toBe("Deliberate rewrite.");
+    expect(w.linesRemoved).toBeGreaterThan(0);
+  });
+
+  it("refuses an empty page", async () => {
+    const paths = store();
+    await writePage(paths, "prive", established, {});
+    await expect(writePage(paths, "prive", "   ", {})).rejects.toThrow(/empty/i);
+    expect((await readPage(paths, "prive"))!.body).toContain("Fact one");
+  });
+
+  it("keeps front matter the writer never mentioned", async () => {
+    const paths = store();
+    await writePage(paths, "prive", "---\ntitle: Privé\ntags: [game, couples]\nowner: martyna\n---\n\nbody one", {});
+    // A read-modify-write cycle that only carries the body back.
+    await writePage(paths, "prive", "body one\n\nbody two", { confirm: true });
+
+    const page = await readPage(paths, "prive");
+    expect(page!.frontmatter.title).toBe("Privé");
+    expect((page!.frontmatter as Record<string, unknown>).tags).toEqual(["game", "couples"]);
+    expect((page!.frontmatter as Record<string, unknown>).owner).toBe("martyna");
+  });
+
+  it("reports the size delta so a shrinking write is visible", async () => {
+    const paths = store();
+    await writePage(paths, "prive", established, {});
+    const w = await writePage(paths, "prive", "Fact one: the weekly review is on Mondays.\n\nFact two: billing runs on Stripe.", { confirm: true });
+    expect(w.bytesBefore).toBeGreaterThan(w.bytesAfter);
+    expect(w.linesRemoved).toBeGreaterThan(0);
+  });
+});
+
+describe("undo", () => {
+  it("reverts the commit that destroyed a page, and the content comes back", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "aj-undo-"));
+    const paths = storePaths(dir);
+    const cfg = ConfigSchema.parse({ memoryDir: dir, search: "fts" });
+    await migrate(cfg);
+    const indexer = Indexer.open(paths, cfg);
+    try {
+      await ingest(paths, indexer, "prive", "Fact one.\n\nFact two.\n\nFact three.\n\nFact four.", { git: true });
+      await ingest(paths, indexer, "prive", "Only this line survives.", { git: true, confirm: true });
+      expect((await readPage(paths, "prive"))!.body).toBe("Only this line survives.");
+
+      const commits = await listStoreCommits(dir, 5);
+      expect(commits[0]!.subject).toMatch(/Update memory: prive/);
+      expect(commits[0]!.files).toContain("pages/prive.md");
+
+      const { ok } = await revertCommit(dir, commits[0]!.sha);
+      expect(ok).toBe(true);
+      expect((await readPage(paths, "prive"))!.body).toContain("Fact four.");
+    } finally {
+      indexer.close();
+    }
+  });
+});
+
+describe("a page the product can see, it can open", () => {
+  it("reads a file whose name was never in canonical form", async () => {
+    // Adopting an existing notes folder is a documented feature. Before, any file
+    // that was not already lowercase-ASCII-kebab was listed by the catalog and
+    // counted by doctor, and could not be opened by anything at all.
+    const dir = mkdtempSync(join(tmpdir(), "aj-adopt-"));
+    const paths = storePaths(dir);
+    mkdirSync(paths.pagesDir, { recursive: true });
+    writeFileSync(join(paths.pagesDir, "My Notes.md"), "---\ntitle: My Notes\n---\n\nadopted body\n", "utf8");
+    writeFileSync(join(paths.pagesDir, "Kraków.md"), "---\ntitle: Kraków\n---\n\nmiasto\n", "utf8");
+
+    const ids = await listPageIds(paths);
+    expect(ids).toContain("my-notes");
+    expect(ids).toContain("kraków");
+
+    for (const id of ids) {
+      const page = await readPage(paths, id);
+      expect(page, `page "${id}" is listed but cannot be read`).not.toBeNull();
+    }
+    expect((await readPage(paths, "my-notes"))!.body).toBe("adopted body");
+  });
+
+  it("lists a page once even when two files normalize to the same id", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "aj-dupe-"));
+    const paths = storePaths(dir);
+    mkdirSync(paths.pagesDir, { recursive: true });
+    writeFileSync(join(paths.pagesDir, "Prive Game.md"), "---\ntitle: a\n---\n\na\n", "utf8");
+    writeFileSync(join(paths.pagesDir, "prive-game.md"), "---\ntitle: b\n---\n\nb\n", "utf8");
+    expect((await listPageIds(paths)).filter((i) => i === "prive-game").length).toBe(1);
+  });
+});
+
+describe("a page with broken front matter is still a page", () => {
+  it("keeps a page whose YAML will not parse, instead of hiding it", async () => {
+    // An ordinary slip, not an attack: a colon in an unquoted title. Returning
+    // null here would delete the page from the catalog, the index, the digest
+    // and the read tool, with a stderr line as the only trace.
+    const dir = mkdtempSync(join(tmpdir(), "aj-badfm-"));
+    const paths = storePaths(dir);
+    mkdirSync(paths.pagesDir, { recursive: true });
+    writeFileSync(join(paths.pagesDir, "slip.md"), "---\ntitle: Privé: the game\n---\n\nthe body survives\n", "utf8");
+
+    const page = await readPage(paths, "slip");
+    expect(page).not.toBeNull();
+    expect(page!.body).toContain("the body survives");
+    expect(page!.frontmatterError).toBeTruthy();
+    expect(await listPageIds(paths)).toContain("slip");
+  });
+
+  it("keeps a page that opens with a horizontal rule", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "aj-hr-"));
+    const paths = storePaths(dir);
+    mkdirSync(paths.pagesDir, { recursive: true });
+    writeFileSync(join(paths.pagesDir, "note.md"), "---\n\nAdopted note starting with a rule.\n\n---\n\nmore text\n", "utf8");
+    const page = await readPage(paths, "note");
+    expect(page).not.toBeNull();
+    expect(page!.body).toContain("Adopted note");
+  });
+
+  it("still refuses to WRITE front matter in a scripting language", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "aj-writejs-"));
+    await expect(writePage(storePaths(dir), "evil", '---js\n{ title: "x" }\n---\n\nbody\n', {})).rejects.toThrow(
+      /not supported|use YAML/i,
+    );
+  });
+});
+
+describe("recovery: the counterparts that were missing", () => {
+  it("brings an archived page back", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "aj-unarch-"));
+    const paths = storePaths(dir);
+    await writePage(paths, "retired", "still useful after all", {});
+    await archivePage(paths, "retired");
+    expect(await readPage(paths, "retired")).toBeNull();
+
+    const back = await unarchivePage(paths, "retired");
+    expect(back).toBeTruthy();
+    expect((await readPage(paths, "retired"))!.body).toContain("still useful");
+    expect(await listArchivedIds(paths)).not.toContain("retired");
+  });
+
+  it("reads a page's history out of the commits it has been writing all along", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "aj-hist-"));
+    const paths = storePaths(dir);
+    const cfg = ConfigSchema.parse({ memoryDir: dir, search: "fts" });
+    await migrate(cfg);
+    const indexer = Indexer.open(paths, cfg);
+    try {
+      await ingest(paths, indexer, "topic", "We chose Postgres.", { git: true });
+      await ingest(paths, indexer, "topic", "We moved to SQLite.", { git: true, confirm: true });
+
+      const changes = await pageHistory(dir, "pages/topic.md", 5);
+      expect(changes.length).toBeGreaterThanOrEqual(2);
+      expect(changes[0]!.added.join(" ")).toContain("SQLite");
+      expect(changes[0]!.removed.join(" ")).toContain("Postgres");
+    } finally {
+      indexer.close();
+    }
+  });
+});
+
+describe("voice corrections can be withdrawn", () => {
+  it("comments the rule out, keeps the record, and stops applying it", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "aj-retract-"));
+    const paths = storePaths(dir);
+    await appendCorrection(paths, "Don't open every reply with my name.");
+    await appendCorrection(paths, "Reply in Polish.");
+    expect((await readCorrections(paths)).length).toBe(2);
+
+    const res = await retractCorrection(paths, "open every reply");
+    expect(res.status).toBe("ok");
+    const left = await readCorrections(paths);
+    expect(left.length).toBe(1);
+    expect(left[0]).toContain("Polish");
+    expect(readFileSync(paths.voiceCorrections, "utf8")).toContain("retracted");
+  });
+
+  it("refuses to guess between two matches", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "aj-retract2-"));
+    const paths = storePaths(dir);
+    await appendCorrection(paths, "Never use the word moat.");
+    await appendCorrection(paths, "Never use the word leak.");
+    const res = await retractCorrection(paths, "never use the word");
+    expect(res.status).toBe("ambiguous");
+    expect((await readCorrections(paths)).length).toBe(2);
+  });
+
+  it("bounds a correction so one cannot crowd out the rest", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "aj-bound-"));
+    const paths = storePaths(dir);
+    await appendCorrection(paths, "x".repeat(5000));
+    const stored = (await readCorrections(paths))[0]!;
+    expect(stored.length).toBeLessThan(700);
   });
 });

@@ -9,7 +9,7 @@ export interface SearchResult {
   title: string;
   score: number;
   snippet?: string;
-  via: "fts" | "semantic" | "hybrid";
+  via: "fts" | "fts-loose" | "semantic" | "hybrid";
 }
 
 // Reciprocal-rank-style fusion of FTS and semantic results. When semantic is
@@ -31,7 +31,7 @@ export async function search(
 
   // Pure modes: return directly (semantic with no provider falls through to []).
   if (mode === "fts" || (mode === "semantic" && !provider.enabled)) {
-    return fts.slice(0, limit).map((h) => ({ ...h, via: "fts" as const }));
+    return fts.slice(0, limit).map((h) => ({ ...h, via: h.via }));
   }
   if (mode === "semantic") {
     const byId = new Map(fts.map((f) => [f.id, f]));
@@ -39,7 +39,10 @@ export async function search(
       id: h.id,
       title: byId.get(h.id)?.title ?? ftsTitle(db, h.id) ?? h.id,
       score: h.score,
-      snippet: byId.get(h.id)?.snippet,
+      // A semantic hit used to come back with no snippet at all, so the caller
+      // got an id and a number. The matching chunk's heading at least says which
+      // part of the page answered.
+      snippet: byId.get(h.id)?.snippet ?? h.label,
       via: "semantic" as const,
     }));
   }
@@ -52,14 +55,23 @@ export async function search(
       title: h.title,
       snippet: h.snippet,
       score: 0.5 * rrf(i),
-      via: "hybrid",
+      // A loose keyword hit stays labelled loose even after fusion, so a caller
+      // can tell "this is what you asked for" from "this is the closest I have".
+      via: h.via === "fts-loose" ? "fts-loose" : "hybrid",
     });
   });
   sem.forEach((h, i) => {
     const existing = merged.get(h.id);
     const add = 0.5 * rrf(i);
     if (existing) existing.score += add;
-    else merged.set(h.id, { id: h.id, title: ftsTitle(db, h.id) ?? h.id, score: add, via: "hybrid" });
+    else
+      merged.set(h.id, {
+        id: h.id,
+        title: ftsTitle(db, h.id) ?? h.id,
+        score: add,
+        snippet: h.label,
+        via: "hybrid",
+      });
   });
 
   return [...merged.values()].sort((a, b) => b.score - a.score).slice(0, limit);

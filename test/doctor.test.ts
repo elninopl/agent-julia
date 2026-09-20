@@ -20,7 +20,8 @@ function sandbox(): { dir: string; targets: DoctorTargets } {
       claudeCodeMemory: join(dir, "CLAUDE.md"),
       desktopConfig: join(dir, "desktop.json"),
       coworkMirror: join(dir, "mirror.md"),
-      pasteMarker: join(dir, "pasted.sha1"),
+      pasteMarker: join(dir, "cowork-paste.json"),
+      surfaces: join(dir, "surfaces.json"),
       skillsDir: join(dir, "skills"),
     },
   };
@@ -46,7 +47,7 @@ describe("doctor", () => {
     expect(byName(checks, "mcp (code)").status).toBe("fail");
     expect(byName(checks, "mcp (cowork)").status).toBe("fail");
     expect(byName(checks, "persona (code)").status).toBe("fail");
-    expect(byName(checks, "persona (cowork)").status).toBe("warn");
+    expect(byName(checks, "paste (desktop)").status).toBe("warn");
     expect(byName(checks, "skill 'brainstorm'").status).toBe("warn");
 
     // Heal it the way init/sync would.
@@ -59,24 +60,73 @@ describe("doctor", () => {
     await installSkills(targets.skillsDir);
 
     checks = await runDoctor(cfg, targets);
-    // The index db legitimately doesn't exist before the first server start.
+    // The index db legitimately doesn't exist before the first server start, and
+    // the three Claude Desktop checks are about a field agent-julia cannot read
+    // and a client that has never connected — none of them can be "ok" here.
     expect(byName(checks, "index").status).toBe("warn");
-    expect(checks.filter((c) => c.name !== "index").every((c) => c.status === "ok")).toBe(true);
+    const unknowable = ["index", "paste (desktop)", "paste seen", "voice fetch"];
+    expect(checks.filter((c) => !unknowable.includes(c.name)).every((c) => c.status === "ok")).toBe(true);
   });
 
-  it("detects Cowork drift when the core changes after the last paste", async () => {
+  it("reports the persona budget, and warns when the core does not fit it", async () => {
+    const { dir, targets } = sandbox();
+    const memoryDir = join(dir, "mem");
+    mkdirSync(memoryDir, { recursive: true });
+    const paths = storePaths(memoryDir);
+
+    // A budget that comfortably holds the shipped preset voice.
+    const roomy = ConfigSchema.parse({ memoryDir, git: false, surfaces: ["code"], contextBudget: 4000 });
+    let budget = byName(await runDoctor(roomy, targets), "persona budget");
+    expect(budget.status).toBe("ok");
+    expect(budget.detail).toContain("/4000 tokens");
+    expect(budget.detail).toContain("injected block");
+
+    // Now bury it under corrections it cannot hold.
+    const rule = "- 2026-01-01 — " + "never do that ".repeat(40);
+    writeFileSync(paths.voiceCorrections, `# Voice corrections\n\n${Array(15).fill(rule).map((r, i) => r + i).join("\n")}\n`, "utf8");
+    const tight = ConfigSchema.parse({ memoryDir, git: false, surfaces: ["code"], contextBudget: 800 });
+    budget = byName(await runDoctor(tight, targets), "persona budget");
+    expect(budget.status).toBe("warn");
+    expect(budget.detail).toContain("contextBudget 800");
+    expect(budget.fix).toContain("raise contextBudget");
+  });
+
+  it("separates what it asked for from what it can never read", async () => {
+    // The old check asserted "in-app paste matches the current core", which it
+    // had no way of knowing. Three questions now, each answerable.
     const { dir, targets } = sandbox();
     const memoryDir = join(dir, "mem");
     mkdirSync(memoryDir, { recursive: true });
     const cfg = ConfigSchema.parse({ memoryDir, git: false, surfaces: ["cowork"] });
 
     writeFileSync(targets.desktopConfig!, JSON.stringify({ mcpServers: { "agent-julia": {} } }), "utf8");
-    writeFileSync(targets.pasteMarker, coreHash("an older core") + "\n", "utf8");
     await installSkills(targets.skillsDir);
 
     const checks = await runDoctor(cfg, targets);
-    const drift = byName(checks, "persona (cowork)");
-    expect(drift.status).toBe("warn");
-    expect(drift.detail).toContain("drifted");
+
+    const asked = byName(checks, "paste (desktop)");
+    expect(asked.status).toBe("warn");
+    expect(asked.detail).toContain("cannot read the in-app field");
+
+    // No evidence either way is "unknown", never "ok" and never "fail".
+    expect(["unknown", "warn", "ok"]).toContain(byName(checks, "paste seen").status);
+
+    const fetch = byName(checks, "voice fetch");
+    expect(["unknown", "warn"]).toContain(fetch.status);
+
+    const instructions = byName(checks, "mcp instructions");
+    expect(instructions.status).toBe("ok");
+    expect(instructions.detail).toMatch(/chars of 1800|chars of 1,800/);
+  });
+
+  it("never reports a failure for something it merely cannot see", async () => {
+    const { dir, targets } = sandbox();
+    const memoryDir = join(dir, "mem");
+    mkdirSync(memoryDir, { recursive: true });
+    const cfg = ConfigSchema.parse({ memoryDir, git: false, surfaces: ["cowork"] });
+    const checks = await runDoctor(cfg, targets);
+    for (const name of ["paste seen", "voice fetch"]) {
+      expect(byName(checks, name).status).not.toBe("fail");
+    }
   });
 });

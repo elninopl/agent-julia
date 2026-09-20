@@ -7,6 +7,331 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ## [Unreleased]
 
+## [0.1.39] - 2026-09-20
+
+> **One thing to do after upgrading.** The text you paste into Claude Desktop's
+> "Instructions for Claude" changed shape: it is now the part that never goes
+> stale (name, pronouns, reply language, never-store list) and your voice and
+> corrections are fetched at runtime instead. Run `agent-julia paste` and
+> replace the old block between the two agent-julia markers. Claude Code needs
+> nothing — its block is rewritten on every server start.
+
+### Added
+
+- **The persona reaches Claude Desktop without going stale.** The field that can
+  only be updated by hand was carrying the content that changes fastest: every
+  correction reached Claude Code automatically and Claude Desktop never. On the
+  maintainer's machine the Cowork sessions had been running since 2026-08-23 on
+  a block with zero of his eleven corrections. The split is now by volatility.
+  The paste holds identity, pronouns, reply language, the never-store list and
+  the instruction to load the rest — about 470 tokens that only change if you
+  rename your agent. The voice and the corrections are fetched with `get_core`
+  at the start of a conversation.
+- **The server introduces itself on connect.** Every client now receives short
+  instructions with the identity, the privacy rail and the order to load the
+  voice. It needs no paste, so a machine where the wizard was never finished
+  still gets a named agent that knows what it must not store. Paragraph order is
+  the degradation order: a client that truncates loses memory guidance, never
+  the identity or the privacy list.
+- **`agent-julia paste [--with-voice]`** prints and copies the block to put in
+  Claude Desktop, and records what was asked for. `--with-voice` keeps the old
+  long form for accounts that reach surfaces with no connector at all; it does
+  go stale, and now says so.
+- **`get_core` takes `since`.** A surface that already carries the persona block
+  passes its hash and gets one line back instead of 2,700 tokens. The block ends
+  with that hash for exactly this purpose.
+- **`doctor` stops claiming to know what it cannot.** The old check asserted
+  "in-app paste matches the current core", which was unknowable. Three separate
+  questions now — what agent-julia last asked for, what the last Desktop session
+  was actually seen running with (read from the session files Claude Desktop
+  leaves on disk), and whether the voice has genuinely been fetched there — plus
+  a new `unknown` status, counted in neither total, for the things it cannot see.
+- **`correct_voice` closes its own loop.** It refreshes the Claude Code block
+  immediately and says, in the reply, that the correction applies from this turn
+  on and how it reaches the other surfaces.
+
+### Added
+
+- **`agent-julia undo`.** Lists the last changes to your memory with the pages
+  each one touched, and undoes one by id. It records an inverse commit rather
+  than rewriting history, because the store may already be pushed and shared
+  with a second machine, and reindexes afterwards. The product has written a
+  commit on every single write since v0.1 and had never once read one back.
+- **`ingest` takes a `mode`.** `append` adds your content under what the page
+  already holds, which is what saving a new fact about an existing topic
+  actually means. `replace` (still the default) makes the payload the whole
+  page. The tool description now says so in as many words.
+
+- **`history` tool** — the recent changes to one page, with what each added and
+  removed, read out of the commits the product has been writing on every save
+  since v0.1 and had never once read back. It answers "when did we decide that,
+  and what did we think before", and whether a fact is still current.
+- **`retract_correction` tool** — withdraw one voice correction. The line is
+  commented out with the date rather than deleted, so the record of having had
+  the rule survives. Until now the only way to take a rule out of the always-on
+  prompt of every surface was to hand-edit markdown.
+- **A recovery surface.** `agent-julia reindex` rebuilds the search index from
+  the markdown — wiring up `Indexer.rebuild()`, which had existed with zero
+  callers. `agent-julia unarchive [page]` lists what is archived and brings one
+  back. `agent-julia relocate <path>` moves the store and repoints the config.
+  `agent-julia doctor --fix` applies the repairs that are safe to make without
+  asking: rebuild a broken index, refresh the persona blocks, reinstall the
+  shipped skills. A dozen findings in the audit behind this release ended with
+  "there is no recovery path".
+
+- **CI runs on macOS, Linux and Windows**, and on Node 26 as well as 24. The
+  code branches on `platform()` to find each Claude client's config, writes into
+  the user's home directory and shells out to git; testing one OS tested a third
+  of it. It also runs `npm audit` on production dependencies, typechecks the
+  test suite (which was excluded, so a test could call a function with the wrong
+  shape and still pass), and installs the packed tarball into a clean directory
+  to prove the published CLI actually runs — deleting `dist/**/assets` used to
+  leave the suite green while the built binary died on its first call. The
+  release workflow refuses a tag that is not an ancestor of `main`.
+
+### Changed
+
+- **A save can no longer quietly destroy the page it was meant to extend.** A
+  `replace` that would drop an established page to under 40% of its size is
+  refused, and the error names both ways forward (`mode: "append"`, or
+  `confirm: true` for a deliberate rewrite). Empty content is refused outright
+  instead of leaving a page with frontmatter and nothing else and reporting
+  success. Every write returns its size delta, and a write that removed lines
+  carries that delta into the commit message, so `git log` shows it without a
+  diff.
+- **Voice corrections are bounded and single-line at the boundary.** The reader
+  only ever took the first line, so a multi-line correction was silently
+  half-applied, and nothing capped the length of text that goes straight into
+  the always-on prompt of every surface with no review step.
+- **`read` returns the page exactly as stored**, front matter included, and
+  `ingest` merges the payload's front matter over what is already on the page.
+  Before, a read-modify-write cycle through the tools silently dropped every
+  key the model had not been shown: three cycles were enough to lose a page's
+  title, its tags and its status.
+
+### Security
+
+- **gray-matter is gone.** Front matter is now split by hand over `js-yaml@4`
+  (`src/store/frontmatter.ts`, about sixty lines — the part of gray-matter this
+  project actually used). That removes the `eval`-based engine entirely rather
+  than disabling it by configuration, and with it `js-yaml@3.14.2`, which is
+  end of life and carried a high-severity advisory `npm audit fix` could not
+  resolve. Verified against all 192 pages of a real store: both parsers return
+  identical data and identical bodies. `npm audit --omit=dev` is clean.
+- **Front matter is data again, not code.** `gray-matter` ships a `javascript`
+  engine that parses with `eval`, selected by the language token right after the
+  opening delimiter (`---js`). Both call sites took content nobody on the
+  machine wrote: a page arriving through `git pull`, a file adopted from an
+  existing notes folder, or the body a model handed to `ingest` — and the
+  process that parsed it can write to `~/.claude.json`, `~/.claude/CLAUDE.md`
+  and `~/.claude/skills`. Parsing is now pinned to YAML with the scripting
+  engines refused. A page whose front matter will not parse — whether that is a
+  crafted `---js` block or an ordinary stray colon in a title — keeps its text
+  and loses only its front matter, because making the page disappear from the
+  catalog, the index and the read tool with a stderr line as the only trace is
+  the worse failure. `doctor` lists the pages this happened to.
+
+### Fixed
+
+- **Pages are embedded in parts.** One page was one vector, and the models this
+  ships with cut their input at 512 tokens — so on a store whose average page is
+  many times that, everything past the first screen was invisible to semantic
+  search. Pages are now split on their own headings, each chunk carries that
+  heading as a label, and a page scores as its best-matching part. The provider
+  interface was batch-capable from the first release and had only ever been
+  called with one element; now a page is one batch.
+- **Semantic results have a floor and a snippet.** Every query returned a full
+  page of hits however weak, so "I don't have anything on that" was not an
+  answer the product could give; results now stop where they fall away from the
+  best match. A semantic-only hit used to come back as an id and a number, with
+  no text at all — it now carries the heading of the part that matched.
+- **The Windows checkout carried the wrong persona.** `core-voice.md` is split
+  on a `---` rule to drop its credits section, and the split was anchored on
+  `\n`; git checks the shipped assets out with CRLF on Windows, so the credits
+  rode inside the injected persona of every Windows user. Assets are normalized
+  on read now. Page ids also accept a backslash path, which is what a Windows
+  caller naturally passes.
+- **A server whose client is gone exits.** Claude starts one server per session
+  and does not always close the pipe or signal on the way out. On one machine
+  that left 88 live servers, the oldest twelve days old, holding 954 MB between
+  them and a WAL handle each — and every one of them had rewritten the user's
+  `CLAUDE.md` and skills directory at boot. The server now notices when the
+  process that spawned it disappears, and the boot-time refresh runs under the
+  store lock so a dozen simultaneous starts stop racing on the same files.
+- **"Lodz" finds "Łódź" now, which the code claimed it already did.** SQLite's
+  `remove_diacritics 2` folds anything that decomposes — ą, ć, ę, ó, ś, ź, ż all
+  worked — but ł, đ, ø and ß do not decompose and never folded. The comment in
+  the index offered "Lodz finds Łódź" as its example, which was the one case
+  that failed. A folded shadow column now carries those letters, so matching
+  works while titles and snippets keep their real spelling.
+- **A two-character query works in the languages that need it.** The trigram
+  tokenizer the index picks for Chinese, Japanese, Korean and Thai cannot match
+  fewer than three characters, which is the ordinary word length in exactly
+  those languages: the tokenizer chosen for them failed their commonest query.
+  A bounded substring scan answers it when the keyword ladder finds nothing.
+- **Dates are the user's calendar day, not UTC's.** `updated` drives the
+  270-day staleness threshold, backup directory names and the prefix on every
+  voice correction. For anyone east of Greenwich a fact saved after midnight
+  was dated yesterday; at UTC+13, most of the working day was.
+- **Adopting a repo no longer commits the search index.** The store's
+  `.gitignore` was written only when none existed, so a folder that already had
+  one staged `.agent-julia/index.sqlite` and its `-wal`/`-shm` on every write —
+  and then fought the other machine's copy on every pull. Missing rules are
+  appended now, and `.agent-julia/` carries a `.gitignore` of its own.
+- **`setRemoteUrl` no longer hijacks an adopted repo's origin in silence.** The
+  previous URL is kept as a remote named `pre-agent-julia` and the change is
+  announced.
+- **`commitAll` refuses a tree that is mid-merge**, instead of committing
+  conflict markers into the user's memory and calling it a save.
+- **An orphaned start marker is cleaned up** rather than left to collect a
+  second block below it on every refresh.
+- **`~/.claude.json` is backed up once and written through a temp file**, the
+  same care this package already took with the markdown files it edits. It is
+  Claude Code's live state, and a truncated one is a broken install.
+- **`uninstall` finishes the job.** It never loaded the config, so a persona
+  exported into `~/.codex/AGENTS.md` stayed there forever and the Cowork paste
+  marker survived to make a later reinstall claim the in-app copy was current.
+  It now removes recorded exports and the marker, and says plainly what it
+  deliberately leaves alone: your store, your config and every backup.
+- **A question asked in a sentence finds something.** Every term was quoted and
+  ANDed, with no stopwords, no fallback and no title weighting — so the
+  product's own headline example ("What did we decide about auth?") returned
+  nothing, and the longer the question the more certain the zero. Keyword search
+  is now a ladder: all terms, then content words only, then any two words, then
+  each word alone, longest first. Each hit reports which rung produced it
+  (`via: "fts"` or `"fts-loose"`), so a loose answer is visibly loose. bm25
+  weights the title ten times the body, because a hit in the title is what a
+  page is about and a hit in the body may be a passing mention — asking for
+  "acme cennik" used to put four other pages above the page called "cennik".
+  Measured on a 191-page store with embeddings off: 7 of 7 sentence-shaped
+  questions now return results, against 3 of 7 before.
+- **The whole write path is serialized, not just its git step.** The mutex
+  guarded `commitAll`; `writePage`, the catalog refresh, the journal append and
+  the index update all ran unlocked, so two Claude surfaces writing at the same
+  moment could interleave a page write with another page's catalog refresh. The
+  lock also had no owner: any holder that ran long had its lock deleted by the
+  next waiter, and both then ran at once — the exact race it existed to prevent.
+  It now writes an owner token, refreshes it on a heartbeat, reclaims a stale
+  lock only when the token has not moved, and releases only what is still its
+  own. Reentrancy is scoped to the async call chain, so a nested acquire passes
+  through while a second concurrent call in the same process waits.
+- **Page writes are atomic.** `writeFile` truncates in place, so a crash or a
+  full disk mid-write left half a page where a whole one had been, in the only
+  copy of what the agent knows. Writes now go to a temp file and rename.
+- **Shutdown drains.** The SDK chains its own handler onto `transport.onclose`
+  inside `connect()`, and the server assigned that field afterwards, discarding
+  it; the handler then called `process.exit(0)` immediately. A shutdown landing
+  mid-ingest could leave the page on disk, the journal appended and nothing
+  committed. Handlers are registered before connect, in-flight writes get up to
+  five seconds, and the deadline still guarantees the process exits.
+- **Archiving stops destroying the archive.** `archivePage` renamed onto its
+  destination without checking it, so retiring a second page under the same id
+  overwrote the first — in the one directory whose entire purpose is keeping
+  things. A collision now gets the page's own `updated` date appended. And an
+  archived page is addressable again: `read("archive/<id>")` used to resolve
+  back into `pages/`, because the id normalizer strips the prefix, so a page
+  that had just been archived could not be opened by any name at all.
+- **`list` is bounded and compact.** It returned every page, pretty-printed:
+  189 pages is roughly 7,800 tokens, six times the persona budget, in a product
+  whose claim is keeping the context window clear. It now takes `limit` and
+  `since`, sorts newest first, and reports `{total, matched, shown}` so a
+  truncated answer says so.
+- **MCP tools carry annotations.** `read`, `search`, `list`, `related` and
+  `get_core` are marked read-only; `archive` is marked destructive. A client
+  could not auto-approve reading memory without also auto-approving writing and
+  retiring it.
+- **A configured embedding model that cannot load is no longer silent.** It was
+  possible to choose the local model, have it download, have every page
+  embedded, and still have every search fall back to keywords forever, because
+  the server registered as `npx agent-julia@latest` runs from a cache directory
+  that cannot resolve an optional peer dependency installed anywhere else. The
+  warning went to stderr, which for an MCP server is a log nobody opens.
+  `doctor` now opens the index, loads the configured provider, and reports how
+  many pages are embedded against how many exist. When local embeddings are
+  chosen, `init` and `sync` no longer guess: each candidate way of launching the
+  server is asked, in its own process, whether it can load the model, and the
+  first that can is what gets registered. That closes the hole in the documented
+  path — `npx agent-julia init` registered npx, and npx could never load it — so
+  a user who follows the README and picks the local model now gets a working
+  one. If nothing on the machine can load it, the wizard says so instead of
+  registering a launcher that will fail silently.
+- **A page the product lists is a page it can open.** Page identity was computed
+  two different ways: the catalog and `doctor` counted raw filenames, while
+  every reader normalized them first. Any adopted file that was not already
+  lowercase-ASCII-kebab ("My Notes.md", "Kraków.md") was therefore listed,
+  counted, and impossible to open. Lookups now fall back to a scan for a file
+  whose name normalizes to the same id, listings are normalized and deduped, and
+  `doctor` fails on any page it cannot read.
+- **Page names survive in any script.** The id rule allowed `[a-z0-9._-]` only,
+  so every name written in Cyrillic, Greek, Chinese, Japanese, Korean or Thai
+  collapsed to the single id `untitled` — one file for all of them, each new
+  page destroying the last — while "Kraków" became "krak-w" and "café" became
+  "caf". Letters and digits are now kept in any script. The id remains a
+  security boundary: path separators, control characters and dot runs are still
+  collapsed, so it cannot traverse out of the store.
+- **The config cannot be lost by accident any more.** `saveConfig` was a plain
+  overwrite of the one file that holds the identity, the voice and the path to
+  everything the user owns. It is now written to a temp file and renamed, the
+  previous five versions are kept beside it, and a write from a test run that
+  would land on the real path is refused outright. When the configured memory
+  directory does not exist, the server says so loudly at boot and points at the
+  backups, instead of creating an empty store and letting the agent insist it
+  knows nothing about you.
+- **The second machine pulls again.** `pullFromRemote` ran `git pull origin`
+  with no branch, which needs an upstream — and a store agent-julia set up
+  itself (`git init`, then a remote) has none, because the first `push -u` has
+  not happened there. Every startup pull on machine B failed and was reported
+  as "offline or no credentials". The branch is now named explicitly, resolved
+  with `symbolic-ref` so it also works on the unborn branch of a store that has
+  never committed, and the upstream is recorded after the first success. A
+  remote with nothing on the branch yet is "up to date", not an error, and
+  unrelated histories get a message naming the one-time command that
+  reconciles them. Git failures report git's own stderr instead of the exec
+  wrapper's generic first line, which is what hid this for so long.
+- A tokenizer or index-schema change dropped the derived tables but left the
+  maintenance watermark in `meta`, so the next boot decided the store was
+  unchanged, skipped the rebuild, and search returned nothing for the entire
+  store until an unrelated write happened to move the watermark. The watermark
+  is cleared with the tables it describes.
+- Every git call that touches the network now carries a deadline and a
+  non-interactive environment. `push` had no timeout at all, and
+  `GIT_TERMINAL_PROMPT` does not reach ssh — so an ssh remote asking for a
+  passphrase parked the server forever, which on a stdio MCP server is a Claude
+  session with no memory tools and nothing on screen to explain why.
+- Startup work (pull, maintenance, skill and persona refresh) runs *after* the
+  transport is connected instead of before it. Any slow step used to cost the
+  session its tools before the client finished the handshake.
+- `git add -A` sits inside `commitAll`'s try block, so contention on
+  `.git/index.lock` no longer reports a write as failed when the page is already
+  on disk and already journalled.
+- The server starts on a machine without `git` instead of exiting on
+  `spawn git ENOENT`: git is probed once, history is disabled for the session
+  with a warning, and `doctor` reports it. A product whose store is a git repo
+  still has to boot when Claude Desktop is launched from Finder and inherits
+  launchd's PATH.
+
+- **The persona core no longer deletes the user's voice to protect the shipped
+  rules.** `composeCore` sized voice corrections against the whole
+  `contextBudget`, gave the remainder to everything else, and clamped it as one
+  block — so the cut always landed in the last section, which is the voice the
+  user wrote in `persona.md`. On a real store the result was a core with
+  `## Your voice` missing entirely and the shipped universal rules intact: the
+  generic half survived, the personal half did not. Sections are now budgeted
+  separately, and the elastic one is ours. Identity and the privacy rail come
+  off the top, corrections and the voice each get a share (unused share flows
+  down), and the universal communication rules take what is left.
+- `clampToBudget` cuts on a paragraph, then a line, then a word boundary, and
+  never mid-word. A half-written rule still reads to the model as a rule. A
+  non-positive budget returns empty instead of the whole text.
+- `truncated` is measured against the text that was actually produced instead of
+  predicted from a budget the clamp had already been given — and it is finally
+  read by something. `composeCore` also reports `droppedCorrections`.
+- `agent-julia maintenance` prints a warning when the core does not fit, naming
+  what was lost, and `doctor` gained a `persona budget` check that reports the
+  size of the block that is really injected (the core plus the memory
+  instruction that rides on top of it). `doctor` now composes the persona once
+  per run instead of twice.
+
 ## [0.1.38] - 2026-07-13
 
 ### Added

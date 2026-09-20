@@ -1,5 +1,8 @@
 import { existsSync } from "node:fs";
-import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { warn } from "../util/log.js";
+import { randomUUID } from "node:crypto";
+import { copyFile, mkdir, readFile, realpath, rename, unlink, writeFile } from "node:fs/promises";
+import { withFileLock } from "./lock.js";
 import { dirname } from "node:path";
 
 // A managed block is a clearly-marked region agent-julia owns inside a file it
@@ -43,7 +46,19 @@ export async function upsertManagedBlock(
   id: string,
   body: string,
 ): Promise<{ created: boolean; backedUp: boolean }> {
+  // Before the lock, not inside it: withFileLock puts its lockfile next to the
+  // target, so a missing parent directory fails there with ENOENT instead of
+  // being created — which is every fresh install, where neither ~/.claude nor
+  // ~/.config/agent-julia exists yet.
   await mkdir(dirname(filePath), { recursive: true });
+  return withFileLock(filePath, () => upsertLocked(filePath, id, body));
+}
+
+async function upsertLocked(
+  filePath: string,
+  id: string,
+  body: string,
+): Promise<{ created: boolean; backedUp: boolean }> {
   const existed = existsSync(filePath);
   await backupOnce(filePath);
 
@@ -55,6 +70,19 @@ export async function upsertManagedBlock(
   const block = `${startMarker(id)}\n${safeBody}\n${endMarker(id)}`;
   let current = existed ? await readFile(filePath, "utf8") : "";
 
+  // A file with a start marker and no end marker (a half-finished hand edit, a
+  // truncated write) is not a block. Left alone, the next upsert's region regex
+  // would not match, the block would be appended below it, and every later
+  // uninstall or refresh would see two starts and one end.
+  const strayStart = new RegExp(`agent-julia:${escapeRe(id)}:start`);
+  if (!hasManagedBlock(current, id) && strayStart.test(current)) {
+    warn(`${filePath} has an agent-julia start marker with no end marker; removing the stray line`);
+    current = current
+      .split("\n")
+      .filter((l) => !strayStart.test(l))
+      .join("\n");
+  }
+
   if (hasManagedBlock(current, id)) {
     // Function replacement: a plain string would reinterpret `$&`/`$'` inside
     // the block as regex replacement patterns and corrupt the content.
@@ -63,16 +91,38 @@ export async function upsertManagedBlock(
     const sep = current.length === 0 ? "" : current.endsWith("\n\n") ? "" : current.endsWith("\n") ? "\n" : "\n\n";
     current = `${current}${sep}${block}\n`;
   }
-  await writeFile(filePath, current, "utf8");
+  await writeFileAtomic(filePath, current);
   return { created: !existed, backedUp: existed };
 }
 
 // Remove our managed block, leaving the rest of the file intact. Idempotent.
+// Locked and atomic for the same reason the upsert is: this reads a file the
+// user wrote, edits one region of it, and writes the whole thing back.
 export async function removeManagedBlock(filePath: string, id: string): Promise<boolean> {
   if (!existsSync(filePath)) return false;
-  const current = await readFile(filePath, "utf8");
-  if (!hasManagedBlock(current, id)) return false;
-  const cleaned = current.replace(blockRegion(id), "").replace(/\n{3,}/g, "\n\n").trimEnd() + "\n";
-  await writeFile(filePath, cleaned, "utf8");
-  return true;
+  return withFileLock(filePath, async () => {
+    const current = await readFile(filePath, "utf8");
+    if (!hasManagedBlock(current, id)) return false;
+    const cleaned = current.replace(blockRegion(id), "").replace(/\n{3,}/g, "\n\n").trimEnd() + "\n";
+    await writeFileAtomic(filePath, cleaned);
+    return true;
+  });
+}
+
+// Temp file plus rename. These files belong to the user, not to us: a truncated
+// ~/.claude/CLAUDE.md is a broken Claude install and a lost profile.
+async function writeFileAtomic(path: string, content: string): Promise<void> {
+  // Follow a symlink before renaming onto it. A dotfiles repo commonly has
+  // ~/.claude/CLAUDE.md symlinked into it; renaming onto the link replaces the
+  // link with a regular file and silently detaches the user's repo.
+  const target = await realpath(path).catch(() => path);
+  // pid alone is not unique: one process can be writing two blocks at once.
+  const tmp = `${target}.${process.pid}.${randomUUID().slice(0, 8)}.tmp`;
+  try {
+    await writeFile(tmp, content, "utf8");
+    await rename(tmp, target);
+  } catch (err) {
+    await unlink(tmp).catch(() => undefined);
+    throw err;
+  }
 }

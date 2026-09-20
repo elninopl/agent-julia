@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { clampToBudget, estimateTokens } from "../src/util/tokens.js";
 import { pageFilePath, pageId } from "../src/store/paths.js";
@@ -20,7 +21,7 @@ describe("page id resolution", () => {
   it("normalizes ids regardless of prefix/extension", () => {
     expect(pageId("pages/elnino.md")).toBe("elnino");
     expect(pageId("archive/old")).toBe("old");
-    expect(pageFilePath("/root", "elnino")).toBe("/root/pages/elnino.md");
+    expect(pageFilePath("/root", "elnino")).toBe(join("/root", "pages", "elnino.md"));
   });
 });
 
@@ -74,9 +75,24 @@ describe("page id is a security boundary", () => {
     expect(pageId("..\\..\\windows")).toBe("windows");
     expect(pageId("/absolute/path")).toBe("absolute-path");
     expect(pageId("nested/sub/dir")).toBe("nested-sub-dir");
-    expect(pageFilePath("/store", "../../escape")).toBe("/store/pages/escape.md");
+    expect(pageFilePath("/store", "../../escape")).toBe(join("/store", "pages", "escape.md"));
     expect(pageId("")).toBe("untitled");
     expect(pageId("..")).toBe("untitled");
+  });
+
+  it("keeps a name written in any script instead of collapsing it to one id", () => {
+    // The old rule allowed [a-z0-9._-] only, so every Cyrillic, CJK, Greek or
+    // Thai page name became "untitled" — one file for all of them, each new page
+    // destroying the last. Non-Latin naming is not exotic here: the index picks
+    // a CJK tokenizer from the configured language.
+    expect(pageId("Кремль")).not.toBe("untitled");
+    expect(pageId("日本語")).not.toBe("untitled");
+    expect(pageId("Кремль")).not.toBe(pageId("日本語"));
+    expect(pageId("рабочие-заметки")).not.toBe(pageId("Кремль"));
+    // Latin with diacritics stops losing letters, too.
+    expect(pageId("Kraków")).toBe("kraków");
+    expect(pageId("café")).toBe("café");
+    expect(pageId("ważne")).not.toBe(pageId("waźne"));
   });
 
   it("keeps ordinary ids unchanged", () => {

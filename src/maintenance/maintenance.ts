@@ -18,6 +18,7 @@ export interface MaintenanceReport {
   coreTokens: number;
   coreBudget: number;
   coreTruncated: boolean;
+  coreDroppedCorrections: number;
   committed: boolean;
   pushed: boolean;
   // Owner-judgment candidates, gathered only in interactive mode (the weekly
@@ -80,6 +81,7 @@ export async function runMaintenance(
     coreTokens: core.tokens,
     coreBudget: core.budget,
     coreTruncated: core.truncated,
+    coreDroppedCorrections: core.droppedCorrections,
     committed,
     pushed,
     proposals,
