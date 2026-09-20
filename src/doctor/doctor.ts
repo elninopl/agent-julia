@@ -4,6 +4,9 @@ import { join } from "node:path";
 import { Config } from "../config/schema.js";
 import { storePaths } from "../store/paths.js";
 import { listPageIds, readPage } from "../store/markdown.js";
+import { checkLocalEmbeddingsAvailable, LOCAL_EMBEDDINGS_PACKAGE, makeEmbeddingProvider } from "../index/embeddings.js";
+import { ftsTokenizerFor, openDb } from "../index/db.js";
+import { embeddedIds } from "../index/semantic.js";
 import { readCorrections } from "../persona/corrections.js";
 import { EXPORT_BLOCK_ID, exportText } from "../export/export.js";
 import { isGitRepo, getRemoteUrl, gitAvailable } from "../store/git.js";
@@ -143,16 +146,79 @@ export async function runDoctor(config: Config, t: DoctorTargets = defaultTarget
     }
   }
 
-  // --- Derived index ---
-  checks.push(
-    existsSync(paths.dbPath)
-      ? { name: "index", status: "ok", detail: paths.dbPath }
-      : {
-          name: "index",
-          status: "warn",
-          detail: "no index database yet — it is built on the first server start",
-        },
-  );
+  // --- Derived index: open it, don't just look for the file ---
+  let embedded: number | null = null;
+  if (!existsSync(paths.dbPath)) {
+    checks.push({
+      name: "index",
+      status: "warn",
+      detail: "no index database yet — it is built on the first server start",
+    });
+  } else {
+    try {
+      const db = openDb(paths, ftsTokenizerFor(config.language));
+      embedded = embeddedIds(db).length;
+      db.close();
+      checks.push({ name: "index", status: "ok", detail: paths.dbPath });
+    } catch (err) {
+      checks.push({
+        name: "index",
+        status: "fail",
+        detail: `the index database will not open: ${(err as Error).message.split("\n")[0]}`,
+        fix: `delete ${paths.dbPath} — the index is disposable and rebuilds from your markdown`,
+      });
+    }
+  }
+
+  // --- Semantic search: does the configured provider actually load? ---
+  // Checking the config says nothing. The failure this catches is silent by
+  // construction: the provider throws on first use, the warning goes to stderr,
+  // which for an MCP server is a log nobody opens, and search quietly drops back
+  // to keywords while the vectors sit in the database unused.
+  {
+    const provider = config.embedding.provider;
+    if (provider === "none") {
+      checks.push({
+        name: "semantic search",
+        status: "ok",
+        detail: "off — keyword search only (no model, no network)",
+      });
+    } else if (provider === "local") {
+      if (!(await checkLocalEmbeddingsAvailable())) {
+        checks.push({
+          name: "semantic search",
+          status: "fail",
+          detail:
+            `configured as "local", but ${LOCAL_EMBEDDINGS_PACKAGE} cannot be loaded by this process — ` +
+            "if the registered server runs from the same install, every search there silently falls back to keywords",
+          fix:
+            `install both in the same place, then re-run init: npm i -g agent-julia ${LOCAL_EMBEDDINGS_PACKAGE}. ` +
+            "A server registered as `npx agent-julia@latest` cannot see a globally installed model package.",
+        });
+      } else {
+        const pages = (await listPageIds(paths)).length;
+        const gap = embedded === null ? "" : `, ${embedded}/${pages} page(s) embedded`;
+        checks.push({
+          name: "semantic search",
+          status: embedded !== null && pages > 0 && embedded < pages ? "warn" : "ok",
+          detail: `local model ${makeEmbeddingProvider(config.embedding).id}${gap}`,
+          ...(embedded !== null && pages > 0 && embedded < pages
+            ? { fix: "run `agent-julia maintenance` to embed the pages that are missing" }
+            : {}),
+        });
+      }
+    } else {
+      const key = process.env[config.embedding.apiKeyEnv];
+      checks.push({
+        name: "semantic search",
+        status: key ? "ok" : "warn",
+        detail: key
+          ? `hosted endpoint ${config.embedding.baseUrl ?? "https://api.openai.com/v1"} (every page is sent there)`
+          : `hosted endpoint configured but ${config.embedding.apiKeyEnv} is not set — search falls back to keywords`,
+        ...(key ? {} : { fix: `export ${config.embedding.apiKeyEnv}=… before starting the server` }),
+      });
+    }
+  }
 
   // --- MCP registration ---
   if (wantCode) {
