@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { Indexer } from "../src/index/indexer.js";
 import { EmbeddingProvider } from "../src/index/embeddings.js";
-import { embeddedIds } from "../src/index/semantic.js";
+import { chunkPage, embeddedIds } from "../src/index/semantic.js";
 import { storePaths } from "../src/store/paths.js";
 import { writePage } from "../src/store/markdown.js";
 import { ConfigSchema } from "../src/config/schema.js";
@@ -93,5 +93,53 @@ describe("reembedIfStale fills gaps without wiping healthy vectors", () => {
     // Nothing missing anymore: a further run is a no-op.
     expect(await idx.reembedIfStale()).toBe(false);
     idx.close();
+  });
+});
+
+describe("a page is embedded in parts, not as one vector", () => {
+  it("splits on headings and keeps chunks inside the model's window", () => {
+    const body = [
+      "# Overview",
+      "The project does one thing.",
+      "",
+      "## Billing",
+      "x".repeat(3000),
+      "",
+      "## Deploys",
+      "Deploys go out through Elastic Beanstalk.",
+    ].join("\n");
+
+    const chunks = chunkPage("Project", body);
+    expect(chunks.length).toBeGreaterThan(2);
+    expect(chunks.every((c) => c.text.length <= 1400)).toBe(true);
+    expect(chunks.map((c) => c.label)).toContain("Deploys");
+    // The tail of a long page is embedded too — with one vector per page, the
+    // models' 512-token window left everything past the first screen invisible.
+    expect(chunks.at(-1)!.text).toContain("Elastic Beanstalk");
+  });
+
+  it("always produces at least one chunk", () => {
+    expect(chunkPage("Title only", "").length).toBe(1);
+  });
+
+  it("scores a page by its best-matching part, not by its average", async () => {
+    // The fake vectors count topic words, so a page that is mostly about coffee
+    // with one section about sqlite only matches "sqlite" if that section was
+    // embedded on its own.
+    const { paths, config } = freshStore("semantic");
+    const indexer = Indexer.open(paths, config, fakeProvider());
+    try {
+      await writePage(
+        paths,
+        "mixed",
+        ["# Mixed", "coffee ".repeat(400), "## Storage", "sqlite sqlite sqlite"].join("\n"),
+        {},
+      );
+      await indexer.sync();
+      const hits = await indexer.search("sqlite", 5);
+      expect(hits.map((h) => h.id)).toContain("mixed");
+    } finally {
+      indexer.close();
+    }
   });
 });

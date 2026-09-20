@@ -17,7 +17,7 @@ import { ftsDelete, ftsUpsert } from "./fts.js";
 import { SearchResult, search } from "./search.js";
 import {
   clearEmbeddings,
-  embedPassage,
+  embedChunks,
   embeddedIds,
   embeddingsAreStale,
   semanticDelete,
@@ -61,11 +61,11 @@ export class Indexer {
     // Embed first (async, no lock held), then write FTS row, vector, and hash in
     // one transaction so a crash can't leave a recorded hash for a page whose
     // embedding never landed (which sync() would never re-embed).
-    const vector = await embedPassage(this.provider, `${title}\n\n${page.body}`);
+    const vectors = await embedChunks(this.provider, title, page.body);
     this.db.exec("BEGIN IMMEDIATE");
     try {
       ftsUpsert(this.db, id, title, page.body);
-      if (vector) semanticStore(this.db, this.provider, id, vector);
+      if (vectors && vectors.length > 0) semanticStore(this.db, this.provider, id, vectors);
       setPageHash(this.db, id, hashPage(title, page.body));
       this.db.exec("COMMIT");
     } catch (err) {
