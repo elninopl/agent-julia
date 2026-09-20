@@ -5,7 +5,10 @@ import { composeCore } from "./compose.js";
 // The instruction half of the injected block: where memory lives and how to use
 // it. The persona half is the budgeted core (composeCore), so the full voice —
 // preset or custom — is always present, not fetched on demand.
-function memoryInstruction(): string {
+// Exported so doctor can report the size of the block that is actually
+// injected: contextBudget covers the persona core, this instruction rides on
+// top of it, and a budget nobody can reconcile with the file is not a budget.
+export function memoryInstruction(): string {
   return [
     "## Memory (agent-julia)",
     "Your memory lives in agent-julia (an MCP server), not in this file.",
@@ -21,8 +24,14 @@ function memoryInstruction(): string {
 // persona core (identity + universal core + style/custom voice + corrections +
 // privacy) followed by the memory instruction.
 export async function buildInjectedCore(paths: StorePaths, config: Config): Promise<string> {
-  const core = await composeCore(paths, config);
-  return `${core.text}\n\n${memoryInstruction()}`;
+  return injectedCoreFrom((await composeCore(paths, config)).text);
+}
+
+// Same block from a core that was already composed, so a caller that needs both
+// (doctor reports the core's budget and checks the block) doesn't read the store
+// and rebuild the persona twice.
+export function injectedCoreFrom(coreText: string): string {
+  return `${coreText}\n\n${memoryInstruction()}`;
 }
 
 // Stable id for the managed block across all surfaces.

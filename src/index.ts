@@ -189,6 +189,16 @@ async function main(): Promise<void> {
             `${r.staleFlagged.length} stale-flagged, ${r.orphanLinks.length} orphan link(s), ` +
             `core ${r.coreTokens}/${r.coreBudget} tokens${r.committed ? ", committed" : ""}${r.pushed ? ", pushed" : ""}.`,
         );
+        if (r.coreTruncated || r.coreDroppedCorrections > 0) {
+          const parts = [
+            r.coreTruncated ? "the style voice was cut off" : null,
+            r.coreDroppedCorrections > 0 ? `${r.coreDroppedCorrections} correction(s) left out` : null,
+          ].filter(Boolean);
+          console.log(
+            `Warning: the persona core does not fit contextBudget ${r.coreBudget} — ${parts.join(" and ")}. ` +
+              `Raise contextBudget in the config, or shorten persona.md / voice-corrections.md.`,
+          );
+        }
         console.log("For the interactive digest (merge/retire proposals), ask your agent to run the weekly digest.");
       } finally {
         idx.close();

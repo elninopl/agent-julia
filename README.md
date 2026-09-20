@@ -94,13 +94,13 @@ Two everyday frustrations it removes:
 **The `CLAUDE.md` tax.** Your `~/.claude/CLAUDE.md` has grown to 500 lines — every project, every preference, every person.
 
 - *Before* — all of it loads on every turn of every session, and the answer degrades as the window fills with things this task doesn't need.
-- *After* — about 1,200 tokens of persona ride each turn; the 500 lines live in your memory, and only the page you actually need is pulled in when you ask.
+- *After* — a persona core sized by `contextBudget` (1,200 tokens by default, plus a short instruction telling the agent where its memory lives) rides each turn; the 500 lines live in your memory, and only the page you actually need is pulled in when you ask.
 
 ## How it works
 
 - **Canonical store** — plain markdown in a git repo. Human-readable, portable, versioned, private. This is the source of truth, not a database.
 - **Derived index** — SQLite (FTS5 full-text + optional vector embeddings) built from the markdown, via Node's built-in `node:sqlite` (no native module to compile). It's disposable: delete it and it rebuilds itself from your files.
-- **Budgeted core** — a compact persona block is injected into Claude Code's `CLAUDE.md` and Claude Desktop's global instructions. It stays within a token budget you set, so it never crowds out the conversation.
+- **Budgeted core** — a compact persona block is injected into Claude Code's `CLAUDE.md` and Claude Desktop's global instructions. It stays within a token budget you set, so it never crowds out the conversation. Each layer is budgeted separately, and the part that yields is ours: identity and the privacy rail come off the top, your voice and your corrections each get a share, and the shipped universal rules take what's left. `maintenance` and `doctor` both say when something didn't fit, rather than trimming in silence.
 - **One MCP server** — every surface talks to the same `agent-julia` server over stdio, so they share one memory and one persona.
 
 ## Skills
@@ -227,7 +227,7 @@ Settings live in `~/.config/agent-julia/config.json` and carry a `schemaVersion`
 | `gitAutoPush` | Push after every write, not just on maintenance (default off) |
 | `search` | `hybrid`, `fts`, or `semantic` |
 | `embedding` | Provider (`none`, `local`, `openai-compatible`), model, and dimensions |
-| `contextBudget` | Token ceiling for the injected persona core |
+| `contextBudget` | Token ceiling for the persona core. The memory instruction (~280 tokens) is added on top; `agent-julia doctor` reports both numbers |
 | `surfaces` | Which Claude apps to register |
 | `privacyHardOff` | Categories the agent must never store (keys, card numbers, third-party private data) |
 

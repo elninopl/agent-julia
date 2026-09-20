@@ -7,7 +7,9 @@ import { listPageIds } from "../store/markdown.js";
 import { readCorrections } from "../persona/corrections.js";
 import { EXPORT_BLOCK_ID, exportText } from "../export/export.js";
 import { isGitRepo, getRemoteUrl } from "../store/git.js";
-import { buildInjectedCore, STARTUP_BLOCK_ID } from "../persona/startup.js";
+import { injectedCoreFrom, STARTUP_BLOCK_ID } from "../persona/startup.js";
+import { composeCore } from "../persona/compose.js";
+import { estimateTokens } from "../util/tokens.js";
 import { endMarker, hasManagedBlock, startMarker } from "../managed/block.js";
 import { SHIPPED_SKILLS, shippedSkillsDir, skillsTargetDir } from "../skills/install.js";
 import {
@@ -151,7 +153,32 @@ export async function runDoctor(config: Config, t: DoctorTargets = defaultTarget
   }
 
   // --- Persona block: Claude Code ---
-  const core = await buildInjectedCore(paths, config);
+  const composed = await composeCore(paths, config);
+  const core = injectedCoreFrom(composed.text);
+
+  // --- Persona: does the core fit the budget it declares? ---
+  // Checked before the block checks below, because a block that is present and
+  // current is still wrong if the voice inside it was cut in half.
+  if (composed.truncated || composed.droppedCorrections > 0) {
+    const lost = [
+      composed.truncated ? "the style voice was cut off" : null,
+      composed.droppedCorrections > 0
+        ? `${composed.droppedCorrections} correction(s) left out of context`
+        : null,
+    ].filter(Boolean);
+    checks.push({
+      name: "persona budget",
+      status: "warn",
+      detail: `core needs more than contextBudget ${config.contextBudget} — ${lost.join(", ")}`,
+      fix: "raise contextBudget in the config, or shorten persona.md / voice-corrections.md",
+    });
+  } else {
+    checks.push({
+      name: "persona budget",
+      status: "ok",
+      detail: `core ${composed.tokens}/${config.contextBudget} tokens; injected block ${estimateTokens(core)} (core + memory instruction)`,
+    });
+  }
   const block = `${startMarker(STARTUP_BLOCK_ID)}\n${core.trim()}\n${endMarker(STARTUP_BLOCK_ID)}`;
   if (wantCode) {
     const content = existsSync(t.claudeCodeMemory) ? await readFile(t.claudeCodeMemory, "utf8") : "";

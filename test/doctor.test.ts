@@ -64,6 +64,29 @@ describe("doctor", () => {
     expect(checks.filter((c) => c.name !== "index").every((c) => c.status === "ok")).toBe(true);
   });
 
+  it("reports the persona budget, and warns when the core does not fit it", async () => {
+    const { dir, targets } = sandbox();
+    const memoryDir = join(dir, "mem");
+    mkdirSync(memoryDir, { recursive: true });
+    const paths = storePaths(memoryDir);
+
+    // A budget that comfortably holds the shipped preset voice.
+    const roomy = ConfigSchema.parse({ memoryDir, git: false, surfaces: ["code"], contextBudget: 4000 });
+    let budget = byName(await runDoctor(roomy, targets), "persona budget");
+    expect(budget.status).toBe("ok");
+    expect(budget.detail).toContain("/4000 tokens");
+    expect(budget.detail).toContain("injected block");
+
+    // Now bury it under corrections it cannot hold.
+    const rule = "- 2026-01-01 — " + "never do that ".repeat(40);
+    writeFileSync(paths.voiceCorrections, `# Voice corrections\n\n${Array(15).fill(rule).map((r, i) => r + i).join("\n")}\n`, "utf8");
+    const tight = ConfigSchema.parse({ memoryDir, git: false, surfaces: ["code"], contextBudget: 800 });
+    budget = byName(await runDoctor(tight, targets), "persona budget");
+    expect(budget.status).toBe("warn");
+    expect(budget.detail).toContain("contextBudget 800");
+    expect(budget.fix).toContain("raise contextBudget");
+  });
+
   it("detects Cowork drift when the core changes after the last paste", async () => {
     const { dir, targets } = sandbox();
     const memoryDir = join(dir, "mem");

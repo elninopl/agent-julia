@@ -7,6 +7,30 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The persona core no longer deletes the user's voice to protect the shipped
+  rules.** `composeCore` sized voice corrections against the whole
+  `contextBudget`, gave the remainder to everything else, and clamped it as one
+  block — so the cut always landed in the last section, which is the voice the
+  user wrote in `persona.md`. On a real store the result was a core with
+  `## Your voice` missing entirely and the shipped universal rules intact: the
+  generic half survived, the personal half did not. Sections are now budgeted
+  separately, and the elastic one is ours. Identity and the privacy rail come
+  off the top, corrections and the voice each get a share (unused share flows
+  down), and the universal communication rules take what is left.
+- `clampToBudget` cuts on a paragraph, then a line, then a word boundary, and
+  never mid-word. A half-written rule still reads to the model as a rule. A
+  non-positive budget returns empty instead of the whole text.
+- `truncated` is measured against the text that was actually produced instead of
+  predicted from a budget the clamp had already been given — and it is finally
+  read by something. `composeCore` also reports `droppedCorrections`.
+- `agent-julia maintenance` prints a warning when the core does not fit, naming
+  what was lost, and `doctor` gained a `persona budget` check that reports the
+  size of the block that is really injected (the core plus the memory
+  instruction that rides on top of it). `doctor` now composes the persona once
+  per run instead of twice.
+
 ## [0.1.38] - 2026-07-13
 
 ### Added
