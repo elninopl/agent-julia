@@ -220,8 +220,9 @@ export async function runWizard(): Promise<void> {
         if (available) {
           ok("Local model package is installed. The model downloads on first search.");
         } else {
-          note(`One-time install needed for the local model — run:  npm i -g ${LOCAL_EMBEDDINGS_PACKAGE}`);
-          note("Until it's installed, search runs on keywords. Everything else works now.");
+          note(`One-time install needed for the local model — run:  npm i -g agent-julia ${LOCAL_EMBEDDINGS_PACKAGE}`);
+          note("Install BOTH together. A server launched through npx runs from a cache directory that cannot see a package installed anywhere else, so the model would never load and search would quietly stay on keywords.");
+          note("Until it's installed, search runs on keywords. Everything else works now. `agent-julia doctor` will tell you if it isn't loading.");
         }
       }
       if (embeddingProvider === "openai-compatible") {

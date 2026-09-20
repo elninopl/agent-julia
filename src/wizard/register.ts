@@ -1,8 +1,8 @@
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir, platform } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, sep } from "node:path";
 import { Config, Surface } from "../config/schema.js";
 import { log, warn } from "../util/log.js";
 import { copyToClipboard } from "../util/clipboard.js";
@@ -11,8 +11,23 @@ import { storePaths } from "../store/paths.js";
 import { endMarker, hasManagedBlock, removeManagedBlock, startMarker, upsertManagedBlock } from "../managed/block.js";
 import { installSkills, skillsTargetDir, uninstallSkills } from "../skills/install.js";
 
-// The MCP entry every surface gets. Floating @latest auto-propagates next session.
+// How the Claude clients will launch the server.
+//
+// `npx -y agent-julia@latest serve` keeps everyone on the newest version, and
+// stays the answer when the wizard itself was run through npx. But an npx cache
+// directory cannot resolve an optional peer dependency installed anywhere else,
+// which is why local embeddings could be configured, downloaded and indexed and
+// still never load in a session. When the wizard is running from an installed
+// copy, register that copy by path: it is stable, and it can see its siblings.
 function serverEntry(): { command: string; args: string[] } {
+  const entry = process.argv[1];
+  if (entry && !entry.includes(`${sep}_npx${sep}`) && existsSync(entry)) {
+    try {
+      return { command: process.execPath, args: [realpathSync(entry), "serve"] };
+    } catch {
+      // fall through to npx
+    }
+  }
   return { command: "npx", args: ["-y", "agent-julia@latest", "serve"] };
 }
 

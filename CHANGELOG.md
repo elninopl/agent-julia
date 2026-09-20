@@ -56,6 +56,17 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ### Fixed
 
+- **A configured embedding model that cannot load is no longer silent.** It was
+  possible to choose the local model, have it download, have every page
+  embedded, and still have every search fall back to keywords forever, because
+  the server registered as `npx agent-julia@latest` runs from a cache directory
+  that cannot resolve an optional peer dependency installed anywhere else. The
+  warning went to stderr, which for an MCP server is a log nobody opens.
+  `doctor` now opens the index, loads the configured provider, and reports how
+  many pages are embedded against how many exist; `init` and `sync` register the
+  installed binary by path when the wizard is not itself running through npx, so
+  the server can see its own dependencies; and the wizard's install line says to
+  install both packages together and why.
 - **A page the product lists is a page it can open.** Page identity was computed
   two different ways: the catalog and `doctor` counted raw filenames, while
   every reader normalized them first. Any adopted file that was not already
