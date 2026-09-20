@@ -267,7 +267,7 @@ describe("front matter is data, never code", () => {
     const marker = join(dir, "pwned2.txt");
     await expect(
       writePage(paths, "evil", `---js\n{ title: (require("fs").writeFileSync(${JSON.stringify(marker)}, "x"), "ok") }\n---\n\nbody\n`, {}),
-    ).rejects.toThrow(/scripting language/i);
+    ).rejects.toThrow(/not supported|use YAML/i);
     expect(existsSync(marker)).toBe(false);
   });
 });
