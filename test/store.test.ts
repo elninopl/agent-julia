@@ -135,6 +135,52 @@ describe("pullFromRemote — two-machine sync", () => {
     expect(await pullFromRemote(b)).toBe("up-to-date");
   });
 
+  it("pulls onto a machine that agent-julia set up itself, with no upstream tracking", async () => {
+    // The real second machine: the wizard runs `git init` and points it at the
+    // remote. Nothing ever set an upstream, so `git pull origin` with no branch
+    // failed with "did not specify a branch" — reported to the user as
+    // "offline or no credentials", on every single startup, forever.
+    const { pullFromRemote, setRemoteUrl, ensureGitRepo, pushToRemote } = await import("../src/store/git.js");
+    const { writePage } = await import("../src/store/markdown.js");
+    const { storePaths } = await import("../src/store/paths.js");
+    const { existsSync: fsExists } = await import("node:fs");
+    const { execFileSync } = await import("node:child_process");
+
+    const bare = mkdtempSync(join(tmpdir(), "aj-bare-"));
+    execFileSync("git", ["init", "--bare", "-q", bare]);
+
+    const a = mkdtempSync(join(tmpdir(), "aj-a-"));
+    await ensureGitRepo(a);
+    await writePage(storePaths(a), "shared-fact", "written on machine A", {});
+    execFileSync("git", ["-C", a, "add", "-A"]);
+    execFileSync("git", ["-C", a, "commit", "-q", "-m", "from A"]);
+    await setRemoteUrl(a, bare);
+    expect(await pushToRemote(a)).toBe(true);
+
+    // Machine B exactly as the wizard makes it: init, then a remote. No clone.
+    const b = mkdtempSync(join(tmpdir(), "aj-b-"));
+    await ensureGitRepo(b);
+    await setRemoteUrl(b, bare);
+
+    expect(await pullFromRemote(b)).toBe("pulled");
+    expect(fsExists(join(b, "pages", "shared-fact.md"))).toBe(true);
+    expect(await pullFromRemote(b)).toBe("up-to-date");
+  });
+
+  it("treats a remote with nothing on this branch yet as up-to-date, not as an error", async () => {
+    const { pullFromRemote, setRemoteUrl, ensureGitRepo } = await import("../src/store/git.js");
+    const { execFileSync } = await import("node:child_process");
+
+    const bare = mkdtempSync(join(tmpdir(), "aj-bare-"));
+    execFileSync("git", ["init", "--bare", "-q", bare]);
+    const b = mkdtempSync(join(tmpdir(), "aj-b-"));
+    await ensureGitRepo(b);
+    await setRemoteUrl(b, bare);
+
+    // Nobody has pushed anything yet. That is a new setup, not a failure.
+    expect(await pullFromRemote(b)).toBe("up-to-date");
+  });
+
   it("aborts a conflicted merge and leaves the store clean", async () => {
     const { pullFromRemote, setRemoteUrl, ensureGitRepo, pushToRemote } = await import("../src/store/git.js");
     const { writeFileSync: wf } = await import("node:fs");

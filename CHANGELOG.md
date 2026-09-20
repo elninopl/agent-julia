@@ -49,6 +49,17 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ### Fixed
 
+- **The second machine pulls again.** `pullFromRemote` ran `git pull origin`
+  with no branch, which needs an upstream — and a store agent-julia set up
+  itself (`git init`, then a remote) has none, because the first `push -u` has
+  not happened there. Every startup pull on machine B failed and was reported
+  as "offline or no credentials". The branch is now named explicitly, resolved
+  with `symbolic-ref` so it also works on the unborn branch of a store that has
+  never committed, and the upstream is recorded after the first success. A
+  remote with nothing on the branch yet is "up to date", not an error, and
+  unrelated histories get a message naming the one-time command that
+  reconciles them. Git failures report git's own stderr instead of the exec
+  wrapper's generic first line, which is what hid this for so long.
 - A tokenizer or index-schema change dropped the derived tables but left the
   maintenance watermark in `meta`, so the next boot decided the store was
   unchanged, skipped the rebuild, and search returned nothing for the entire
