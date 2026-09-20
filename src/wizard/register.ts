@@ -1,6 +1,6 @@
 import { existsSync, realpathSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { homedir, platform } from "node:os";
 import { dirname, join, sep } from "node:path";
 import { Config, Surface } from "../config/schema.js";
@@ -10,6 +10,7 @@ import { buildInjectedCore, STARTUP_BLOCK_ID } from "../persona/startup.js";
 import { storePaths } from "../store/paths.js";
 import { endMarker, hasManagedBlock, removeManagedBlock, startMarker, upsertManagedBlock } from "../managed/block.js";
 import { installSkills, skillsTargetDir, uninstallSkills } from "../skills/install.js";
+import { EXPORT_BLOCK_ID as EXPORTED_BLOCK_ID } from "../export/export.js";
 
 // How the Claude clients will launch the server.
 //
@@ -73,7 +74,7 @@ export function coreHash(core: string): string {
 
 // Returns false (without throwing) if the file exists but isn't valid JSON, so
 // the caller can fall back to a manual step instead of reporting a false success.
-async function mergeMcpServer(path: string, name: string): Promise<boolean> {
+export async function mergeMcpServerForTest(path: string, name: string): Promise<boolean> {
   await mkdir(dirname(path), { recursive: true });
   let data: Record<string, unknown> = {};
   if (existsSync(path)) {
@@ -87,7 +88,14 @@ async function mergeMcpServer(path: string, name: string): Promise<boolean> {
   const servers = (data.mcpServers as Record<string, unknown>) ?? {};
   servers[name] = serverEntry();
   data.mcpServers = servers;
-  await writeFile(path, JSON.stringify(data, null, 2) + "\n", "utf8");
+  // Same care as the markdown files this package writes: a one-time backup of
+  // the original, and a temp-file rename. ~/.claude.json is Claude Code's live
+  // state, and a truncated one is a broken install.
+  const bak = `${path}.agent-julia-bak`;
+  if (existsSync(path) && !existsSync(bak)) await copyFile(path, bak);
+  const tmp = `${path}.${process.pid}.tmp`;
+  await writeFile(tmp, JSON.stringify(data, null, 2) + "\n", "utf8");
+  await rename(tmp, path);
   log(`registered MCP server '${name}' in ${path}`);
   return true;
 }
@@ -140,7 +148,7 @@ export async function install(config: Config): Promise<InstallStep[]> {
   // --- MCP registration ---
   if (wantCode) {
     const p = claudeCodeConfigPath();
-    const wrote = await mergeMcpServer(p, name);
+    const wrote = await mergeMcpServerForTest(p, name);
     steps.push(
       wrote
         ? { surface: "code", action: "register MCP", status: "done", detail: p }
@@ -150,7 +158,7 @@ export async function install(config: Config): Promise<InstallStep[]> {
   if (wantDesktop) {
     const p = desktopConfigPath();
     if (p) {
-      const wrote = await mergeMcpServer(p, name);
+      const wrote = await mergeMcpServerForTest(p, name);
       steps.push(
         wrote
           ? {
@@ -313,5 +321,46 @@ export async function uninstall(): Promise<InstallStep[]> {
   for (const s of await uninstallSkills(skillsTargetDir())) {
     steps.push({ surface: "shared", action: `remove skill '${s.skill}'`, status: s.status, detail: s.detail });
   }
+
+  // Everything else this package wrote outside the two Claude files. Uninstall
+  // never loaded the config, so a persona exported into ~/.codex/AGENTS.md stayed
+  // there forever while the CLI printed "managed blocks removed".
+  try {
+    const { loadConfig } = await import("../config/config.js");
+    const cfg = await loadConfig();
+    for (const target of cfg.exports) {
+      const removed = await removeManagedBlock(target, EXPORTED_BLOCK_ID);
+      steps.push({
+        surface: "shared",
+        action: "remove exported persona",
+        status: removed ? "done" : "skipped",
+        detail: target,
+      });
+    }
+  } catch {
+    steps.push({
+      surface: "shared",
+      action: "remove exported personas",
+      status: "skipped",
+      detail: "no readable config — check ~/.codex/AGENTS.md and any other export targets by hand",
+    });
+  }
+
+  // The record of what the user was last asked to paste into Claude Desktop.
+  // Leaving it behind makes a later reinstall claim the in-app copy is current.
+  const marker = coworkPasteMarkerPath();
+  if (existsSync(marker)) {
+    await rm(marker, { force: true });
+    steps.push({ surface: "shared", action: "clear Cowork paste marker", status: "done", detail: marker });
+  }
+
+  steps.push({
+    surface: "shared",
+    action: "left in place",
+    status: "skipped",
+    detail:
+      "your memory store, your config (~/.config/agent-julia) and every *.agent-julia-bak backup. " +
+      "Delete them yourself if you want them gone; nothing here touches your data.",
+  });
   return steps;
 }

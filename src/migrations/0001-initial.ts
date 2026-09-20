@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Migration } from "./types.js";
 import { todayISO } from "../store/markdown.js";
@@ -33,10 +33,23 @@ export const migration0001: Migration = {
     // Keep the derived index out of version control; it is rebuildable. The
     // internal dir name is fixed (storePaths), so hardcode it rather than deriving
     // it by stripping the root prefix (which breaks on a trailing slash).
-    const gitignore = ".agent-julia/\n*.sqlite\n*.sqlite-*\n";
+    // Append what is missing rather than skipping the file entirely. Adopting a
+    // folder that already had a .gitignore meant the derived index — sqlite plus
+    // its -wal and -shm — was staged by `git add -A` on every single write, and
+    // then fought the other machine's copy on every pull.
+    const wanted = [".agent-julia/", "*.sqlite", "*.sqlite-*"];
     const gitignorePath = join(paths.root, ".gitignore");
-    if (!existsSync(gitignorePath)) {
-      await writeFile(gitignorePath, gitignore, "utf8");
+    const current = existsSync(gitignorePath) ? await readFile(gitignorePath, "utf8") : "";
+    const lines = new Set(current.split("\n").map((l) => l.trim()));
+    const missing = wanted.filter((w) => !lines.has(w));
+    if (missing.length > 0) {
+      const sep = current.length === 0 || current.endsWith("\n") ? "" : "\n";
+      await writeFile(gitignorePath, `${current}${sep}${missing.join("\n")}\n`, "utf8");
     }
+    // Belt and braces for a store whose .gitignore someone edits later: the
+    // internal directory excludes itself.
+    await mkdir(paths.internalDir, { recursive: true });
+    const selfIgnore = join(paths.internalDir, ".gitignore");
+    if (!existsSync(selfIgnore)) await writeFile(selfIgnore, "*\n", "utf8");
   },
 };

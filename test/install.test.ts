@@ -1,13 +1,14 @@
-import { mkdtempSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { upsertManagedBlock, removeManagedBlock, hasManagedBlock } from "../src/managed/block.js";
+import { upsertManagedBlock, removeManagedBlock, hasManagedBlock, startMarker } from "../src/managed/block.js";
 import { buildInjectedCore, STARTUP_BLOCK_ID } from "../src/persona/startup.js";
 import { composeCore } from "../src/persona/compose.js";
 import { refreshIndexMd } from "../src/store/catalog.js";
 import { writePage } from "../src/store/markdown.js";
 import { storePaths } from "../src/store/paths.js";
+import { mergeMcpServerForTest } from "../src/wizard/register.js";
 import { ConfigSchema } from "../src/config/schema.js";
 
 function tmp(): string {
@@ -140,5 +141,37 @@ describe("L3 corrections compaction", () => {
     expect(core.text).not.toContain("rule number 1:");
     expect(core.text).toMatch(/\+\d+ older correction/);
     expect(core.text).toContain("## Never store");
+  });
+});
+
+describe("writing into files other people own", () => {
+  it("does not let a stray start marker swallow the rest of the file", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "aj-marker-"));
+    const file = join(dir, "CLAUDE.md");
+    // A half-finished hand edit: the start marker survived, the end marker did not.
+    writeFileSync(file, `# My notes\n\n${startMarker("persona-core")}\n\nimportant user content\n`, "utf8");
+
+    await upsertManagedBlock(file, "persona-core", "the persona");
+    const after = readFileSync(file, "utf8");
+
+    expect(after).toContain("important user content");
+    expect(after).toContain("# My notes");
+    expect(after.match(/persona-core:start/g)!.length).toBe(1);
+    expect(after.match(/persona-core:end/g)!.length).toBe(1);
+  });
+
+  it("backs up and atomically replaces the Claude Code config", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "aj-cfgjson-"));
+    const file = join(dir, "claude.json");
+    writeFileSync(file, JSON.stringify({ existing: "state", mcpServers: { other: {} } }), "utf8");
+
+    await mergeMcpServerForTest(file, "agent-julia");
+
+    const after = JSON.parse(readFileSync(file, "utf8"));
+    expect(after.existing).toBe("state");
+    expect(after.mcpServers.other).toBeDefined();
+    expect(after.mcpServers["agent-julia"]).toBeDefined();
+    expect(existsSync(`${file}.agent-julia-bak`)).toBe(true);
+    expect(readdirSync(dir).filter((f) => f.includes(".tmp"))).toEqual([]);
   });
 });
