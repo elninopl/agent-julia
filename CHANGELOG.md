@@ -49,6 +49,20 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ### Fixed
 
+- **A page the product lists is a page it can open.** Page identity was computed
+  two different ways: the catalog and `doctor` counted raw filenames, while
+  every reader normalized them first. Any adopted file that was not already
+  lowercase-ASCII-kebab ("My Notes.md", "Kraków.md") was therefore listed,
+  counted, and impossible to open. Lookups now fall back to a scan for a file
+  whose name normalizes to the same id, listings are normalized and deduped, and
+  `doctor` fails on any page it cannot read.
+- **Page names survive in any script.** The id rule allowed `[a-z0-9._-]` only,
+  so every name written in Cyrillic, Greek, Chinese, Japanese, Korean or Thai
+  collapsed to the single id `untitled` — one file for all of them, each new
+  page destroying the last — while "Kraków" became "krak-w" and "café" became
+  "caf". Letters and digits are now kept in any script. The id remains a
+  security boundary: path separators, control characters and dot runs are still
+  collapsed, so it cannot traverse out of the store.
 - **The config cannot be lost by accident any more.** `saveConfig` was a plain
   overwrite of the one file that holds the identity, the voice and the path to
   everything the user owns. It is now written to a temp file and renamed, the

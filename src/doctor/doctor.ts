@@ -3,7 +3,7 @@ import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { Config } from "../config/schema.js";
 import { storePaths } from "../store/paths.js";
-import { listPageIds } from "../store/markdown.js";
+import { listPageIds, readPage } from "../store/markdown.js";
 import { readCorrections } from "../persona/corrections.js";
 import { EXPORT_BLOCK_ID, exportText } from "../export/export.js";
 import { isGitRepo, getRemoteUrl, gitAvailable } from "../store/git.js";
@@ -121,6 +121,25 @@ export async function runDoctor(config: Config, t: DoctorTargets = defaultTarget
         status: "ok",
         detail: remote ? `repo with remote ${remote}` : "repo (no remote — local-only backup)",
       });
+    }
+  }
+
+  // --- Every page the catalog lists must actually open ---
+  {
+    const ids = await listPageIds(paths);
+    const unreadable: string[] = [];
+    for (const id of ids) {
+      if ((await readPage(paths, id)) === null) unreadable.push(id);
+    }
+    if (unreadable.length) {
+      checks.push({
+        name: "pages readable",
+        status: "fail",
+        detail: `${unreadable.length} page(s) are listed but cannot be opened: ${unreadable.slice(0, 5).join(", ")}${unreadable.length > 5 ? ", …" : ""}`,
+        fix: "check those files for broken front matter, or rename them to plain kebab-case",
+      });
+    } else if (ids.length) {
+      checks.push({ name: "pages readable", status: "ok", detail: `all ${ids.length} page(s) open` });
     }
   }
 

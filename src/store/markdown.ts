@@ -77,10 +77,10 @@ export async function archivePage(paths: StorePaths, page: string): Promise<bool
 export async function listPageIds(paths: StorePaths): Promise<string[]> {
   if (!existsSync(paths.pagesDir)) return [];
   const files = await readdir(paths.pagesDir);
-  return files
-    .filter((f) => f.endsWith(".md"))
-    .map((f) => basename(f, ".md"))
-    .sort();
+  // Normalized, so every id this returns is one readPage can open. Deduped,
+  // because two differently-spelled files can share an id and the catalog must
+  // not list the same page twice.
+  return [...new Set(files.filter((f) => f.endsWith(".md")).map((f) => pageId(basename(f, ".md"))))].sort();
 }
 
 // Newest mtime across the inputs maintenance cares about (page files + the
@@ -126,8 +126,8 @@ const MATTER_OPTIONS = {
 };
 
 export async function readPage(paths: StorePaths, page: string): Promise<Page | null> {
-  const path = pageFilePath(paths.root, page);
-  if (!existsSync(path)) return null;
+  const path = await resolvePagePath(paths, page);
+  if (!path) return null;
   const raw = await readFile(path, "utf8");
   let parsed;
   try {
@@ -149,9 +149,26 @@ export async function readPage(paths: StorePaths, page: string): Promise<Page | 
 // a page in order to write it back needs this: everything else parses the
 // frontmatter away, and what is parsed away cannot be written back.
 export async function readPageRaw(paths: StorePaths, page: string): Promise<string | null> {
-  const path = pageFilePath(paths.root, page);
-  if (!existsSync(path)) return null;
+  const path = await resolvePagePath(paths, page);
+  if (!path) return null;
   return readFile(path, "utf8");
+}
+
+// Where a page actually lives. The canonical path first; failing that, a scan
+// for a file whose name normalizes to the same id. Without the fallback, every
+// adopted file that was not already lowercase-ASCII-kebab ("My Notes.md",
+// "Kraków.md") was listed by the catalog and counted by doctor, and could not
+// be opened by anything: two different answers to "what is this page called".
+export async function resolvePagePath(paths: StorePaths, page: string): Promise<string | null> {
+  const canonical = pageFilePath(paths.root, page);
+  if (existsSync(canonical)) return canonical;
+  if (!existsSync(paths.pagesDir)) return null;
+  const id = pageId(page);
+  for (const file of await readdir(paths.pagesDir)) {
+    if (!file.endsWith(".md")) continue;
+    if (pageId(file) === id) return join(paths.pagesDir, file);
+  }
+  return null;
 }
 
 export async function listPages(paths: StorePaths): Promise<PageSummary[]> {

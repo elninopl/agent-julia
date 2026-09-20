@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { Indexer } from "../src/index/indexer.js";
 import { storePaths } from "../src/store/paths.js";
 import { ingest } from "../src/store/ingest.js";
-import { listPages, readPage, writePage } from "../src/store/markdown.js";
+import { listPageIds, listPages, readPage, writePage } from "../src/store/markdown.js";
 import { listStoreCommits, pushToRemote, revertCommit, setRemoteUrl } from "../src/store/git.js";
 import { migrate } from "../src/migrations/runner.js";
 import { ConfigSchema } from "../src/config/schema.js";
@@ -366,5 +366,37 @@ describe("undo", () => {
     } finally {
       indexer.close();
     }
+  });
+});
+
+describe("a page the product can see, it can open", () => {
+  it("reads a file whose name was never in canonical form", async () => {
+    // Adopting an existing notes folder is a documented feature. Before, any file
+    // that was not already lowercase-ASCII-kebab was listed by the catalog and
+    // counted by doctor, and could not be opened by anything at all.
+    const dir = mkdtempSync(join(tmpdir(), "aj-adopt-"));
+    const paths = storePaths(dir);
+    mkdirSync(paths.pagesDir, { recursive: true });
+    writeFileSync(join(paths.pagesDir, "My Notes.md"), "---\ntitle: My Notes\n---\n\nadopted body\n", "utf8");
+    writeFileSync(join(paths.pagesDir, "Kraków.md"), "---\ntitle: Kraków\n---\n\nmiasto\n", "utf8");
+
+    const ids = await listPageIds(paths);
+    expect(ids).toContain("my-notes");
+    expect(ids).toContain("kraków");
+
+    for (const id of ids) {
+      const page = await readPage(paths, id);
+      expect(page, `page "${id}" is listed but cannot be read`).not.toBeNull();
+    }
+    expect((await readPage(paths, "my-notes"))!.body).toBe("adopted body");
+  });
+
+  it("lists a page once even when two files normalize to the same id", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "aj-dupe-"));
+    const paths = storePaths(dir);
+    mkdirSync(paths.pagesDir, { recursive: true });
+    writeFileSync(join(paths.pagesDir, "Prive Game.md"), "---\ntitle: a\n---\n\na\n", "utf8");
+    writeFileSync(join(paths.pagesDir, "prive-game.md"), "---\ntitle: b\n---\n\nb\n", "utf8");
+    expect((await listPageIds(paths)).filter((i) => i === "prive-game").length).toBe(1);
   });
 });
