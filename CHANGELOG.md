@@ -7,6 +7,20 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ## [Unreleased]
 
+## [0.1.40] - 2026-09-20
+
+### Fixed
+
+- **`doctor`'s "voice fetch" check reported on whatever had written a record
+  last.** It picked any client key that was not `claude-code`, so a record left
+  by a scratch script was presented as the state of Claude Desktop — the one
+  surface the check exists to speak about. It now reports only on a client that
+  actually started the server, and says it cannot know when none has.
+- **Every boot was filed under "unknown".** The boot was recorded right after
+  `connect()`, which resolves when the transport is up and before the client has
+  said who it is. It is recorded on `initialized` now, when the name is known,
+  so a fetch has something to be correlated against.
+
 ## [0.1.39] - 2026-09-20
 
 > **One thing to do after upgrading.** The text you paste into Claude Desktop's

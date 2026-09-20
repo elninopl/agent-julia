@@ -130,3 +130,46 @@ describe("doctor", () => {
     }
   });
 });
+
+describe("voice fetch reports on a client that actually connected", () => {
+  it("ignores a record left by something that never started the server", async () => {
+    // A scratch script or a one-off client leaves a fetch record behind. Reading
+    // any non-Code key out of it reported that leftover as the state of Claude
+    // Desktop — which is the one surface this check exists to speak about.
+    const { dir, targets } = sandbox();
+    const memoryDir = join(dir, "mem");
+    mkdirSync(memoryDir, { recursive: true });
+    const cfg = ConfigSchema.parse({ memoryDir, git: false, surfaces: ["cowork"] });
+    writeFileSync(
+      targets.surfaces,
+      JSON.stringify({
+        fetches: { "test-client": { at: "2026-09-20T13:17:43.567Z", coreHash: "f0078729deadbeef" } },
+        boots: { unknown: { at: "2026-09-20T14:41:56.801Z" } },
+      }),
+      "utf8",
+    );
+
+    const fetch = byName(await runDoctor(cfg, targets), "voice fetch");
+    expect(fetch.status).toBe("unknown");
+    expect(fetch.detail).toMatch(/never started|nothing can be said/i);
+    expect(fetch.detail).not.toContain("test-client");
+  });
+
+  it("reports the client that both booted and fetched", async () => {
+    const { dir, targets } = sandbox();
+    const memoryDir = join(dir, "mem");
+    mkdirSync(memoryDir, { recursive: true });
+    const cfg = ConfigSchema.parse({ memoryDir, git: false, surfaces: ["cowork"] });
+    writeFileSync(
+      targets.surfaces,
+      JSON.stringify({
+        boots: { "claude-desktop-3p": { at: "2026-09-20T14:00:00.000Z" } },
+        fetches: { "claude-desktop-3p": { at: "2026-09-20T14:02:00.000Z", coreHash: "0".repeat(40) } },
+      }),
+      "utf8",
+    );
+
+    const fetch = byName(await runDoctor(cfg, targets), "voice fetch");
+    expect(fetch.detail).toContain("claude-desktop-3p");
+  });
+});

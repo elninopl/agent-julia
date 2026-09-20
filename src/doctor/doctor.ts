@@ -418,8 +418,15 @@ export async function runDoctor(config: Config, t: DoctorTargets = defaultTarget
     // runs one long-lived process for many conversations, so there is no
     // denominator worth quoting.
     const surfaces = await readSurfaces(t.surfaces);
-    const desktopBoot = Object.entries(surfaces.boots ?? {}).find(([k]) => k !== "claude-code");
-    const desktopFetch = Object.entries(surfaces.fetches ?? {}).find(([k]) => k !== "claude-code");
+    // A client counts as Desktop only if it actually started this server.
+    // Reading any non-Code key out of `fetches` meant a leftover record — from
+    // a scratch script, or a client that connected once — was reported as the
+    // state of Claude Desktop.
+    const isDesktop = (name: string): boolean => name !== "claude-code" && name !== "unknown";
+    const desktopBoot = Object.entries(surfaces.boots ?? {}).find(([k]) => isDesktop(k));
+    const desktopFetch = desktopBoot
+      ? Object.entries(surfaces.fetches ?? {}).find(([k]) => k === desktopBoot[0])
+      : undefined;
     if (!desktopBoot) {
       checks.push({
         name: "voice fetch",

@@ -149,17 +149,26 @@ async function runStartupTasks(rt: Runtime): Promise<void> {
 
 // Which client started this server, so doctor can say whether the voice ever
 // reaches Claude Desktop — the surface that cannot be inspected any other way.
-async function recordBoot(server: McpServer): Promise<void> {
-  try {
-    const { mergeSurfaces } = await import("./wizard/register.js");
-    const client = server.server.getClientVersion()?.name ?? "unknown";
-    await mergeSurfaces((prev) => ({
-      ...prev,
-      boots: { ...prev.boots, [client]: { at: new Date().toISOString() } },
-    }));
-  } catch {
-    // bookkeeping must never take the server down
-  }
+//
+// Hooked to `oninitialized`, not to `connect`: connect resolves when the
+// transport is up, which is before the client has said who it is, so recording
+// there filed every boot under "unknown" and doctor then had nothing to
+// correlate a fetch against.
+function recordBootWhenKnown(server: McpServer): void {
+  server.server.oninitialized = () => {
+    void (async () => {
+      try {
+        const { mergeSurfaces } = await import("./wizard/register.js");
+        const client = server.server.getClientVersion()?.name ?? "unknown";
+        await mergeSurfaces((prev) => ({
+          ...prev,
+          boots: { ...prev.boots, [client]: { at: new Date().toISOString() } },
+        }));
+      } catch {
+        // bookkeeping must never take the server down
+      }
+    })();
+  };
 }
 
 // Exit when the process that spawned us does. Claude starts one server per
@@ -218,6 +227,8 @@ export async function startServer(): Promise<void> {
     },
   );
 
+  recordBootWhenKnown(server);
+
   const transport = new StdioServerTransport();
   const priorOnClose = transport.onclose;
   transport.onclose = () => {
@@ -229,7 +240,6 @@ export async function startServer(): Promise<void> {
 
   startParentWatchdog(() => shutdown("the client that started this server is gone"));
 
-  await recordBoot(server);
   await runStartupTasks(rt);
 
   let down = false;
