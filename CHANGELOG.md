@@ -7,6 +7,25 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A symlink whose target did not exist yet was replaced by a regular file.**
+  A dotfiles repo commonly symlinks `~/.claude/CLAUDE.md`; on a checkout that
+  carries the link but not the file, `realpath` refuses the link, and the write
+  fell back to the link's own path — detaching the repo on exactly the install
+  where nothing had been populated yet. The link chain is now followed by hand
+  when `realpath` will not resolve it, so the write lands where the link points.
+- **A lock could be left held by nobody.** Both locks create the lock first and
+  write the owner into it second. If that second write failed (a full disk, a
+  permission revoked mid-run), the lock stayed on disk with no holder and no
+  owner, and every later writer waited out the full staleness window before it
+  could reclaim it. A failed acquire now releases what it created.
+- **The server-instructions budget was counted in characters, not bytes.**
+  Clients cut those instructions at a byte limit, and the two counts only agree
+  for ASCII: the same 1,800 characters are about 1,950 bytes of Polish and
+  5,400 of Chinese. A non-Latin never-store list passed the check and was then
+  truncated by the client, past the rungs that decide what may be dropped.
+
 ## [0.1.40] - 2026-09-20
 
 ### Fixed

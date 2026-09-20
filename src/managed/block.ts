@@ -1,9 +1,9 @@
 import { existsSync } from "node:fs";
 import { warn } from "../util/log.js";
 import { randomUUID } from "node:crypto";
-import { copyFile, mkdir, readFile, realpath, rename, unlink, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, readlink, realpath, rename, unlink, writeFile } from "node:fs/promises";
 import { withFileLock } from "./lock.js";
-import { dirname } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 
 // A managed block is a clearly-marked region agent-julia owns inside a file it
 // does not otherwise control (e.g. ~/.claude/CLAUDE.md, a user's index.md). We
@@ -112,10 +112,7 @@ export async function removeManagedBlock(filePath: string, id: string): Promise<
 // Temp file plus rename. These files belong to the user, not to us: a truncated
 // ~/.claude/CLAUDE.md is a broken Claude install and a lost profile.
 async function writeFileAtomic(path: string, content: string): Promise<void> {
-  // Follow a symlink before renaming onto it. A dotfiles repo commonly has
-  // ~/.claude/CLAUDE.md symlinked into it; renaming onto the link replaces the
-  // link with a regular file and silently detaches the user's repo.
-  const target = await realpath(path).catch(() => path);
+  const target = await resolveLink(path);
   // pid alone is not unique: one process can be writing two blocks at once.
   const tmp = `${target}.${process.pid}.${randomUUID().slice(0, 8)}.tmp`;
   try {
@@ -125,4 +122,30 @@ async function writeFileAtomic(path: string, content: string): Promise<void> {
     await unlink(tmp).catch(() => undefined);
     throw err;
   }
+}
+
+// Follow a symlink before renaming onto it. A dotfiles repo commonly has
+// ~/.claude/CLAUDE.md symlinked into it; renaming onto the link replaces the
+// link with a regular file and silently detaches the user's repo.
+async function resolveLink(path: string): Promise<string> {
+  const resolved = await realpath(path).catch(() => null);
+  if (resolved !== null) return resolved;
+
+  // realpath refuses a link whose target does not exist yet — which is exactly
+  // a fresh dotfiles checkout: the link is there, the file it points at is not.
+  // Falling back to the link's own path there is how the link gets replaced by
+  // a regular file on the one install where it matters most. Follow the chain
+  // by hand instead, so the write lands where the link points.
+  let current = path;
+  for (let hops = 0; hops < 10; hops++) {
+    const next = await readlink(current).catch(() => null);
+    if (next === null) break;
+    current = resolve(dirname(current), next);
+  }
+  if (current === path) return path;
+
+  // Only the last component is allowed not to exist; the directories along the
+  // way may be links of their own, and the rename has to land in the real one.
+  const parent = await realpath(dirname(current)).catch(() => dirname(current));
+  return join(parent, basename(current));
 }

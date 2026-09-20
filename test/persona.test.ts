@@ -288,6 +288,24 @@ describe("what every client is told on connect", () => {
     expect(text).not.toContain("Memory: `search`");
   });
 
+  it("measures its budget in bytes, not characters", () => {
+    // Clients cut these instructions at a byte limit, and characters only equal
+    // bytes in ASCII. A privacy list written in a non-Latin script goes on
+    // fitting the character count long after it stopped fitting the byte count,
+    // and the client then truncates it mid-sentence — past every rung below
+    // that decides what may be dropped.
+    const privacyHardOff = Array.from({ length: 4 }, () =>
+      "密码、接口密钥、访问令牌和任何形式的身份凭证".repeat(5),
+    );
+    const text = serverInstructions(
+      ConfigSchema.parse({ memoryDir: "/unused", name: "茱莉亚", language: "中文", privacyHardOff }),
+    );
+    expect(Buffer.byteLength(text, "utf8")).toBeLessThanOrEqual(1800);
+    expect(text).toContain("茱莉亚");
+    expect(text).toMatch(/You never store/);
+    expect(text).toContain("get_core");
+  });
+
   it("keeps a never-store instruction even when no single entry fits", () => {
     // One oversized entry used to empty the list and leave a trailing clause
     // with no subject, so the rail disappeared entirely.

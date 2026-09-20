@@ -58,7 +58,14 @@ export function fingerprintLine(coreText: string): string {
 // layer: who the agent is, what language it replies in, what it must never
 // store, and the order to fetch the rest. Pure — config only, no disk — because
 // it runs before connect() and the startup path must stay free of I/O.
+// Measured in UTF-8 BYTES, not characters: a client's cut-off is a byte limit,
+// and the two only agree for ASCII. The same 1,800 characters are 1,800 bytes
+// of English, roughly 1,950 of Polish and 5,400 of Chinese — so a non-English
+// privacy list passed this check and was then truncated mid-sentence by the
+// client, which is exactly what the degradation rungs below exist to prevent.
 export const INSTRUCTIONS_BUDGET = 1_800;
+
+const size = (text: string): number => Buffer.byteLength(text, "utf8");
 
 export function serverInstructions(config: Config): string {
   // Bounded: name and language are interpolated into the one paragraph that is
@@ -94,12 +101,12 @@ export function serverInstructions(config: Config): string {
   // Paragraph order is the degradation order: a client that truncates loses
   // memory guidance, never the identity or the privacy rail.
   const full = [identity, voice, memory].join("\n\n");
-  if (full.length <= INSTRUCTIONS_BUDGET) return full;
+  if (size(full) <= INSTRUCTIONS_BUDGET) return full;
 
   const withoutMemory = [identity, voice].join("\n\n");
-  if (withoutMemory.length <= INSTRUCTIONS_BUDGET) {
+  if (size(withoutMemory) <= INSTRUCTIONS_BUDGET) {
     warn(
-      `server instructions are ${full.length} chars, over the ${INSTRUCTIONS_BUDGET} budget — ` +
+      `server instructions are ${size(full)} bytes, over the ${INSTRUCTIONS_BUDGET} budget — ` +
         "the memory paragraph was dropped. Shorten privacyHardOff to get it back.",
     );
     return withoutMemory;
@@ -107,8 +114,8 @@ export function serverInstructions(config: Config): string {
 
   const shortVoice = voice.split(". ").slice(0, 3).join(". ") + ".";
   const trimmed = [identity, shortVoice].join("\n\n");
-  if (trimmed.length <= INSTRUCTIONS_BUDGET) {
-    warn(`server instructions are ${full.length} chars; trimmed to ${trimmed.length}. Shorten privacyHardOff.`);
+  if (size(trimmed) <= INSTRUCTIONS_BUDGET) {
+    warn(`server instructions are ${size(full)} bytes; trimmed to ${size(trimmed)}. Shorten privacyHardOff.`);
     return trimmed;
   }
 
@@ -135,13 +142,13 @@ export function serverInstructions(config: Config): string {
     // exactly the length of the sentence that says it was respected.
     // `continue`, not `break`: one oversized entry must not hide the shorter
     // ones after it.
-    if (render([...kept, entry]).length > INSTRUCTIONS_BUDGET) continue;
+    if (size(render([...kept, entry])) > INSTRUCTIONS_BUDGET) continue;
     kept.push(entry);
   }
   const dropped = config.privacyHardOff.length - kept.length;
   const clipped = render(kept);
   warn(
-    `server instructions are ${full.length} chars, over ${INSTRUCTIONS_BUDGET}; sent ${clipped.length} ` +
+    `server instructions are ${size(full)} bytes, over ${INSTRUCTIONS_BUDGET}; sent ${size(clipped)} ` +
       `with ${dropped} privacy entry(ies) summarised. Shorten privacyHardOff.`,
   );
   return clipped;
@@ -150,7 +157,24 @@ export function serverInstructions(config: Config): string {
 // Stable id for the managed block across all surfaces.
 export const STARTUP_BLOCK_ID = "persona-core";
 
+// Bounded on both counts, because the budget is measured in bytes while a limit
+// on characters is the readable one: 120 characters of Chinese are 360 bytes,
+// enough to push the identity paragraph over on its own — and no rung below is
+// allowed to drop it. Iterating code points rather than slicing also keeps a
+// surrogate pair from being cut in half.
 function clip(value: string, max: number): string {
   const one = value.replace(/\s+/g, " ").trim();
-  return one.length <= max ? one : `${one.slice(0, max - 1)}…`;
+  const chars = Array.from(one);
+  const maxBytes = max * 2;
+  if (chars.length <= max && size(one) <= maxBytes) return one;
+
+  const kept: string[] = [];
+  let bytes = 0;
+  for (const ch of chars) {
+    // The ellipsis costs one character and three bytes; reserve both.
+    if (kept.length + 1 > max - 1 || bytes + size(ch) > maxBytes - 3) break;
+    kept.push(ch);
+    bytes += size(ch);
+  }
+  return `${kept.join("")}…`;
 }

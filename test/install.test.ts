@@ -1,4 +1,13 @@
-import { lstatSync, mkdtempSync, readFileSync, readdirSync, symlinkSync, writeFileSync, existsSync } from "node:fs";
+import {
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  symlinkSync,
+  writeFileSync,
+  existsSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -215,6 +224,24 @@ describe("the files this package writes in someone else's home", () => {
     expect(lstatSync(link).isSymbolicLink()).toBe(true);
     expect(readFileSync(real, "utf8")).toContain("the persona");
     expect(readFileSync(real, "utf8")).toContain("from the dotfiles repo");
+  });
+
+  it("writes through a symlink whose target does not exist yet", async () => {
+    // A dotfiles checkout that carries the link but not the file yet. realpath
+    // refuses a link like that, and falling back to the link's own path
+    // replaced the link with a regular file on exactly the install where the
+    // repo has not been populated.
+    const dir = mkdtempSync(join(tmpdir(), "aj-link2-"));
+    const real = join(dir, "dotfiles", "CLAUDE.md");
+    const link = join(dir, "CLAUDE.md");
+    mkdirSync(join(dir, "dotfiles"));
+    symlinkSync(real, link);
+
+    await upsertManagedBlock(link, "persona-core", "the persona");
+
+    expect(lstatSync(link).isSymbolicLink()).toBe(true);
+    expect(readFileSync(real, "utf8")).toContain("the persona");
+    expect(readdirSync(dir).filter((f) => f.includes(".tmp") || f.includes("lock"))).toEqual([]);
   });
 
   it("lets two concurrent writers both land", async () => {

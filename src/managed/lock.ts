@@ -47,10 +47,19 @@ export async function withFileLock<T>(
   for (;;) {
     try {
       const handle = await open(lock, "wx");
+      let named = false;
       try {
         await handle.writeFile(token, "utf8");
+        named = true;
       } finally {
-        await handle.close();
+        await handle.close().catch(() => undefined);
+        // The open above already created the lockfile. A write that fails
+        // there — a full disk, a permission revoked mid-run — would otherwise
+        // leave a lock behind that nobody holds and nobody releases: every
+        // later writer then waits out the full staleness window before it can
+        // reclaim it. Windows refuses to unlink an open file, so this runs
+        // after the close, not instead of it.
+        if (!named) await rm(lock, { force: true }).catch(() => undefined);
       }
       break;
     } catch (err) {

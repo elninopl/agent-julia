@@ -46,10 +46,10 @@ export async function withStoreLock<T>(
   const deadline = Date.now() + WAIT_MS;
 
   for (;;) {
+    let mine = false;
     try {
       await mkdir(lockDir);
-      await writeFile(tokenFile, token, "utf8");
-      break;
+      mine = true;
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
       const owner = await readOwner(tokenFile);
@@ -69,6 +69,18 @@ export async function withStoreLock<T>(
       }
       await delay(POLL_MS);
     }
+    if (!mine) continue;
+
+    try {
+      await writeFile(tokenFile, token, "utf8");
+    } catch (err) {
+      // A lock directory with no owner file inside it is worse than no lock at
+      // all: it blocks every other process until the staleness window expires
+      // and carries nothing to say who left it there. Fail having released it.
+      await rm(lockDir, { recursive: true, force: true }).catch(() => undefined);
+      throw err;
+    }
+    break;
   }
 
   activeHere++;
