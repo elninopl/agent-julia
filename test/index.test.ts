@@ -110,3 +110,77 @@ describe("index signature change", () => {
     second.close();
   });
 })
+
+describe("recall: a question asked in a sentence", () => {
+  it("finds the page even though the question's filler words are not on it", async () => {
+    // The product's headline example is "What did we decide about auth?".
+    // Every term was ANDed, so every such question returned nothing at all.
+    const { paths, indexer } = setup();
+    try {
+      await writePage(paths, "auth", "We moved authentication to short-lived tokens.", {});
+      await writePage(paths, "billing", "Billing runs on Stripe.", {});
+      await indexer.sync();
+
+      const hits = await indexer.search("what did we decide about authentication?", 5);
+      expect(hits.map((h) => h.id)).toContain("auth");
+    } finally {
+      indexer.close();
+    }
+  });
+
+  it("ranks a title match above a passing mention in a body", async () => {
+    const { paths, indexer } = setup();
+    try {
+      await writePage(paths, "pricing", "---\ntitle: Pricing\n---\n\nThe plan table lives here.", {});
+      await writePage(paths, "notes", "A long note that mentions pricing once, in passing, among other things.", {});
+      await indexer.sync();
+      expect((await indexer.search("pricing", 5))[0]!.id).toBe("pricing");
+    } finally {
+      indexer.close();
+    }
+  });
+
+  it("says when a hit came from a loosened query", async () => {
+    const { paths, indexer } = setup();
+    try {
+      await writePage(paths, "deploys", "Deploys go out through Elastic Beanstalk.", {});
+      await indexer.sync();
+      const strict = await indexer.search("deploys beanstalk", 5);
+      expect(strict[0]!.via).toBe("fts");
+      const loose = await indexer.search("deploys and something entirely unrelated", 5);
+      expect(loose.length).toBeGreaterThan(0);
+      expect(loose[0]!.via).toBe("fts-loose");
+    } finally {
+      indexer.close();
+    }
+  });
+
+  it("does not hand back the whole store for one common word", async () => {
+    const { paths, indexer } = setup();
+    try {
+      for (const id of ["one", "two", "three", "four"]) {
+        await writePage(paths, id, "the system runs nightly", {});
+      }
+      await writePage(paths, "target", "the system runs nightly and rotates credentials", {});
+      await indexer.sync();
+      // "credentials" is the distinctive word; the filler must not drag in the rest.
+      const hits = await indexer.search("the system credentials", 10);
+      expect(hits[0]!.id).toBe("target");
+    } finally {
+      indexer.close();
+    }
+  });
+
+  it("survives a query full of FTS syntax", async () => {
+    const { paths, indexer } = setup();
+    try {
+      await writePage(paths, "page", "ordinary content", {});
+      await indexer.sync();
+      for (const q of ['"unbalanced', "NEAR(", "a* OR", "^:-)", "()"]) {
+        await expect(indexer.search(q, 5)).resolves.toBeInstanceOf(Array);
+      }
+    } finally {
+      indexer.close();
+    }
+  });
+});

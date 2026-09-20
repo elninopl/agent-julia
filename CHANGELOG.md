@@ -59,6 +59,18 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ### Fixed
 
+- **A question asked in a sentence finds something.** Every term was quoted and
+  ANDed, with no stopwords, no fallback and no title weighting — so the
+  product's own headline example ("What did we decide about auth?") returned
+  nothing, and the longer the question the more certain the zero. Keyword search
+  is now a ladder: all terms, then content words only, then any two words, then
+  each word alone, longest first. Each hit reports which rung produced it
+  (`via: "fts"` or `"fts-loose"`), so a loose answer is visibly loose. bm25
+  weights the title ten times the body, because a hit in the title is what a
+  page is about and a hit in the body may be a passing mention — asking for
+  "ofeo cennik" used to put four other pages above the page called "cennik".
+  Measured on a 191-page store with embeddings off: 7 of 7 sentence-shaped
+  questions now return results, against 3 of 7 before.
 - **The whole write path is serialized, not just its git step.** The mutex
   guarded `commitAll`; `writePage`, the catalog refresh, the journal append and
   the index update all ran unlocked, so two Claude surfaces writing at the same
