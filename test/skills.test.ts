@@ -14,7 +14,7 @@ describe("shipped skills", () => {
     for (const skill of SHIPPED_SKILLS) {
       const here = dirname(fileURLToPath(import.meta.url));
       const manifest = readFileSync(join(here, "..", "src", "skills", "assets", skill, "SKILL.md"), "utf8");
-      expect(manifest).toMatch(/^---\nname: /);
+      expect(manifest).toMatch(/^---\r?\nname: /);
       expect(manifest).toContain(`name: ${skill}`);
       expect(manifest).toContain("author: agent-julia");
     }

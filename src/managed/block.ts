@@ -96,13 +96,17 @@ async function upsertLocked(
 }
 
 // Remove our managed block, leaving the rest of the file intact. Idempotent.
+// Locked and atomic for the same reason the upsert is: this reads a file the
+// user wrote, edits one region of it, and writes the whole thing back.
 export async function removeManagedBlock(filePath: string, id: string): Promise<boolean> {
   if (!existsSync(filePath)) return false;
-  const current = await readFile(filePath, "utf8");
-  if (!hasManagedBlock(current, id)) return false;
-  const cleaned = current.replace(blockRegion(id), "").replace(/\n{3,}/g, "\n\n").trimEnd() + "\n";
-  await writeFile(filePath, cleaned, "utf8");
-  return true;
+  return withFileLock(filePath, async () => {
+    const current = await readFile(filePath, "utf8");
+    if (!hasManagedBlock(current, id)) return false;
+    const cleaned = current.replace(blockRegion(id), "").replace(/\n{3,}/g, "\n\n").trimEnd() + "\n";
+    await writeFileAtomic(filePath, cleaned);
+    return true;
+  });
 }
 
 // Temp file plus rename. These files belong to the user, not to us: a truncated

@@ -15,7 +15,11 @@ async function loadCoreVoice(): Promise<string> {
   // rules are injected: drop the credits below the "---", the H1 title (composeCore
   // adds its own header), and any HTML comments — attribution stays out of the
   // hot path.
-  const raw = await readFile(join(here, "assets", "core-voice.md"), "utf8");
+  // Normalize line endings first. git checks these assets out with CRLF on
+  // Windows, and the splits below are anchored on \n — so the credits section
+  // below the rule was never stripped there and rode in the persona of every
+  // Windows user.
+  const raw = (await readFile(join(here, "assets", "core-voice.md"), "utf8")).replace(/\r\n/g, "\n");
   return raw
     .split(/\n-{3,}\n/)[0]!
     .replace(/^#[^\n]*\n/, "")

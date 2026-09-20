@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { clampToBudget, estimateTokens } from "../src/util/tokens.js";
 import { pageFilePath, pageId } from "../src/store/paths.js";
@@ -20,7 +21,7 @@ describe("page id resolution", () => {
   it("normalizes ids regardless of prefix/extension", () => {
     expect(pageId("pages/elnino.md")).toBe("elnino");
     expect(pageId("archive/old")).toBe("old");
-    expect(pageFilePath("/root", "elnino")).toBe("/root/pages/elnino.md");
+    expect(pageFilePath("/root", "elnino")).toBe(join("/root", "pages", "elnino.md"));
   });
 });
 
@@ -74,7 +75,7 @@ describe("page id is a security boundary", () => {
     expect(pageId("..\\..\\windows")).toBe("windows");
     expect(pageId("/absolute/path")).toBe("absolute-path");
     expect(pageId("nested/sub/dir")).toBe("nested-sub-dir");
-    expect(pageFilePath("/store", "../../escape")).toBe("/store/pages/escape.md");
+    expect(pageFilePath("/store", "../../escape")).toBe(join("/store", "pages", "escape.md"));
     expect(pageId("")).toBe("untitled");
     expect(pageId("..")).toBe("untitled");
   });

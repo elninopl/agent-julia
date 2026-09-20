@@ -151,10 +151,12 @@ async function runStartupTasks(rt: Runtime): Promise<void> {
 // reaches Claude Desktop — the surface that cannot be inspected any other way.
 async function recordBoot(server: McpServer): Promise<void> {
   try {
-    const { readSurfaces, writeSurfaces } = await import("./wizard/register.js");
+    const { mergeSurfaces } = await import("./wizard/register.js");
     const client = server.server.getClientVersion()?.name ?? "unknown";
-    const state = await readSurfaces();
-    await writeSurfaces({ ...state, boots: { ...state.boots, [client]: { at: new Date().toISOString() } } });
+    await mergeSurfaces((prev) => ({
+      ...prev,
+      boots: { ...prev.boots, [client]: { at: new Date().toISOString() } },
+    }));
   } catch {
     // bookkeeping must never take the server down
   }

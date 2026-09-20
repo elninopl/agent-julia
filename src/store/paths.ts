@@ -56,7 +56,9 @@ export function pageFilePath(root: string, page: string): string {
 // was the same file, and each new one destroyed the last. The same rule turned
 // "Kraków" into "krak-w" and "ofeô" into "ofe".
 export function pageId(page: string): string {
-  let id = page.trim().normalize("NFKC");
+  // Backslashes too: on Windows a caller naturally passes "pages\\elnino.md",
+  // and the prefix strip below is written for one separator.
+  let id = page.trim().normalize("NFKC").replace(/\\/g, "/");
   if (id.startsWith("pages/")) id = id.slice("pages/".length);
   if (id.startsWith("archive/")) id = id.slice("archive/".length);
   if (id.endsWith(".md")) id = id.slice(0, -3);

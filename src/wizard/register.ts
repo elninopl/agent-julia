@@ -160,8 +160,7 @@ export async function readPasteMarker(path = coworkPasteMarkerPath()): Promise<P
 }
 
 export async function writePasteMarker(marker: PasteMarker, path = coworkPasteMarkerPath()): Promise<void> {
-  const prior = await readPasteMarker(path);
-  await writeJsonSafely(path, { ...prior, ...marker });
+  await updateJsonSafely(path, (prev) => ({ ...prev, ...marker }));
 }
 
 export interface SurfacesState {
@@ -179,14 +178,27 @@ export async function readSurfaces(path = surfacesStatePath()): Promise<Surfaces
 }
 
 export async function writeSurfaces(next: SurfacesState, path = surfacesStatePath()): Promise<void> {
-  await writeJsonSafely(path, next);
+  await updateJsonSafely(path, (prev) => ({ ...prev, ...next }));
+}
+
+// Merge one client's record without clobbering another's. recordBoot and
+// recordFetch both rewrite the whole object, and a Desktop server and a Code
+// server do it at the same moment.
+export async function mergeSurfaces(
+  patch: (prev: SurfacesState) => SurfacesState,
+  path = surfacesStatePath(),
+): Promise<void> {
+  await updateJsonSafely(path, (prev) => patch(prev as SurfacesState));
 }
 
 // Read-modify-write from every boot and every get_core, across a long-lived
 // Desktop server and every fresh Code server. Locked and renamed into place, or
 // two of them lose each other's records — and a half-written file would then
 // read back as "never fetched", which is a lie doctor would repeat.
-async function writeJsonSafely(path: string, value: unknown): Promise<void> {
+async function updateJsonSafely(
+  path: string,
+  merge: (prev: Record<string, unknown>) => unknown,
+): Promise<void> {
   // The same rail saveConfig has. A scratch script or a test that forgets to
   // point these somewhere temporary would otherwise rewrite a real person's
   // paste marker, and doctor would then report on a machine that is not theirs.
@@ -194,16 +206,31 @@ async function writeJsonSafely(path: string, value: unknown): Promise<void> {
     throw new Error(`refusing to write ${path} from a test run — pass an explicit temp path`);
   }
   await mkdir(dirname(path), { recursive: true });
-  await withFileLock(path, async () => {
-    const tmp = `${path}.${process.pid}.${randomUUID().slice(0, 8)}.tmp`;
-    try {
-      await writeFile(tmp, JSON.stringify(value, null, 2) + "\n", "utf8");
-      await rename(tmp, path);
-    } catch (err) {
-      await rm(tmp, { force: true }).catch(() => undefined);
-      throw err;
-    }
-  });
+  // "run": a lost boot record is cheaper than a skipped write, and nothing here
+  // is text the user typed.
+  await withFileLock(
+    path,
+    async () => {
+      // Read INSIDE the lock: every caller used to read first and write after,
+      // so two of them still overwrote each other's records.
+      let prev: Record<string, unknown> = {};
+      try {
+        prev = JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
+      } catch {
+        // absent or unreadable — start from nothing rather than fail a boot
+      }
+      const value = merge(prev);
+      const tmp = `${path}.${process.pid}.${randomUUID().slice(0, 8)}.tmp`;
+      try {
+        await writeFile(tmp, JSON.stringify(value, null, 2) + "\n", "utf8");
+        await rename(tmp, path);
+      } catch (err) {
+        await rm(tmp, { force: true }).catch(() => undefined);
+        throw err;
+      }
+    },
+    "run",
+  );
 }
 
 export function coreHash(core: string): string {
@@ -430,6 +457,10 @@ function mcpSnippet(entry: ServerEntry = serverEntry()): string {
 // Produce a manual setup guide instead of writing the files, for users who prefer
 // to change their own Claude config. Lists exactly what to add and where.
 export async function buildInstructions(config: Config): Promise<string> {
+  // The manual path is the documented alternative to the wizard, so it must hand
+  // Desktop the same short block install() does — not the full core, which goes
+  // stale the moment a correction is recorded.
+  const pasteForDesktop = await pasteBody(config);
   const core = await buildInjectedCore(storePaths(config.memoryDir), config);
   const out: string[] = [];
   const wantCode = config.surfaces.includes("code");
@@ -448,11 +479,14 @@ export async function buildInstructions(config: Config): Promise<string> {
   if (wantDesktop) {
     const desktop = desktopConfigPath();
     out.push(
-      "Claude Desktop (Cowork)",
+      "Claude Desktop",
       `  1. In ${desktop ?? "<Claude Desktop config>"}, merge this into the top-level object:`,
       mcpSnippet().replace(/^/gm, "     "),
-      "  2. Paste this block into Settings → Cowork → Global instructions:",
-      core.replace(/^/gm, "     "),
+      "  2. Paste this block into Settings → Instructions for Claude:",
+      `${startMarker(STARTUP_BLOCK_ID)}\n${pasteForDesktop}\n${endMarker(STARTUP_BLOCK_ID)}`.replace(/^/gm, "     "),
+      "     It is short on purpose: your voice and corrections are fetched at runtime, so it",
+      "     does not go stale. If you also use Claude on the web or your phone, where this",
+      "     connector does not reach, run `agent-julia paste --with-voice` for the long form.",
       "",
     );
   }

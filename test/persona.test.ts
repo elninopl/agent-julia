@@ -274,7 +274,7 @@ describe("what every client is told on connect", () => {
     expect(text).toContain("X".repeat(40));
     expect(text).toContain("You never store");
     expect(text).toContain(privacyHardOff[0]!);
-    expect(text).toMatch(/and \d+ more category/);
+    expect(text).toMatch(/more categories on this user's never-store list/);
     expect(text).toContain("get_core");
   });
 
@@ -286,6 +286,28 @@ describe("what every client is told on connect", () => {
     expect(text.length).toBeLessThanOrEqual(1800);
     for (const p of privacyHardOff) expect(text).toContain(p);
     expect(text).not.toContain("Memory: `search`");
+  });
+
+  it("keeps a never-store instruction even when no single entry fits", () => {
+    // One oversized entry used to empty the list and leave a trailing clause
+    // with no subject, so the rail disappeared entirely.
+    const text = serverInstructions(
+      ConfigSchema.parse({ memoryDir: "/unused", privacyHardOff: ["x".repeat(3000)] }),
+    );
+    expect(text.length).toBeLessThanOrEqual(1800);
+    expect(text).toMatch(/You never store/);
+    expect(text).toContain("do not keep it");
+  });
+
+  it("keeps the shorter entries that follow an oversized one", () => {
+    const text = serverInstructions(
+      ConfigSchema.parse({
+        memoryDir: "/unused",
+        privacyHardOff: ["x".repeat(3000), "passwords and API keys", "card numbers"],
+      }),
+    );
+    expect(text).toContain("passwords and API keys");
+    expect(text).toContain("card numbers");
   });
 
   it("says nothing about storing when there is nothing on the list", () => {

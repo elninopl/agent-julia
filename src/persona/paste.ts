@@ -21,7 +21,8 @@ export const PASTE_LAYOUT = 2;
 // core-voice.md, because a paste that changes with every npm release is the
 // treadmill this exists to end.
 export async function pasteBody(config: Config): Promise<string> {
-  const template = await readFile(join(here, "assets", "paste-v2.md"), "utf8");
+  // Same reason as core-voice: a CRLF checkout must not change what is pasted.
+  const template = (await readFile(join(here, "assets", "paste-v2.md"), "utf8")).replace(/\r\n/g, "\n");
   return template
     .replaceAll("{{name}}", config.name)
     .replaceAll("{{pronouns}}", config.pronouns)
@@ -35,8 +36,15 @@ export async function pasteBody(config: Config): Promise<string> {
 // instruction has nothing to fetch from. It does go stale; that is the trade.
 export async function pasteWithVoice(paths: StorePaths, config: Config): Promise<string> {
   const core = await composeCore(paths, config);
-  return `${core.text}\n\n${memoryInstruction()}`;
+  // The same sentinel the short template carries, so the probe and doctor can
+  // tell a deliberate long paste from the pre-0.1.39 block it looks exactly
+  // like. Without it, choosing --with-voice got you told to throw your voice
+  // away on every doctor run.
+  return `${WITH_VOICE_HEADER}\n${core.text}\n\n${memoryInstruction()}`;
 }
+
+export const WITH_VOICE_HEADER =
+  "<!-- agent-julia paste, layout 2 (with voice). Replace this whole block when agent-julia asks. -->";
 
 export function pasteHash(body: string): string {
   return createHash("sha1").update(body.trim()).digest("hex");
