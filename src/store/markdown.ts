@@ -68,13 +68,26 @@ export async function relatedPages(
 
 // Retire a page: move it out of the active KB into archive/ (kept, versioned,
 // out of the index and catalog). The digest's "archive this" action.
-export async function archivePage(paths: StorePaths, page: string): Promise<boolean> {
+export async function archivePage(paths: StorePaths, page: string): Promise<string | null> {
   const id = pageId(page);
   const from = pageFilePath(paths.root, id);
-  if (!existsSync(from)) return false;
+  if (!existsSync(from)) return null;
   await mkdir(paths.archiveDir, { recursive: true });
-  await rename(from, join(paths.archiveDir, `${id}.md`));
-  return true;
+
+  // Never land on an existing name. Archiving twice under the same id used to
+  // overwrite the first copy in place: retiring a page destroyed the retired
+  // page it replaced, in the one directory whose whole purpose is keeping things.
+  let target = join(paths.archiveDir, `${id}.md`);
+  if (existsSync(target)) {
+    const page = await readPage(paths, id);
+    const stamp = page?.frontmatter.updated ?? todayISO();
+    target = join(paths.archiveDir, `${id}-${stamp}.md`);
+    for (let n = 2; existsSync(target); n++) {
+      target = join(paths.archiveDir, `${id}-${stamp}-${n}.md`);
+    }
+  }
+  await rename(from, target);
+  return target;
 }
 
 export async function listPageIds(paths: StorePaths): Promise<string[]> {
@@ -155,13 +168,18 @@ export async function readPageRaw(paths: StorePaths, page: string): Promise<stri
 // "Kraków.md") was listed by the catalog and counted by doctor, and could not
 // be opened by anything: two different answers to "what is this page called".
 export async function resolvePagePath(paths: StorePaths, page: string): Promise<string | null> {
-  const canonical = pageFilePath(paths.root, page);
-  if (existsSync(canonical)) return canonical;
-  if (!existsSync(paths.pagesDir)) return null;
+  // An explicit "archive/..." address looks in archive/. Without this, pageId
+  // strips the prefix and the lookup lands back in pages/, so a page that had
+  // just been archived was unreachable by any name at all.
+  const wantsArchive = page.trim().startsWith("archive/");
+  const dir = wantsArchive ? paths.archiveDir : paths.pagesDir;
   const id = pageId(page);
-  for (const file of await readdir(paths.pagesDir)) {
+  const canonical = join(dir, `${id}.md`);
+  if (existsSync(canonical)) return canonical;
+  if (!existsSync(dir)) return null;
+  for (const file of await readdir(dir)) {
     if (!file.endsWith(".md")) continue;
-    if (pageId(file) === id) return join(paths.pagesDir, file);
+    if (pageId(file) === id) return join(dir, file);
   }
   return null;
 }

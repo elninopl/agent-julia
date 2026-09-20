@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -6,7 +6,7 @@ import { Indexer } from "../src/index/indexer.js";
 import { EmbeddingProvider } from "../src/index/embeddings.js";
 import { buildProposals } from "../src/maintenance/proposals.js";
 import { runMaintenance } from "../src/maintenance/maintenance.js";
-import { archivePage, writePage } from "../src/store/markdown.js";
+import { archivePage, readPage, writePage } from "../src/store/markdown.js";
 import { storePaths } from "../src/store/paths.js";
 import { ConfigSchema } from "../src/config/schema.js";
 
@@ -83,9 +83,32 @@ describe("archivePage", () => {
   it("moves the page out of pages/ into archive/", async () => {
     const { paths } = fresh();
     await writePage(paths, "retired", "old stuff", {});
-    expect(await archivePage(paths, "retired")).toBe(true);
+    expect(await archivePage(paths, "retired")).toBeTruthy();
     expect(existsSync(join(paths.pagesDir, "retired.md"))).toBe(false);
     expect(existsSync(join(paths.archiveDir, "retired.md"))).toBe(true);
-    expect(await archivePage(paths, "retired")).toBe(false);
+    expect(await archivePage(paths, "retired")).toBeNull();
+  });
+});
+
+describe("archive keeps what it was given", () => {
+  it("does not overwrite an earlier page archived under the same id, and reads back", async () => {
+    // The one directory whose whole purpose is keeping things used to overwrite
+    // in place: archiving a second "notes" destroyed the first one.
+    const dir = mkdtempSync(join(tmpdir(), "aj-arch-"));
+    const paths = storePaths(dir);
+
+    await writePage(paths, "notes", "---\nupdated: '2026-01-01'\n---\n\nfirst version", {});
+    const a = await archivePage(paths, "notes");
+    await writePage(paths, "notes", "second version", {});
+    const b = await archivePage(paths, "notes");
+
+    expect(a).not.toBe(b);
+    expect(readFileSync(a!, "utf8")).toContain("first version");
+    expect(readFileSync(b!, "utf8")).toContain("second version");
+
+    // An archived page is addressable again.
+    const back = await readPage(paths, "archive/notes");
+    expect(back).not.toBeNull();
+    expect(back!.body).toContain("version");
   });
 });
