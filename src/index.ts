@@ -5,6 +5,7 @@ import { buildInstructions, install, uninstall } from "./wizard/register.js";
 import { loadConfig, saveConfig } from "./config/config.js";
 import { migrate } from "./migrations/runner.js";
 import { ensureGitRepo, getRemoteUrl, pushToRemote, setRemoteUrl, verifyRemote } from "./store/git.js";
+import { dirname } from "node:path";
 import { logError } from "./util/log.js";
 
 const HELP = `agent-julia — one brain for your AI
@@ -18,11 +19,14 @@ Usage:
   agent-julia push       Push the memory store to its remote now
   agent-julia pull       Pull the memory store from its remote now (two-machine sync)
   agent-julia maintenance  Run store maintenance now (reindex, flag stale/orphans, refresh catalog, commit)
-  agent-julia doctor     Check the whole installation: registration, persona blocks, Cowork drift, skills, store
+  agent-julia doctor [--fix]  Check the installation (add --fix to repair what can be repaired safely)
   agent-julia search <query>   Search your memory from the terminal
   agent-julia read <page>      Print one memory page
   agent-julia export [target]  Export the persona to another tool's instruction file (codex, gemini, or a path); no target prints it
   agent-julia undo [sha] List the last memory commits, or undo one by id
+  agent-julia reindex    Rebuild the search index from your markdown (it is disposable)
+  agent-julia unarchive <page>  Bring a retired page back into the active store
+  agent-julia relocate <path>   Move the memory store somewhere else and point the config at it
   agent-julia migrate    Run pending data migrations and exit
   agent-julia --help     Show this help
 `;
@@ -249,11 +253,110 @@ async function main(): Promise<void> {
       }
       break;
     }
+    case "reindex": {
+      const cfg = await loadConfig();
+      const { storePaths } = await import("./store/paths.js");
+      const { Indexer } = await import("./index/indexer.js");
+      const idx = Indexer.open(storePaths(cfg.memoryDir), cfg);
+      try {
+        const n = await idx.rebuild();
+        console.log(`Rebuilt the index from ${n} page(s) of markdown.`);
+      } finally {
+        idx.close();
+      }
+      break;
+    }
+    case "unarchive": {
+      const page = process.argv[3];
+      const cfg = await loadConfig();
+      const { storePaths } = await import("./store/paths.js");
+      const { listArchivedIds, unarchivePage } = await import("./store/markdown.js");
+      const paths = storePaths(cfg.memoryDir);
+      if (!page) {
+        const ids = await listArchivedIds(paths);
+        console.log(ids.length ? `Archived pages:\n  ${ids.join("\n  ")}` : "Nothing is archived.");
+        console.log("\nBring one back with:  agent-julia unarchive <page>");
+        break;
+      }
+      const restored = await unarchivePage(paths, page);
+      if (!restored) {
+        console.log(`No archived page called ${page}.`);
+        process.exitCode = 1;
+        break;
+      }
+      const { Indexer } = await import("./index/indexer.js");
+      const { refreshIndexMd } = await import("./store/catalog.js");
+      const idx = Indexer.open(paths, cfg);
+      try {
+        await idx.sync();
+        await refreshIndexMd(paths);
+      } finally {
+        idx.close();
+      }
+      if (cfg.git) {
+        const { commitAll } = await import("./store/git.js");
+        await commitAll(cfg.memoryDir, `Unarchive memory page: ${page}`);
+      }
+      console.log(`Restored ${page} to ${restored}.`);
+      break;
+    }
+    case "relocate": {
+      const target = process.argv[3];
+      const cfg = await loadConfig();
+      if (!target) {
+        console.log(`Memory store: ${cfg.memoryDir}\nMove it with:  agent-julia relocate <path>`);
+        break;
+      }
+      const { expandPath } = await import("./util/paths.js");
+      const { resolve } = await import("node:path");
+      const { existsSync } = await import("node:fs");
+      const { rename, mkdir } = await import("node:fs/promises");
+      const to = resolve(expandPath(target));
+      if (existsSync(to)) {
+        console.log(`${to} already exists. Point the config at it by hand if that is the store you want.`);
+        process.exitCode = 1;
+        break;
+      }
+      if (existsSync(cfg.memoryDir)) {
+        await mkdir(dirname(to), { recursive: true });
+        await rename(cfg.memoryDir, to);
+        console.log(`Moved ${cfg.memoryDir} -> ${to}`);
+      } else {
+        console.log(`${cfg.memoryDir} does not exist; pointing the config at ${to} without moving anything.`);
+      }
+      await saveConfig({ ...cfg, memoryDir: to });
+      console.log("Config updated (previous versions kept as .1.bak). Restart your Claude apps.");
+      break;
+    }
     case "doctor": {
       const cfg = await loadConfig();
       const { runDoctor, formatChecks } = await import("./doctor/doctor.js");
-      const checks = await runDoctor(cfg);
+      let checks = await runDoctor(cfg);
       console.log(formatChecks(checks));
+      if (process.argv.includes("--fix")) {
+        console.log("\nApplying the repairs that are safe to make automatically:");
+        const { storePaths } = await import("./store/paths.js");
+        const { Indexer } = await import("./index/indexer.js");
+        const paths = storePaths(cfg.memoryDir);
+        if (checks.some((c) => c.name === "index" && c.status !== "ok")) {
+          const { rmSync } = await import("node:fs");
+          rmSync(paths.dbPath, { force: true });
+          const idx = Indexer.open(paths, cfg);
+          try {
+            console.log(`  index: rebuilt from ${await idx.rebuild()} page(s)`);
+          } finally {
+            idx.close();
+          }
+        }
+        const { refreshInjectedCore } = await import("./wizard/register.js");
+        console.log(`  persona: refreshed ${await refreshInjectedCore(cfg)} block(s)`);
+        const { installSkills, skillsTargetDir } = await import("./skills/install.js");
+        const steps = await installSkills(skillsTargetDir());
+        console.log(`  skills: ${steps.filter((s) => s.status === "done").length}/${steps.length} refreshed`);
+        checks = await runDoctor(cfg);
+        console.log("\nAfter:");
+        console.log(formatChecks(checks));
+      }
       if (checks.some((c) => c.status === "fail")) process.exit(1);
       break;
     }

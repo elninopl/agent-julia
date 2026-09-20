@@ -1,14 +1,15 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { Indexer } from "../src/index/indexer.js";
 import { storePaths } from "../src/store/paths.js";
 import { ingest } from "../src/store/ingest.js";
-import { listPageIds, listPages, readPage, writePage } from "../src/store/markdown.js";
-import { listStoreCommits, pushToRemote, revertCommit, setRemoteUrl } from "../src/store/git.js";
+import { archivePage, listArchivedIds, listPageIds, listPages, readPage, unarchivePage, writePage } from "../src/store/markdown.js";
+import { listStoreCommits, pageHistory, pushToRemote, revertCommit, setRemoteUrl } from "../src/store/git.js";
 import { migrate } from "../src/migrations/runner.js";
+import { appendCorrection, readCorrections, retractCorrection } from "../src/persona/corrections.js";
 import { ConfigSchema } from "../src/config/schema.js";
 
 describe("git gating on ingest", () => {
@@ -437,5 +438,74 @@ describe("a page with broken front matter is still a page", () => {
     await expect(writePage(storePaths(dir), "evil", '---js\n{ title: "x" }\n---\n\nbody\n', {})).rejects.toThrow(
       /not supported|use YAML/i,
     );
+  });
+});
+
+describe("recovery: the counterparts that were missing", () => {
+  it("brings an archived page back", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "aj-unarch-"));
+    const paths = storePaths(dir);
+    await writePage(paths, "retired", "still useful after all", {});
+    await archivePage(paths, "retired");
+    expect(await readPage(paths, "retired")).toBeNull();
+
+    const back = await unarchivePage(paths, "retired");
+    expect(back).toBeTruthy();
+    expect((await readPage(paths, "retired"))!.body).toContain("still useful");
+    expect(await listArchivedIds(paths)).not.toContain("retired");
+  });
+
+  it("reads a page's history out of the commits it has been writing all along", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "aj-hist-"));
+    const paths = storePaths(dir);
+    const cfg = ConfigSchema.parse({ memoryDir: dir, search: "fts" });
+    await migrate(cfg);
+    const indexer = Indexer.open(paths, cfg);
+    try {
+      await ingest(paths, indexer, "topic", "We chose Postgres.", { git: true });
+      await ingest(paths, indexer, "topic", "We moved to SQLite.", { git: true, confirm: true });
+
+      const changes = await pageHistory(dir, "pages/topic.md", 5);
+      expect(changes.length).toBeGreaterThanOrEqual(2);
+      expect(changes[0]!.added.join(" ")).toContain("SQLite");
+      expect(changes[0]!.removed.join(" ")).toContain("Postgres");
+    } finally {
+      indexer.close();
+    }
+  });
+});
+
+describe("voice corrections can be withdrawn", () => {
+  it("comments the rule out, keeps the record, and stops applying it", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "aj-retract-"));
+    const paths = storePaths(dir);
+    await appendCorrection(paths, "Don't open every reply with my name.");
+    await appendCorrection(paths, "Reply in Polish.");
+    expect((await readCorrections(paths)).length).toBe(2);
+
+    const res = await retractCorrection(paths, "open every reply");
+    expect(res.status).toBe("ok");
+    const left = await readCorrections(paths);
+    expect(left.length).toBe(1);
+    expect(left[0]).toContain("Polish");
+    expect(readFileSync(paths.voiceCorrections, "utf8")).toContain("retracted");
+  });
+
+  it("refuses to guess between two matches", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "aj-retract2-"));
+    const paths = storePaths(dir);
+    await appendCorrection(paths, "Never use the word moat.");
+    await appendCorrection(paths, "Never use the word leak.");
+    const res = await retractCorrection(paths, "never use the word");
+    expect(res.status).toBe("ambiguous");
+    expect((await readCorrections(paths)).length).toBe(2);
+  });
+
+  it("bounds a correction so one cannot crowd out the rest", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "aj-bound-"));
+    const paths = storePaths(dir);
+    await appendCorrection(paths, "x".repeat(5000));
+    const stored = (await readCorrections(paths))[0]!;
+    expect(stored.length).toBeLessThan(700);
   });
 });
