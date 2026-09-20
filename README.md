@@ -172,6 +172,22 @@ Pages carry light frontmatter — title, status, last-updated date, and an auto-
 
 Point the wizard at an existing markdown knowledge base and Agent Julia adopts it: your pages are indexed and a hand-written `index.md` is left alone — Agent Julia only manages a clearly marked block inside it.
 
+### Claude Code's own memory
+
+Claude Code keeps a memory of its own: one directory per working directory under `~/.claude/projects/<project>/memory`, an index it puts into the prompt of every session started there, and one file per fact. It does the same job as this store and reaches exactly one directory — a fact saved there is invisible to Claude Desktop, to Cowork, and to the same repo opened from another machine.
+
+Agent Julia settles it. `codeMemory` in the config takes three values:
+
+| | What it does |
+| --- | --- |
+| `pointer` (default) | Owns a marked block in that index telling the client to search and save here instead. Nothing is read, nothing is moved. |
+| `absorb` | Additionally moves what was written there anyway onto a page in your store, and leaves behind a pointer to it — keeping the description the client recalls on, so the fact still surfaces, now pointing at the current version. |
+| `off` | Leaves those directories completely alone. |
+
+Directories are never created: only the ones Claude Code made for itself are touched, the block goes in next to whatever you wrote there, and every file replaced by a pointer is backed up first. `agent-julia uninstall` removes the blocks and restores the files.
+
+A directory holding more than 25 facts of its own is left alone even under `absorb`, and reported instead: that much is a knowledge base someone chose to keep next to the repo, not a handful of strays, and folding it in unasked would bury a decision you made. `agent-julia sync --absorb-all` brings it in when you mean to.
+
 ### How the persona reaches each surface
 
 Two halves, delivered differently, because one of them can be written for you and the other cannot.

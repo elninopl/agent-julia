@@ -7,13 +7,16 @@ import { migrate } from "./migrations/runner.js";
 import { ensureGitRepo, getRemoteUrl, pushToRemote, setRemoteUrl, verifyRemote } from "./store/git.js";
 import { dirname } from "node:path";
 import { logError } from "./util/log.js";
+import type { Config } from "./config/schema.js";
+import type { AdoptionReport } from "./surfaces/code-memory.js";
+import { ABSORB_BATCH_LIMIT } from "./surfaces/code-memory.js";
 
 const HELP = `agent-julia — one brain for your AI
 
 Usage:
   agent-julia serve      Start the MCP stdio server (default; used by Claude clients)
   agent-julia init       Run the interactive setup wizard
-  agent-julia sync       Re-apply MCP registration + persona core + shipped skills (add --print to show the steps instead)
+  agent-julia sync       Re-apply MCP registration + persona core + shipped skills (--print shows the steps; --absorb-all also brings in a large Claude Code memory)
   agent-julia uninstall  Remove the managed persona blocks, MCP registration, and shipped skills
   agent-julia remote [url]  Show or set the git remote backing up your memory
   agent-julia push       Push the memory store to its remote now
@@ -64,6 +67,18 @@ async function main(): Promise<void> {
       } else {
         const steps = await install(cfg);
         for (const s of steps) console.log(`[${s.status}] ${s.surface} — ${s.action}: ${s.detail}`);
+        const code = await adoptCodeMemoryNow(cfg, process.argv.includes("--absorb-all"));
+        console.log(
+          `[${code.pointers + code.absorbed > 0 ? "done" : "skipped"}] code — Claude Code memory: ` +
+            `${code.pointers} pointer(s) written across ${code.projects} director(ies), ` +
+            `${code.absorbed} fact(s) absorbed, ${code.pending} left in place`,
+        );
+        if (code.overflow > 0) {
+          console.log(
+            `  ${code.overflow} director(ies) keep more than ${ABSORB_BATCH_LIMIT} facts of their own and were ` +
+              "left alone. `agent-julia sync --absorb-all` brings those in too.",
+          );
+        }
       }
       break;
     }
@@ -409,6 +424,11 @@ async function main(): Promise<void> {
         const { installSkills, skillsTargetDir } = await import("./skills/install.js");
         const steps = await installSkills(skillsTargetDir());
         console.log(`  skills: ${steps.filter((s) => s.status === "done").length}/${steps.length} refreshed`);
+        const code = await adoptCodeMemoryNow(cfg);
+        console.log(
+          `  code memory: ${code.pointers} pointer(s) written, ${code.absorbed} fact(s) absorbed, ` +
+            `${code.pending} left in place`,
+        );
         checks = await runDoctor(cfg);
         console.log("\nAfter:");
         console.log(formatChecks(checks));
@@ -437,3 +457,20 @@ main().catch((err) => {
   logError(err instanceof Error ? err.stack ?? err.message : String(err));
   process.exit(1);
 });
+
+// Point Claude Code's own memory directories here, and absorb what was written
+// there when the config asks for it. Shared by `sync` and `doctor --fix`; the
+// server does the same thing on boot.
+async function adoptCodeMemoryNow(cfg: Config, force = false): Promise<AdoptionReport> {
+  const { adoptCodeMemory, codeMemoryRoot } = await import("./surfaces/code-memory.js");
+  const { storePaths } = await import("./store/paths.js");
+  const { Indexer } = await import("./index/indexer.js");
+  const { makeEmbeddingProvider } = await import("./index/embeddings.js");
+  const paths = storePaths(cfg.memoryDir);
+  const idx = Indexer.open(paths, cfg, await makeEmbeddingProvider(cfg.embedding));
+  try {
+    return await adoptCodeMemory(paths, idx, cfg, codeMemoryRoot(), force);
+  } finally {
+    idx.close();
+  }
+}

@@ -128,19 +128,25 @@ async function runStartupTasks(rt: Runtime): Promise<void> {
     // busy machine a dozen of them boot at once and rewrite ~/.claude/CLAUDE.md
     // and ~/.claude/skills at the same moment.
     const { withStoreLock } = await import("./store/lock.js");
+    const { adoptCodeMemory } = await import("./surfaces/code-memory.js");
     const refreshed = await withStoreLock(rt.config.memoryDir, async () => ({
       steps: await installSkills(skillsTargetDir()),
       cores: await refreshInjectedCore(rt.config),
       exports: await refreshExports(rt.config),
+      // Claude Code's own per-project memory: point it here, and (when asked)
+      // bring in whatever was written there instead of here.
+      code: await adoptCodeMemory(rt.paths, rt.indexer, rt.config),
     }));
     if (!refreshed) {
       log("refresh: another server was doing it — skipped");
       return;
     }
-    const { steps, cores, exports } = refreshed;
+    const { steps, cores, exports, code } = refreshed;
     log(
       `refresh: ${steps.filter((s) => s.status === "done").length}/${steps.length} skill(s), ` +
-        `${cores} persona block(s), ${exports} export(s)`,
+        `${cores} persona block(s), ${exports} export(s), ` +
+        `code memory ${code.pointers}/${code.projects} pointed` +
+        (code.absorbed > 0 ? `, ${code.absorbed} absorbed` : ""),
     );
   } catch (err) {
     warn("startup refresh failed (continuing):", (err as Error).message);

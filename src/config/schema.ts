@@ -25,6 +25,14 @@ export type SearchMode = (typeof SEARCH_MODES)[number];
 export const SURFACES = ["code", "cowork", "dispatch"] as const;
 export type Surface = (typeof SURFACES)[number];
 
+// What to do about Claude Code's own per-project memory, which does the same
+// job as this store and reaches one working directory. "pointer" owns a marked
+// block in its index that sends the client here; "absorb" additionally moves
+// what was written there anyway into the store. Default is the read-only half:
+// moving someone's notes between directories is not a thing to do unasked.
+export const CODE_MEMORY_MODES = ["off", "pointer", "absorb"] as const;
+export type CodeMemoryMode = (typeof CODE_MEMORY_MODES)[number];
+
 export const WEEKLY_MAINTENANCE = ["cowork-task", "own-routine"] as const;
 export type WeeklyMaintenance = (typeof WEEKLY_MAINTENANCE)[number];
 
@@ -84,6 +92,8 @@ export const ConfigSchema = z.object({
   // can keep them refreshed on boot, exactly like the Claude blocks.
   exports: z.array(z.string()).default([]),
   weeklyMaintenance: z.enum(WEEKLY_MAINTENANCE).default("cowork-task"),
+
+  codeMemory: z.enum(CODE_MEMORY_MODES).default("pointer"),
 
   // Categories the agent must never persist. Seeds from sensible privacy defaults.
   privacyHardOff: z.array(z.string()).default([

@@ -23,6 +23,9 @@ function sandbox(): { dir: string; targets: DoctorTargets } {
       pasteMarker: join(dir, "cowork-paste.json"),
       surfaces: join(dir, "surfaces.json"),
       skillsDir: join(dir, "skills"),
+      // An empty sandbox: doctor must not read the developer's real
+      // ~/.claude/projects while the suite runs.
+      codeMemoryRoot: join(dir, "projects"),
     },
   };
 }
@@ -116,7 +119,7 @@ describe("doctor", () => {
 
     const instructions = byName(checks, "mcp instructions");
     expect(instructions.status).toBe("ok");
-    expect(instructions.detail).toMatch(/chars of 1800|chars of 1,800/);
+    expect(instructions.detail).toMatch(/bytes of 1800|bytes of 1,800/);
   });
 
   it("never reports a failure for something it merely cannot see", async () => {

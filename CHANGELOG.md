@@ -7,6 +7,21 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ## [Unreleased]
 
+### Added
+
+- **Claude Code's own per-project memory is adopted instead of competing with
+  this one.** It keeps a memory directory per working directory, whose index it
+  puts into every session's prompt — a second memory doing the same job, holding
+  facts no other surface can read. `codeMemory: "pointer"` (the default) owns a
+  marked block in that index sending the client here; `codeMemory: "absorb"`
+  additionally moves whatever was written there onto a page in your store and
+  leaves a pointer to it, description intact so the client still recalls it.
+  `off` leaves those directories alone. Nothing is created that the client did
+  not create first, every replaced file is backed up, and `uninstall` puts them
+  back. A directory holding more than 25 facts of its own is reported rather
+  than absorbed — that much is a knowledge base someone chose to keep next to
+  the repo — until `agent-julia sync --absorb-all` says otherwise.
+
 ### Fixed
 
 - **A symlink whose target did not exist yet was replaced by a regular file.**

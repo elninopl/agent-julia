@@ -15,6 +15,7 @@ import { composeCore } from "../persona/compose.js";
 import { INSTRUCTIONS_BUDGET, coreHashOf, serverInstructions } from "../persona/startup.js";
 import { PASTE_LAYOUT, configFingerprint, pasteBody, pasteHash } from "../persona/paste.js";
 import { probeCoworkSession } from "../surfaces/cowork-probe.js";
+import { ABSORB_BATCH_LIMIT, codeMemoryRoot, codeMemoryStatus } from "../surfaces/code-memory.js";
 import { estimateTokens } from "../util/tokens.js";
 import { endMarker, hasManagedBlock, startMarker } from "../managed/block.js";
 import { SHIPPED_SKILLS, shippedSkillsDir, skillsTargetDir } from "../skills/install.js";
@@ -51,6 +52,7 @@ export interface DoctorTargets {
   pasteMarker: string;
   surfaces: string;
   skillsDir: string;
+  codeMemoryRoot: string;
 }
 
 export function defaultTargets(): DoctorTargets {
@@ -62,6 +64,7 @@ export function defaultTargets(): DoctorTargets {
     pasteMarker: coworkPasteMarkerPath(),
     surfaces: surfacesStatePath(),
     skillsDir: skillsTargetDir(),
+    codeMemoryRoot: codeMemoryRoot(),
   };
 }
 
@@ -458,15 +461,72 @@ export async function runDoctor(config: Config, t: DoctorTargets = defaultTarget
   {
     const instructions = serverInstructions(config);
     const BUDGET = INSTRUCTIONS_BUDGET;
+    // Bytes, because that is the unit the budget is enforced in and the unit a
+    // client truncates on. Reporting characters against a byte budget reads as
+    // healthy right up to the point where a non-ASCII list is cut off.
+    const bytes = Buffer.byteLength(instructions, "utf8");
     checks.push({
       name: "mcp instructions",
-      status: instructions.length <= BUDGET ? "ok" : "warn",
+      status: bytes <= BUDGET ? "ok" : "warn",
       detail:
-        instructions.length <= BUDGET
-          ? `${instructions.length} chars of ${BUDGET} (clients truncate around 2,048).`
-          : `${instructions.length} chars — over budget, so paragraphs were dropped from what clients receive. Shorten your privacyHardOff list.`,
-      ...(instructions.length <= BUDGET ? {} : { fix: "shorten privacyHardOff in the config" }),
+        bytes <= BUDGET
+          ? `${bytes} bytes of ${BUDGET} (clients truncate around 2,048).`
+          : `${bytes} bytes — over budget, so paragraphs were dropped from what clients receive. Shorten your privacyHardOff list.`,
+      ...(bytes <= BUDGET ? {} : { fix: "shorten privacyHardOff in the config" }),
     });
+  }
+
+  // --- Claude Code's own per-project memory ---
+  {
+    const st = await codeMemoryStatus(t.codeMemoryRoot);
+    if (config.codeMemory === "off") {
+      checks.push({
+        name: "code memory",
+        status: "ok",
+        detail: "off — Claude Code's own memory directories are left alone.",
+      });
+    } else if (st.projects === 0) {
+      checks.push({
+        name: "code memory",
+        status: "ok",
+        detail: "Claude Code has no memory directory on this machine yet.",
+      });
+    } else if (st.adopted < st.projects) {
+      checks.push({
+        name: "code memory",
+        status: "warn",
+        detail:
+          `${st.adopted} of ${st.projects} Claude Code memory director(ies) point here; the rest still tell it ` +
+          "to keep facts in its own directory, where no other surface can read them.",
+        fix: "npx agent-julia sync",
+      });
+    } else if (st.loose > 0 && config.codeMemory === "pointer") {
+      checks.push({
+        name: "code memory",
+        status: "warn",
+        detail:
+          `all ${st.projects} director(ies) point here, but ${st.loose} fact(s) written by Claude Code still live ` +
+          "only there — Claude Desktop and Cowork cannot see them.",
+        fix: 'set "codeMemory": "absorb" in the config, then run `npx agent-julia sync`',
+      });
+    } else if (st.loose > 0) {
+      checks.push({
+        name: "code memory",
+        status: "warn",
+        detail:
+          `${st.loose} fact(s) stayed put: a directory keeping more than ${ABSORB_BATCH_LIMIT} of its own is a ` +
+          "knowledge base someone chose to keep there, not a handful of strays.",
+        fix: "npx agent-julia sync --absorb-all (only if you mean to move all of it)",
+      });
+    } else {
+      checks.push({
+        name: "code memory",
+        status: "ok",
+        detail:
+          `${st.projects} director(ies) point here` +
+          (st.loose > 0 ? `, ${st.loose} file(s) still to absorb on the next start.` : "."),
+      });
+    }
   }
 
   // --- Skills ---

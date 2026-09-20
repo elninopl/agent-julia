@@ -529,6 +529,28 @@ export async function uninstall(): Promise<InstallStep[]> {
     steps.push({ surface: "shared", action: `remove skill '${s.skill}'`, status: s.status, detail: s.detail });
   }
 
+  // Claude Code's own memory directories: the pointer block goes, and every file
+  // this package replaced with a pointer comes back from the backup it took
+  // before replacing it. Leaving pointers to a server that is gone would turn
+  // someone's notes into dead ends.
+  try {
+    const { releaseCodeMemory } = await import("../surfaces/code-memory.js");
+    const released = await releaseCodeMemory();
+    steps.push({
+      surface: "code",
+      action: "release Claude Code memory",
+      status: released.pointers + released.restored > 0 ? "done" : "skipped",
+      detail: `${released.pointers} pointer block(s) removed, ${released.restored} file(s) restored`,
+    });
+  } catch (err) {
+    steps.push({
+      surface: "code",
+      action: "release Claude Code memory",
+      status: "manual",
+      detail: `could not be read (${(err as Error).message}) — check ~/.claude/projects/*/memory by hand`,
+    });
+  }
+
   // Everything else this package wrote outside the two Claude files. Uninstall
   // never loaded the config, so a persona exported into ~/.codex/AGENTS.md stayed
   // there forever while the CLI printed "managed blocks removed".
