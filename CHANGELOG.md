@@ -59,6 +59,22 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ### Fixed
 
+- **Archiving stops destroying the archive.** `archivePage` renamed onto its
+  destination without checking it, so retiring a second page under the same id
+  overwrote the first — in the one directory whose entire purpose is keeping
+  things. A collision now gets the page's own `updated` date appended. And an
+  archived page is addressable again: `read("archive/<id>")` used to resolve
+  back into `pages/`, because the id normalizer strips the prefix, so a page
+  that had just been archived could not be opened by any name at all.
+- **`list` is bounded and compact.** It returned every page, pretty-printed:
+  189 pages is roughly 7,800 tokens, six times the persona budget, in a product
+  whose claim is keeping the context window clear. It now takes `limit` and
+  `since`, sorts newest first, and reports `{total, matched, shown}` so a
+  truncated answer says so.
+- **MCP tools carry annotations.** `read`, `search`, `list`, `related` and
+  `get_core` are marked read-only; `archive` is marked destructive. A client
+  could not auto-approve reading memory without also auto-approving writing and
+  retiring it.
 - **A configured embedding model that cannot load is no longer silent.** It was
   possible to choose the local model, have it download, have every page
   embedded, and still have every search fall back to keywords forever, because

@@ -27,6 +27,7 @@ export function registerTools(server: McpServer, rt: Runtime): void {
   server.registerTool(
     "get_core",
     {
+      annotations: { readOnlyHint: true, openWorldHint: false },
       title: "Get persona core",
       description:
         "Return the budgeted persona core (identity + voice rules + corrections) to inject into context. Keep this small; the full knowledge base lives on disk.",
@@ -41,16 +42,34 @@ export function registerTools(server: McpServer, rt: Runtime): void {
   server.registerTool(
     "list",
     {
+      annotations: { readOnlyHint: true, openWorldHint: false },
       title: "List memory pages",
-      description: "List all pages in the knowledge base with title, status, and last-updated date.",
-      inputSchema: {},
+      description:
+        "List pages in the knowledge base with title, status, and last-updated date, newest first. " +
+        "Returns a bounded page of results — prefer `search` when you know what you are looking for.",
+      inputSchema: {
+        limit: z.number().int().positive().max(500).optional().describe("How many to return (default 50)"),
+        since: z.string().optional().describe("Only pages updated on or after this ISO date, e.g. '2026-09-01'"),
+      },
     },
-    async () => json(await listPages(paths)),
+    async ({ limit, since }) => {
+      const all = await listPages(paths);
+      const filtered = since ? all.filter((p) => (p.updated ?? "") >= since) : all;
+      const sorted = [...filtered].sort((a, b) => (b.updated ?? "").localeCompare(a.updated ?? ""));
+      const shown = sorted.slice(0, limit ?? 50);
+      // Compact, not pretty-printed: 189 pages at two-space indent is roughly
+      // 7,800 tokens, six times the persona budget, in a product whose whole
+      // claim is keeping the context window clear.
+      return text(
+        JSON.stringify({ total: all.length, matched: filtered.length, shown: shown.length, pages: shown }),
+      );
+    },
   );
 
   server.registerTool(
     "read",
     {
+      annotations: { readOnlyHint: true, openWorldHint: false },
       title: "Read a memory page",
       description:
         "Read one page by id (e.g. 'elnino'), exactly as stored, front matter included. " +
@@ -67,6 +86,7 @@ export function registerTools(server: McpServer, rt: Runtime): void {
   server.registerTool(
     "search",
     {
+      annotations: { readOnlyHint: true, openWorldHint: false },
       title: "Search memory",
       description:
         "Search the knowledge base (full-text + semantic, per configured mode). Returns ranked page ids with snippets.",
@@ -81,6 +101,7 @@ export function registerTools(server: McpServer, rt: Runtime): void {
   server.registerTool(
     "related",
     {
+      annotations: { readOnlyHint: true, openWorldHint: false },
       title: "Related pages",
       description:
         "Pages connected to one page through [[wiki-links]]: what it links to, and what links back to it. Use to walk the knowledge graph around a topic.",
@@ -92,6 +113,7 @@ export function registerTools(server: McpServer, rt: Runtime): void {
   server.registerTool(
     "ingest",
     {
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       title: "Ingest / update a memory page",
       description:
         "Write a page. Enforces the store schema: writes the page, refreshes index.md, appends log.md, updates the search index, and git-commits. " +
@@ -136,6 +158,7 @@ export function registerTools(server: McpServer, rt: Runtime): void {
   server.registerTool(
     "correct_voice",
     {
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       title: "Record a voice correction",
       description:
         "Append a user voice correction (L3, highest precedence) — e.g. \"don't praise me\", \"that phrasing is weird\", \"don't use word X\". Surfaced into the injected core.",
@@ -154,6 +177,7 @@ export function registerTools(server: McpServer, rt: Runtime): void {
   server.registerTool(
     "archive",
     {
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
       title: "Archive a memory page",
       description:
         "Retire a page from the active knowledge base into archive/ (kept on disk and in git history, removed from the index and catalog). Use for pages the user confirmed are obsolete — e.g. from the weekly digest. Ask before archiving; never bulk-archive.",
@@ -168,13 +192,17 @@ export function registerTools(server: McpServer, rt: Runtime): void {
         const committed = await commitAll(paths.root, `Archive memory page: ${page}`);
         if (committed && config.gitAutoPush) await pushToRemote(paths.root);
       }
-      return text(`Archived: ${page} (moved to archive/, removed from index and catalog).`);
+      return text(
+        `Archived: ${page} → ${moved.replace(paths.root + "/", "")} (removed from the index and catalog). ` +
+          `Read it back with read("archive/${pageId(page)}").`,
+      );
     },
   );
 
   server.registerTool(
     "maintenance",
     {
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       title: "Run maintenance",
       description:
         "Run maintenance. 'auto': rebuild the search index, flag orphan links and stale facts, refresh index.md, recompact the core, commit. 'interactive' — the weekly digest: additionally returns owner-judgment proposals (near-duplicate pages to merge, stale pages to confirm or retire, orphan links, unlinked pages, oversized pages to split). Walk the user through the proposals ONE AT A TIME, never in bulk; apply only what they approve — merge with 'ingest', retire with 'archive', skip freely. Nothing in the digest changes anything by itself.",
