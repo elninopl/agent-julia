@@ -36,6 +36,16 @@ changes, which always ship an automatic, backup-protected data migration.
   shipped skills. A dozen findings in the audit behind this release ended with
   "there is no recovery path".
 
+- **CI runs on macOS, Linux and Windows**, and on Node 26 as well as 24. The
+  code branches on `platform()` to find each Claude client's config, writes into
+  the user's home directory and shells out to git; testing one OS tested a third
+  of it. It also runs `npm audit` on production dependencies, typechecks the
+  test suite (which was excluded, so a test could call a function with the wrong
+  shape and still pass), and installs the packed tarball into a clean directory
+  to prove the published CLI actually runs — deleting `dist/**/assets` used to
+  leave the suite green while the built binary died on its first call. The
+  release workflow refuses a tag that is not an ancestor of `main`.
+
 ### Changed
 
 - **A save can no longer quietly destroy the page it was meant to extend.** A
@@ -80,6 +90,13 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ### Fixed
 
+- **A server whose client is gone exits.** Claude starts one server per session
+  and does not always close the pipe or signal on the way out. On one machine
+  that left 88 live servers, the oldest twelve days old, holding 954 MB between
+  them and a WAL handle each — and every one of them had rewritten the user's
+  `CLAUDE.md` and skills directory at boot. The server now notices when the
+  process that spawned it disappears, and the boot-time refresh runs under the
+  store lock so a dozen simultaneous starts stop racing on the same files.
 - **"Lodz" finds "Łódź" now, which the code claimed it already did.** SQLite's
   `remove_diacritics 2` folds anything that decomposes — ą, ć, ę, ó, ś, ź, ż all
   worked — but ł, đ, ø and ß do not decompose and never folded. The comment in

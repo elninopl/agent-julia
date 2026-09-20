@@ -43,11 +43,11 @@ describe("shipped skills", () => {
     writeFileSync(join(dir, "brainstorm", "SKILL.md"), "---\nname: brainstorm\n---\nmy own skill\n", "utf8");
 
     const installed = await installSkills(dir);
-    expect(installed[0].status).toBe("skipped");
+    expect(installed[0]!.status).toBe("skipped");
     expect(readFileSync(join(dir, "brainstorm", "SKILL.md"), "utf8")).toContain("my own skill");
 
     const removed = await uninstallSkills(dir);
-    expect(removed[0].status).toBe("skipped");
+    expect(removed[0]!.status).toBe("skipped");
     expect(existsSync(join(dir, "brainstorm", "SKILL.md"))).toBe(true);
   });
 });

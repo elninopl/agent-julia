@@ -1,0 +1,10 @@
+{
+  // The main tsconfig builds src/ only, so the test suite was never typechecked:
+  // a test could call a function with the wrong shape and still run green.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": "."
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts"]
+}
