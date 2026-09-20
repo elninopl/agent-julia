@@ -91,6 +91,27 @@ async function withGitLock<T>(root: string, fn: () => Promise<T>): Promise<T | n
   }
 }
 
+// execFile rejects with a generic "Command failed" message and puts what
+// actually went wrong on stderr. Reporting the wrapper's first line is how
+// "fatal: couldn't find remote ref main" came out as "offline or no credentials".
+function gitError(err: unknown): string {
+  const e = err as { stderr?: string; message?: string };
+  const stderr = (e.stderr ?? "").split("\n").find((l) => l.trim());
+  if (stderr) return stderr.trim();
+  return (e.message ?? "").split("\n").find((l) => l.trim())?.trim() ?? "git failed";
+}
+
+// symbolic-ref, not rev-parse: a store agent-julia has just git-init-ed sits on
+// an unborn branch, where rev-parse HEAD fails outright. That is exactly the
+// second machine, before it has pulled anything.
+export async function currentBranch(root: string): Promise<string> {
+  try {
+    return await git(root, ["symbolic-ref", "--short", "HEAD"]);
+  } catch {
+    return git(root, ["rev-parse", "--abbrev-ref", "HEAD"]);
+  }
+}
+
 export function isGitRepo(root: string): boolean {
   return existsSync(join(root, ".git"));
 }
@@ -138,7 +159,7 @@ export async function verifyRemote(root: string): Promise<{ ok: boolean; error?:
     await exec("git", ["-C", root, "ls-remote", "origin"], networkExec());
     return { ok: true };
   } catch (err) {
-    return { ok: false, error: (err as Error).message.split("\n")[0] };
+    return { ok: false, error: gitError(err) };
   }
 }
 
@@ -150,11 +171,11 @@ export async function pushToRemote(root: string): Promise<boolean> {
   if (!(await getRemoteUrl(root))) return false;
   const res = await withGitLock(root, async () => {
     try {
-      const branch = await git(root, ["rev-parse", "--abbrev-ref", "HEAD"]);
+      const branch = await currentBranch(root);
       await exec("git", ["-C", root, "push", "-u", "origin", branch], networkExec());
       return true;
     } catch (err) {
-      const msg = (err as Error).message.split("\n").find((l) => l.trim()) ?? "";
+      const msg = gitError(err);
       if (/non-fast-forward|fetch first|rejected|behind/i.test(msg)) {
         warn("git push rejected — the remote has commits this machine doesn't. Pull/rebase, then push:", msg);
       } else {
@@ -177,12 +198,24 @@ export async function pullFromRemote(
   if (!isGitRepo(root)) return "skipped";
   if (!(await getRemoteUrl(root))) return "skipped";
   const res = await withGitLock(root, async (): Promise<"pulled" | "up-to-date" | "conflict" | "skipped"> => {
+    let branch: string;
     try {
+      branch = await currentBranch(root);
+    } catch (err) {
+      warn("git pull skipped — cannot determine the current branch:", gitError(err));
+      return "skipped";
+    }
+    try {
+      // The branch is named explicitly. Without it git needs an upstream, and a
+      // store created by `git init` here has none until the first push -u
+      // succeeds — which is exactly the second machine, where it has not.
       const { stdout } = await exec(
         "git",
-        ["-C", root, "pull", "--no-rebase", "--no-edit", "origin"],
+        ["-C", root, "pull", "--no-rebase", "--no-edit", "origin", branch],
         networkExec(),
       );
+      // Record the upstream so plain `git pull` works by hand from now on.
+      await git(root, ["branch", `--set-upstream-to=origin/${branch}`, branch]).catch(() => undefined);
       return /Already up to date/i.test(stdout) ? "up-to-date" : "pulled";
     } catch (err) {
       if (existsSync(join(root, ".git", "MERGE_HEAD"))) {
@@ -194,8 +227,20 @@ export async function pullFromRemote(
         warn(`git pull hit a merge conflict — resolve it by hand: git -C ${root} pull`);
         return "conflict";
       }
-      const msg = (err as Error).message.split("\n").find((l) => l.trim()) ?? "";
-      warn("git pull skipped (offline or no credentials):", msg);
+      const msg = gitError(err);
+      if (/couldn't find remote ref|no such ref|Couldn't find remote ref/i.test(msg)) {
+        // A remote that exists but has nothing on this branch yet: the first
+        // machine has not pushed. Nothing is wrong and nothing is missing.
+        return "up-to-date";
+      }
+      if (/refusing to merge unrelated histories/i.test(msg)) {
+        warn(
+          "git pull refused: this store and its remote have unrelated histories. " +
+            `Reconcile them once by hand: git -C ${root} pull --allow-unrelated-histories`,
+        );
+        return "skipped";
+      }
+      warn("git pull skipped:", msg);
       return "skipped";
     }
   });
