@@ -7,6 +7,13 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ## [Unreleased]
 
+## [0.1.41] - 2026-09-24
+
+### Changed
+
+- Reworded two examples in this changelog. No code changes; 0.1.40 behaves
+  the same.
+
 ## [0.1.40] - 2026-09-20
 
 ### Fixed
