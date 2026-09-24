@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -31,8 +31,15 @@ metadata:
 Deploys go out through the staging bucket first.
 `;
 
+// The path the client would see as a working directory. tmpdir() is not that on
+// every platform: /var is a symlink to /private/var on macOS, and on Windows it
+// can carry an 8.3 short name ("RUNNER~1") that no directory listing returns.
+function tempDir(prefix: string): string {
+  return realpathSync.native(mkdtempSync(join(tmpdir(), prefix)));
+}
+
 function sandbox(mode: CodeMemoryMode) {
-  const dir = mkdtempSync(join(tmpdir(), "aj-cm-"));
+  const dir = tempDir("aj-cm-");
   const workingDir = join(dir, "my-repo");
   mkdirSync(workingDir);
   const projects = join(dir, "projects");
@@ -232,11 +239,22 @@ describe("a directory that keeps a knowledge base of its own", () => {
 
 describe("resolving which working directory a memory belongs to", () => {
   it("resolves a name that contains the separator it was slugified with", () => {
-    const dir = mkdtempSync(join(tmpdir(), "aj-slug-"));
+    const dir = tempDir("aj-slug-");
     const workingDir = join(dir, "agent-julia");
     mkdirSync(workingDir);
     expect(decodeWorkingDir(slugify(workingDir))).toBe(workingDir);
     expect(decodeWorkingDir(slugify(join(dir, "gone-for-good")))).toBeNull();
+  });
+
+  it("resolves a name whose other characters were slugified to a dash too", () => {
+    // Not only separators: "_", "." and any non-ASCII letter become a dash as
+    // well, so the dash in the slug cannot be spelled back literally.
+    const dir = tempDir("aj-slug-");
+    for (const name of ["my_repo", ".config", "Kraków notes"]) {
+      const workingDir = join(dir, name, "sub");
+      mkdirSync(workingDir, { recursive: true });
+      expect(decodeWorkingDir(slugify(workingDir))).toBe(workingDir);
+    }
   });
 });
 

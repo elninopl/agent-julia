@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { readdir, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
-import { isAbsolute, join, resolve } from "node:path";
+import { isAbsolute, join, resolve, sep } from "node:path";
 import { PageFrontmatter, listPageIds, readPage } from "./markdown.js";
 import { StorePaths } from "./paths.js";
 
@@ -55,7 +55,7 @@ export function expandHome(path: string): string {
 // user's ~/Sites may well be a symlink.
 export async function normalizeDir(path: string): Promise<string> {
   const expanded = resolve(expandHome(path));
-  return (await realpath(expanded).catch(() => expanded)).replace(/\/+$/, "");
+  return (await realpath(expanded).catch(() => expanded)).replace(/[\\/]+$/, "");
 }
 
 export function readProjects(fm: PageFrontmatter): string[] {
@@ -184,7 +184,7 @@ export function renderSources(sources: PageSource[], workingDir?: string): strin
         return `- ${s.at}${about}`;
       default: {
         const where = workingDir && !isAbsolute(expandHome(s.at)) ? join(workingDir, s.at) : expandHome(s.at);
-        return `- \`${where}${s.kind === "dir" ? "/" : ""}\`${about}`;
+        return `- \`${where}${s.kind === "dir" ? sep : ""}\`${about}`;
       }
     }
   });
