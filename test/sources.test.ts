@@ -50,7 +50,7 @@ describe("declaring where the rest of a project's knowledge lives", () => {
 
   it("resolves a relative path against the project it belongs to", () => {
     const [line] = renderSources([{ kind: "dir", at: "_doc" }], "/Users/me/Sites/prive");
-    expect(line).toContain("/Users/me/Sites/prive/_doc");
+    expect(line).toContain(join("/Users/me/Sites/prive", "_doc"));
   });
 });
 
@@ -110,7 +110,7 @@ describe("routing reaches whoever reads the page", () => {
       project: "/nowhere/prive",
       sources: [{ kind: "dir", at: "_doc", about: "product docs" }],
     });
-    expect(note).toContain("/nowhere/prive/_doc");
+    expect(note).toContain(join("/nowhere/prive", "_doc"));
     expect(note).toContain("product docs");
     expect(note).toContain("route to it");
   });

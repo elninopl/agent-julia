@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { Dirent, existsSync, readdirSync, statSync } from "node:fs";
 import { copyFile, readdir, readFile, rm, stat } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
@@ -92,28 +92,44 @@ export async function findCodeMemoryProjects(root = codeMemoryRoot()): Promise<C
   return out;
 }
 
-// The slug is the working directory with every separator replaced by a dash,
-// which is not reversible on its own: "-Users-me-Sites-agent-julia" could be
-// .../agent/julia just as well as .../agent-julia. Resolve it against the
-// filesystem instead, taking the longest run of segments that exists at each
-// step. A directory that has since been moved or deleted simply yields null.
+// The slug is the working directory with every character that is not an ASCII
+// letter or digit replaced by a dash — separators, but also "_", ".", spaces
+// and "ó". That is not reversible on its own: "-Users-me-Sites-agent-julia"
+// could be .../agent/julia, .../agent-julia or .../agent_julia. Resolve it
+// against the filesystem instead: at each level, find the entries whose own
+// slug is a prefix of what is left, longest first, and backtrack when a branch
+// dead-ends. A directory that has since been moved or deleted yields null.
 export function decodeWorkingDir(slug: string): string | null {
-  const parts = slug.replace(/^-+/, "").split("-");
-  let path = "";
-  for (let i = 0; i < parts.length; ) {
-    let advanced = false;
-    for (let j = parts.length; j > i; j--) {
-      const candidate = `${path}/${parts.slice(i, j).join("-")}`;
-      if (existsSync(candidate)) {
-        path = candidate;
-        i = j;
-        advanced = true;
-        break;
-      }
-    }
-    if (!advanced) return null;
+  // Windows: "C:\Users\me" becomes "C--Users-me".
+  const drive = process.platform === "win32" ? /^([A-Za-z])--(.*)$/.exec(slug) : null;
+  const [root, rest] = drive ? [`${drive[1]}:\\`, drive[2]!] : ["/", slug.replace(/^-/, "")];
+  return rest ? resolveSlug(root, rest) : null;
+}
+
+function slugSegment(name: string): string {
+  return name.replace(/[^a-zA-Z0-9]/g, "-");
+}
+
+function resolveSlug(base: string, rest: string): string | null {
+  let entries: Dirent[];
+  try {
+    entries = readdirSync(base, { withFileTypes: true });
+  } catch {
+    return null;
   }
-  return path || null;
+  const matches = entries
+    .filter((entry) => entry.isDirectory() || entry.isSymbolicLink())
+    .map((entry) => ({ name: entry.name, slug: slugSegment(entry.name) }))
+    .filter(({ slug }) => rest === slug || rest.startsWith(`${slug}-`))
+    .sort((a, b) => b.slug.length - a.slug.length);
+  for (const { name, slug } of matches) {
+    const path = join(base, name);
+    if (!statSync(path, { throwIfNoEntry: false })?.isDirectory()) continue;
+    if (rest === slug) return path;
+    const found = resolveSlug(path, rest.slice(slug.length + 1));
+    if (found) return found;
+  }
+  return null;
 }
 
 // Where a project's absorbed facts land. Prefixed rather than named after the
