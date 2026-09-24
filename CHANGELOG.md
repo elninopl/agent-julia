@@ -50,6 +50,13 @@ changes, which always ship an automatic, backup-protected data migration.
   5,400 of Chinese. A non-Latin never-store list passed the check and was then
   truncated by the client, past the rungs that decide what may be dropped.
 
+## [0.1.41] - 2026-09-24
+
+### Changed
+
+- Reworded two examples in this changelog. No code changes; 0.1.40 behaves
+  the same.
+
 ## [0.1.40] - 2026-09-20
 
 ### Fixed
