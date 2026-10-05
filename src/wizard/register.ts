@@ -201,6 +201,8 @@ export interface SurfacesState {
   boots?: Record<string, { at: string }>;
   fetches?: Record<string, { at: string; coreHash: string }>;
   migrationNotices?: { count: number; lastAt: string };
+  /** When the boot-time search for an old layout-1 paste ran, and what it saw. */
+  legacyPasteCheck?: { at: string; seen: string };
 }
 
 export async function readSurfaces(path = surfacesStatePath()): Promise<SurfacesState> {
