@@ -1,13 +1,11 @@
 import { warn } from "../util/log.js";
-import { DB, getMeta, setMeta } from "./db.js";
+import { DB } from "./db.js";
 import {
   EmbeddingProvider,
   blobToVector,
   cosineSimilarity,
   vectorToBlob,
 } from "./embeddings.js";
-
-const MODEL_META_KEY = "embedding_model_id";
 
 // A provider can fail at embed time (the optional local package isn't installed,
 // or an API call errors). Rather than break an ingest or a search, fall back to
@@ -136,7 +134,6 @@ export function semanticStore(
   rows.forEach((r, i) => {
     insert.run(id, i, r.chunk.label, provider.id, provider.dims, vectorToBlob(r.vector));
   });
-  setMeta(db, MODEL_META_KEY, provider.id);
 }
 
 export function embeddingCount(db: DB): number {
@@ -144,9 +141,28 @@ export function embeddingCount(db: DB): number {
   return row?.n ?? 0;
 }
 
-export function embeddedIds(db: DB): string[] {
-  const rows = db.prepare("SELECT DISTINCT id FROM embeddings").all() as Array<{ id: string }>;
+// Pages with vectors from `model`; with no model given, from any model.
+export function embeddedIds(db: DB, model?: string): string[] {
+  const rows = (
+    model === undefined
+      ? db.prepare("SELECT DISTINCT id FROM embeddings").all()
+      : db.prepare("SELECT DISTINCT id FROM embeddings WHERE model = ?").all(model)
+  ) as Array<{ id: string }>;
   return rows.map((r) => r.id);
+}
+
+// Indexed pages that have no vectors from `model`: all of them after a change
+// of model or precision, otherwise the odd page whose embed failed.
+export function pagesWithoutVectors(db: DB, model: string): string[] {
+  const rows = db
+    .prepare("SELECT id FROM page_meta WHERE id NOT IN (SELECT id FROM embeddings WHERE model = ?)")
+    .all(model) as Array<{ id: string }>;
+  return rows.map((r) => r.id);
+}
+
+// Drop what an earlier model left behind, once its replacement is complete.
+export function dropOtherModels(db: DB, model: string): void {
+  db.prepare("DELETE FROM embeddings WHERE model != ?").run(model);
 }
 
 export async function semanticSearch(
@@ -158,7 +174,11 @@ export async function semanticSearch(
   if (!provider.enabled) return [];
   const q = await provider.embedQuery(query).catch(onEmbedError);
   if (!q) return [];
-  const rows = db.prepare("SELECT id, label, vector FROM embeddings").all() as Array<{
+  // Only vectors from the model that embedded the query. Another model's, even
+  // with the same dimensions, live in a different space: while a model change
+  // is being re-embedded, pages not yet done are missing from semantic results
+  // (keyword search still finds them) rather than ranked by noise.
+  const rows = db.prepare("SELECT id, label, vector FROM embeddings WHERE model = ?").all(provider.id) as Array<{
     id: string;
     label: string;
     vector: Buffer;
@@ -167,8 +187,6 @@ export async function semanticSearch(
   const best = new Map<string, SemanticHit>();
   for (const r of rows) {
     const vec = blobToVector(r.vector);
-    // Skip vectors whose dimensionality doesn't match the query model (e.g. a
-    // leftover from a different model) — a prefix cosine would be meaningless.
     if (vec.length !== q.length) continue;
     const score = cosineSimilarity(q, vec);
     const prev = best.get(r.id);
@@ -178,14 +196,6 @@ export async function semanticSearch(
   if (scored.length === 0) return [];
   const cutoff = scored[0]!.score - RELATIVE_FLOOR;
   return scored.filter((h) => h.score >= cutoff).slice(0, limit);
-}
-
-// If the active model fingerprint differs from what produced the stored vectors,
-// the embeddings are stale and must be rebuilt. Caller triggers a re-embed.
-export function embeddingsAreStale(db: DB, provider: EmbeddingProvider): boolean {
-  if (!provider.enabled) return false;
-  const stored = getMeta(db, MODEL_META_KEY);
-  return stored !== undefined && stored !== provider.id;
 }
 
 export function clearEmbeddings(db: DB): void {
