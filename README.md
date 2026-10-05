@@ -237,7 +237,7 @@ You drive Agent Julia by talking to it (see [Usage](#usage)); these are the unde
 | `read` | Read a page exactly as stored, front matter included |
 | `list` | List pages with title, status, and date (bounded; takes `limit` and `since`) |
 | `ingest` | Write a page: `append` a fact, or `replace` the whole thing (schema-enforced, guarded, git-committed) |
-| `correct_voice` | Record a voice correction |
+| `correct_voice` | Record a voice correction (one rule per call, up to 1,200 characters; a longer one is refused, never cut) |
 | `retract_correction` | Withdraw one, keeping the record of having had it |
 | `history` | How one page changed: when, what was added, what was removed |
 | `related` | Walk the `[[wiki-links]]` around a page |

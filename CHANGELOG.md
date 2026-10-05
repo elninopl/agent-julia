@@ -33,6 +33,31 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ### Fixed
 
+- **A Homebrew upgrade of Node no longer breaks every session.** The server
+  was registered under node's versioned Cellar path, which `brew upgrade node`
+  and the cleanup after it delete, so neither Claude Code nor Claude Desktop
+  could start it. Registration now uses Homebrew's stable `opt/<formula>` link
+  when it points at the same binary, and `doctor` fails the registration check
+  when the registered program or script is gone, with `sync` as the fix.
+- **A long voice correction is refused, never cut.** A 600-character cap
+  stored a prefix that stopped mid-quote, while `correct_voice` replied with
+  the full text as if it had been saved. The limit is now 1,200 characters, a
+  longer note is refused with a request to split it into one rule per call,
+  and the reply shows exactly what was stored.
+- **A correction made in one session could erase one made in another.**
+  Withdrawing a correction rewrote the file without a lock, so an append from
+  another session landing in between was lost. Both writes take the store lock.
+- **A persona quoting an agent-julia marker rewrote CLAUDE.md on every start.**
+  The write stripped marker-like text and the "is it current?" check did not,
+  so the two never matched and `doctor` reported the block stale forever. Both
+  now build the block the same way.
+- **Claude's config files are replaced atomically and keep their permissions.**
+  Uninstall truncated `~/.claude.json` in place while Claude Code reads it, and
+  rewrites reset 0600 files to the default mode. Writes now go through a temp
+  file and a rename and carry the original mode over.
+- **`get_core` does less per conversation.** It read the store once per
+  rendering and rewrote `surfaces.json` on every call. It now reads once, and
+  records a fetch only when the core changed or ten minutes have passed.
 - **The weekly digest proposed thousands of near-duplicates.** Vectors are
   stored per chunk, and the digest compared them as if each were a page: it
   paired every long page with itself and listed each pair of pages once per
