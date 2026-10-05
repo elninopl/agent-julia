@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { warn } from "../util/log.js";
 import { DB } from "./db.js";
 import {
@@ -99,20 +100,48 @@ export function chunkPage(title: string, body: string): Chunk[] {
   return out.length > 0 ? out : [{ label: title, text: title }];
 }
 
+export interface EmbeddedChunk {
+  chunk: Chunk;
+  vector: number[];
+  hash: string;
+}
+
+const chunkHash = (input: string): string => createHash("sha1").update(input).digest("hex");
+
+// Vectors this page already has under `model`, by the hash of the text each
+// was made from.
+export function knownVectors(db: DB, id: string, model: string): Map<string, number[]> {
+  const rows = db
+    .prepare("SELECT hash, vector FROM embeddings WHERE id = ? AND model = ? AND hash IS NOT NULL")
+    .all(id, model) as Array<{ hash: string; vector: Buffer }>;
+  return new Map(rows.map((r) => [r.hash, Array.from(blobToVector(r.vector))]));
+}
+
 // Embedding is async (model or network), so callers run it BEFORE opening a
 // write transaction — never hold a DB lock across an embed.
+//
+// Only the chunks whose text is new are sent to the provider. An append used
+// to re-embed the whole page: one line added to a 60-chunk page cost 60
+// chunks of inference, ~2.4 s, under the store lock every other writer waits on.
 export async function embedChunks(
   provider: EmbeddingProvider,
   title: string,
   body: string,
-): Promise<Array<{ chunk: Chunk; vector: number[] }> | null> {
+  known: Map<string, number[]> = new Map(),
+): Promise<EmbeddedChunk[] | null> {
   if (!provider.enabled) return null;
-  const chunks = chunkPage(title, body);
+  const chunks = chunkPage(title, body).map((chunk) => {
+    const input = `${title} — ${chunk.label}\n${chunk.text}`;
+    return { chunk, input, hash: chunkHash(input) };
+  });
+  const missing = chunks.filter((c) => !known.has(c.hash));
   try {
-    // One batch per page: the provider interface has always been batch-capable
-    // and was only ever called with a single element.
-    const vectors = await provider.embed(chunks.map((c) => `${title} — ${c.label}\n${c.text}`));
-    return chunks.map((chunk, i) => ({ chunk, vector: vectors[i]! })).filter((r) => r.vector);
+    // One batch per page: the provider batches further if it needs to.
+    const fresh = missing.length > 0 ? await provider.embed(missing.map((c) => c.input)) : [];
+    const made = new Map(missing.map((c, i) => [c.hash, fresh[i]]));
+    return chunks
+      .map((c) => ({ chunk: c.chunk, hash: c.hash, vector: known.get(c.hash) ?? made.get(c.hash)! }))
+      .filter((r) => r.vector);
   } catch (err) {
     onEmbedError(err);
     return null;
@@ -121,18 +150,13 @@ export async function embedChunks(
 
 // Store a precomputed vector. Synchronous, so it composes into a transaction
 // with the FTS upsert and page-hash write.
-export function semanticStore(
-  db: DB,
-  provider: EmbeddingProvider,
-  id: string,
-  rows: Array<{ chunk: Chunk; vector: number[] }>,
-): void {
+export function semanticStore(db: DB, provider: EmbeddingProvider, id: string, rows: EmbeddedChunk[]): void {
   db.prepare("DELETE FROM embeddings WHERE id = ?").run(id);
   const insert = db.prepare(
-    "INSERT INTO embeddings (id, chunk, label, model, dims, vector) VALUES (?, ?, ?, ?, ?, ?)",
+    "INSERT INTO embeddings (id, chunk, label, model, dims, vector, hash) VALUES (?, ?, ?, ?, ?, ?, ?)",
   );
   rows.forEach((r, i) => {
-    insert.run(id, i, r.chunk.label, provider.id, provider.dims, vectorToBlob(r.vector));
+    insert.run(id, i, r.chunk.label, provider.id, provider.dims, vectorToBlob(r.vector), r.hash);
   });
 }
 

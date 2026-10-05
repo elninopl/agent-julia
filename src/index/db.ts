@@ -128,6 +128,9 @@ function initSchema(db: DB, tokenizer: string): void {
       model  TEXT NOT NULL,
       dims   INTEGER NOT NULL,
       vector BLOB NOT NULL,
+      -- Fingerprint of the text the vector was made from, so a write that
+      -- changes one part of a page re-embeds only that part.
+      hash   TEXT,
       PRIMARY KEY (id, chunk)
     );
 
@@ -143,6 +146,12 @@ function initSchema(db: DB, tokenizer: string): void {
       value TEXT NOT NULL
     );
   `);
+  // Added in place rather than through INDEX_SCHEMA_VERSION: a bump drops the
+  // index, and re-embedding a whole store to gain a column is the cost this
+  // column exists to avoid. Rows from before it have no hash and are simply
+  // not reused.
+  const columns = db.prepare("PRAGMA table_info(embeddings)").all() as Array<{ name: string }>;
+  if (!columns.some((c) => c.name === "hash")) db.exec("ALTER TABLE embeddings ADD COLUMN hash TEXT;");
 }
 
 export function getPageHash(db: DB, id: string): string | undefined {
