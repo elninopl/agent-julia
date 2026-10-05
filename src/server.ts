@@ -137,18 +137,28 @@ async function runStartupTasks(rt: Runtime): Promise<void> {
   // touch copies carrying the agent-julia ownership marker; the persona refresh
   // never creates a block, only updates existing ones. Non-fatal.
   try {
-    // Under the store lock: every Claude session spawns its own server, and on a
+    // One server at a time: every Claude session spawns its own server, and on a
     // busy machine a dozen of them boot at once and rewrite ~/.claude/CLAUDE.md
     // and ~/.claude/skills at the same moment.
+    //
+    // Its own lock, not the store's. None of this writes the store: the files it
+    // rewrites carry their own file locks, and an absorb goes through ingest,
+    // which takes the store lock for itself. Under the store lock, a session
+    // calling ingest while another one booted waited behind the whole refresh,
+    // and after 15 s lost the write.
     const { adoptCodeMemory } = await import("./surfaces/code-memory.js");
-    const refreshed = await withStoreLock(rt.config.memoryDir, async () => ({
-      steps: await installSkills(skillsTargetDir()),
-      cores: await refreshInjectedCore(rt.config),
-      exports: await refreshExports(rt.config),
-      // Claude Code's own per-project memory: point it here, and (when asked)
-      // bring in whatever was written there instead of here.
-      code: await adoptCodeMemory(rt.paths, rt.indexer, rt.config),
-    }));
+    const refreshed = await withStoreLock(
+      rt.config.memoryDir,
+      async () => ({
+        steps: await installSkills(skillsTargetDir()),
+        cores: await refreshInjectedCore(rt.config),
+        exports: await refreshExports(rt.config),
+        // Claude Code's own per-project memory: point it here, and (when asked)
+        // bring in whatever was written there instead of here.
+        code: await adoptCodeMemory(rt.paths, rt.indexer, rt.config),
+      }),
+      { name: "refresh" },
+    );
     if (!refreshed) {
       log("refresh: another server was doing it — skipped");
     } else {
