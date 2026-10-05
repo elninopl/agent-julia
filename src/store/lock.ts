@@ -59,15 +59,7 @@ export async function withStoreLock<T>(
       if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
       const owner = await readOwner(tokenFile);
       const age = await lockAge(tokenFile, lockDir);
-      if (age !== null && age > STALE_MS) {
-        // Confirm nothing moved before taking it away from whoever holds it.
-        await delay(POLL_MS);
-        if ((await readOwner(tokenFile)) === owner) {
-          warn(`reclaiming a stale ${name} lock (holder ${owner ?? "unknown"}, idle ${Math.round(age / 1000)}s)`);
-          await rm(lockDir, { recursive: true, force: true });
-          continue;
-        }
-      }
+      if (age !== null && age > STALE_MS && (await reclaim(lockDir, tokenFile, owner, name))) continue;
       if (Date.now() >= deadline) {
         if (waitMs > 0) warn(`${name} lock busy — skipping this operation (the next write picks the changes up)`);
         return null;
@@ -107,6 +99,39 @@ export async function withStoreLock<T>(
     if ((await readOwner(tokenFile)) === token) {
       await rm(lockDir, { recursive: true, force: true }).catch(() => undefined);
     }
+  }
+}
+
+// Remove a lock whose holder stopped refreshing it, one waiter at a time.
+// Every waiter that finds the same dead lock decides it is stale. Confirming
+// that the token had not changed was not enough: the first waiter removed the
+// lock and took it, and a second, which had confirmed the same dead token a
+// moment earlier, then removed that fresh lock and took it as well. Reclaimers
+// now take a guard first and look again under it; the lock goes only if it
+// still names the same holder and is still idle. True when the caller should
+// try to take it now.
+async function reclaim(lockDir: string, tokenFile: string, owner: string | null, name: string): Promise<boolean> {
+  const guard = `${lockDir}.reclaim`;
+  try {
+    await mkdir(guard);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+    // Someone else is reclaiming. Their section is a read, a stat and a
+    // removal, so a guard this old was left by a reclaimer that died in it.
+    const st = await stat(guard).catch(() => null);
+    if (st && Date.now() - st.mtimeMs > STALE_MS) await rm(guard, { recursive: true, force: true }).catch(() => undefined);
+    return false;
+  }
+  try {
+    if ((await readOwner(tokenFile)) !== owner) return false;
+    const age = await lockAge(tokenFile, lockDir);
+    if (age === null) return true;
+    if (age <= STALE_MS) return false;
+    warn(`reclaiming a stale ${name} lock (holder ${owner ?? "unknown"}, idle ${Math.round(age / 1000)}s)`);
+    await rm(lockDir, { recursive: true, force: true });
+    return true;
+  } finally {
+    await rm(guard, { recursive: true, force: true }).catch(() => undefined);
   }
 }
 

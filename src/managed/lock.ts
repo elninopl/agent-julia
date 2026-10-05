@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { open, readFile, rm, stat, utimes } from "node:fs/promises";
+import type { FileHandle } from "node:fs/promises";
 import { warn } from "../util/log.js";
 
 // A lock is stale only when its holder has stopped refreshing it. A live holder
@@ -68,20 +69,9 @@ export async function withFileLock<T>(
       let reclaimed = false;
       try {
         const st = await stat(lock);
-        const age = Date.now() - st.mtimeMs;
-        // Both directions: a lockfile dated in the future never ages out of a
-        // one-sided test, so every later write would stall and then give up
-        // forever.
-        if (age > STALE_MS || age < -STALE_MS) {
-          // Confirm nothing moved before taking it from whoever holds it.
-          // Reclaiming blind hands the lock to two holders at once, which is
-          // the race the lock exists to prevent.
+        if (isStale(st.mtimeMs)) {
           const owner = await readFile(lock, "utf8").catch(() => null);
-          await delay(POLL_MS);
-          if ((await readFile(lock, "utf8").catch(() => null)) === owner) {
-            await rm(lock, { recursive: true, force: true });
-            reclaimed = true;
-          }
+          reclaimed = await reclaim(lock, owner);
         }
       } catch (e) {
         // Only an outright disappearance justifies retrying without waiting;
@@ -118,5 +108,46 @@ export async function withFileLock<T>(
     // evidence that it is: removing it would delete whatever holds it now.
     const owner = await readFile(lock, "utf8").catch(() => null);
     if (owner === token) await rm(lock, { force: true }).catch(() => undefined);
+  }
+}
+
+// Both directions: a lockfile dated in the future never ages out of a
+// one-sided test, so every later write would stall and then give up forever.
+function isStale(mtimeMs: number): boolean {
+  const age = Date.now() - mtimeMs;
+  return age > STALE_MS || age < -STALE_MS;
+}
+
+// Remove a lock whose holder stopped refreshing it, one waiter at a time.
+// Every waiter that finds the same dead lock decides it is stale, and deleting
+// it on that decision let the first one clear it and take the lock, and a
+// second, a moment later, delete that fresh lock and take it as well: two
+// holders, the race the lock exists to prevent. Reclaimers now take a guard
+// first, and under it look again: the lock goes only if it is still the stale
+// one, with the same owner. True when the caller should try to take it now.
+async function reclaim(lock: string, owner: string | null): Promise<boolean> {
+  const guard = `${lock}.reclaim`;
+  let handle: FileHandle;
+  try {
+    handle = await open(guard, "wx");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+    // Someone else is reclaiming. Their section is a stat, a read and an
+    // unlink, so a guard this old was left by a reclaimer that died in it.
+    const st = await stat(guard).catch(() => null);
+    if (st && isStale(st.mtimeMs)) await rm(guard, { force: true }).catch(() => undefined);
+    return false;
+  }
+  try {
+    const st = await stat(lock).catch(() => null);
+    if (!st) return true;
+    if (!isStale(st.mtimeMs)) return false;
+    if ((await readFile(lock, "utf8").catch(() => null)) !== owner) return false;
+    await rm(lock, { recursive: true, force: true });
+    return true;
+  } finally {
+    // Closed before the unlink: Windows refuses to remove an open file.
+    await handle.close().catch(() => undefined);
+    await rm(guard, { force: true }).catch(() => undefined);
   }
 }
