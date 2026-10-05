@@ -14,7 +14,7 @@ import { injectedCoreFrom, STARTUP_BLOCK_ID } from "../persona/startup.js";
 import { composeCore } from "../persona/compose.js";
 import { INSTRUCTIONS_BUDGET, coreHashOf, serverInstructions } from "../persona/startup.js";
 import { PASTE_LAYOUT, configFingerprint, pasteBody, pasteHash } from "../persona/paste.js";
-import { probeCoworkSession } from "../surfaces/cowork-probe.js";
+import { coworkSessionRoots, probeCoworkSession } from "../surfaces/cowork-probe.js";
 import { ABSORB_BATCH_LIMIT, codeMemoryRoot, codeMemoryStatus } from "../surfaces/code-memory.js";
 import { estimateTokens } from "../util/tokens.js";
 import { hasManagedBlock, managedBlock } from "../managed/block.js";
@@ -53,6 +53,8 @@ export interface DoctorTargets {
   surfaces: string;
   skillsDir: string;
   codeMemoryRoot: string;
+  /** Where Claude Desktop keeps its Cowork sessions. */
+  coworkSessions: string[];
 }
 
 export function defaultTargets(): DoctorTargets {
@@ -65,6 +67,7 @@ export function defaultTargets(): DoctorTargets {
     surfaces: surfacesStatePath(),
     skillsDir: skillsTargetDir(),
     codeMemoryRoot: codeMemoryRoot(),
+    coworkSessions: coworkSessionRoots(),
   };
 }
 
@@ -393,7 +396,7 @@ export async function runDoctor(config: Config, t: DoctorTargets = defaultTarget
     }
 
     // The only real evidence: what Claude Desktop seeded its last session with.
-    const probe = await probeCoworkSession();
+    const probe = await probeCoworkSession(t.coworkSessions);
     if (probe.status === "unreadable") {
       checks.push({
         name: "paste seen",
@@ -401,10 +404,15 @@ export async function runDoctor(config: Config, t: DoctorTargets = defaultTarget
         detail: "could not read Claude Desktop's session files (undocumented path, it may have moved). No signal either way.",
       });
     } else if (probe.status === "none") {
+      // Only the newest session counts. An older block is what the field held
+      // back then, and a re-paste prompt built on it is a prompt about the past.
       checks.push({
         name: "paste seen",
         status: "unknown",
-        detail: "no Cowork session on this machine carried an agent-julia block, so there is nothing to read.",
+        detail: probe.newest
+          ? `the newest Cowork session (${probe.newest}) left no agent-julia block on disk. Recent Claude Desktop ` +
+            "versions often write an empty instructions file or none at all, so this says nothing either way."
+          : "there is no Cowork session on this machine, so there is nothing to read.",
       });
     } else if (probe.layout === PASTE_LAYOUT || marker?.variant === "with-voice") {
       checks.push({

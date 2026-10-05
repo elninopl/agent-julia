@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -27,6 +27,8 @@ function sandbox(): { dir: string; targets: DoctorTargets } {
       // An empty sandbox: doctor must not read the developer's real
       // ~/.claude/projects while the suite runs.
       codeMemoryRoot: join(dir, "projects"),
+      // Likewise Claude Desktop's session tree.
+      coworkSessions: [join(dir, "sessions")],
     },
   };
 }
@@ -121,6 +123,36 @@ describe("doctor", () => {
     const instructions = byName(checks, "mcp instructions");
     expect(instructions.status).toBe("ok");
     expect(instructions.detail).toMatch(/bytes of 1800|bytes of 1,800/);
+  });
+
+  it("asks for a re-paste only on the strength of the newest Desktop session", async () => {
+    const { dir, targets } = sandbox();
+    const memoryDir = join(dir, "mem");
+    mkdirSync(memoryDir, { recursive: true });
+    const cfg = ConfigSchema.parse({ memoryDir, git: false, surfaces: ["cowork"] });
+    const seed = (name: string, content: string, day: string) => {
+      const claudeDir = join(targets.coworkSessions[0]!, "acct", "org", name, ".claude");
+      mkdirSync(claudeDir, { recursive: true });
+      const at = new Date(`${day}T08:00:00Z`);
+      writeFileSync(join(claudeDir, "CLAUDE.md"), content, "utf8");
+      utimesSync(join(claudeDir, "CLAUDE.md"), at, at);
+    };
+    const layout1 =
+      "<!-- agent-julia:persona-core:start -->\n# Persona\n<!-- agent-julia:persona-core:end -->\n";
+
+    // A weeks-old layout-1 session behind an empty newest one is history.
+    seed("local_old", layout1, "2026-08-20");
+    seed("1a2b3c4d", "", "2026-10-01");
+    let seen = byName(await runDoctor(cfg, targets), "paste seen");
+    expect(seen.status).toBe("unknown");
+    expect(seen.detail).toContain("2026-10-01");
+    expect(seen.fix).toBeUndefined();
+
+    // The newest session really carrying the old block is still worth a warning.
+    seed("5e6f7a8b", layout1, "2026-10-02");
+    seen = byName(await runDoctor(cfg, targets), "paste seen");
+    expect(seen.status).toBe("warn");
+    expect(seen.detail).toContain("2026-10-02");
   });
 
   it("never reports a failure for something it merely cannot see", async () => {

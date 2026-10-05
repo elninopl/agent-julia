@@ -12,7 +12,7 @@ import { createHash } from "node:crypto";
 // actually contains, because the field itself is unreadable from outside the
 // app. Every path this package knows about lives in this file and nowhere else,
 // and every failure here is "no signal", never a failed check.
-function sessionRoots(): string[] {
+export function coworkSessionRoots(): string[] {
   const home = homedir();
   switch (platform()) {
     case "darwin":
@@ -27,11 +27,15 @@ function sessionRoots(): string[] {
 }
 
 export interface CoworkProbe {
+  /**
+   * "found": the newest session was seeded with an agent-julia block.
+   * "none": there is no session, or the newest one left no block on disk.
+   */
   status: "found" | "none" | "unreadable";
   /** Newest seeded block: 1 = the old long paste, 2 = the stable layer. */
   layout?: number;
   chars?: number;
-  /** ISO date of the newest session that carried this exact block. */
+  /** ISO date of the newest session; with "none", the one that had no block. */
   newest?: string;
   /** ISO date of the oldest consecutive session carrying the same block. */
   unchangedSince?: string;
@@ -40,54 +44,59 @@ export interface CoworkProbe {
 }
 
 const MAX_COMPARED = 50;
-// Bound the WALK, not the result set. Capping collected files meant the cap fell
-// wherever directory order happened to reach it, so "the newest session" became
-// "the newest among an arbitrary subset" — on this machine, 500 of 448 files was
-// fine and the next user with more would have silently got a wrong answer.
-const MAX_DIRS = 20_000;
 
-export async function probeCoworkSession(): Promise<CoworkProbe> {
+// One Cowork session as it sits on disk: <root>/<account>/<org>/<session>/,
+// with the instructions it was seeded with in .claude/CLAUDE.md. Older Claude
+// Desktop builds named the session directory local_<uuid>; newer ones use a
+// short hex id and mostly write no CLAUDE.md at all, or an empty one.
+interface Session {
+  /** The seeded instructions file, or null when the session has none. */
+  file: string | null;
+  /** When it was seeded: the file's mtime, else the .claude directory's. */
+  at: number;
+}
+
+// The newest session decides. Skipping past sessions whose file was empty or
+// missing, as this used to, reported a block from weeks earlier as "the last
+// session" whenever the newest few had nothing in them, and doctor then asked
+// for a re-paste on the strength of it. A session without a block says nothing
+// about the field, so the answer for it is "none", not an older session's.
+export async function probeCoworkSession(roots: string[] = coworkSessionRoots()): Promise<CoworkProbe> {
   try {
-    const files: Array<{ path: string; mtime: number }> = [];
-    for (const root of sessionRoots()) {
+    const sessions: Session[] = [];
+    for (const root of roots) {
       if (!existsSync(root)) continue;
-      await collect(root, files, 0, { dirs: MAX_DIRS });
+      sessions.push(...(await listSessions(root)));
     }
-    if (files.length === 0) return { status: "none" };
-    files.sort((a, b) => b.mtime - a.mtime);
+    if (sessions.length === 0) return { status: "none" };
+    sessions.sort((a, b) => b.at - a.at);
 
-    // Not every seeded file carries a block: Claude Desktop also leaves empty
-    // placeholders, and they are often the newest thing on disk. Walk until a
-    // real one turns up rather than concluding from the first.
-    let newest: { path: string; mtime: number } | null = null;
-    let body: string | null = null;
-    for (const f of files.slice(0, MAX_COMPARED)) {
-      const found = extractBlock(await readFile(f.path, "utf8").catch(() => ""));
-      if (found !== null) {
-        newest = f;
-        body = found;
-        break;
-      }
-    }
-    if (!newest || body === null) return { status: "none" };
+    const newest = sessions[0]!;
+    const body = newest.file ? extractBlock(await readFile(newest.file, "utf8").catch(() => "")) : null;
+    if (body === null) return { status: "none", newest: day(newest.at) };
     const hash = createHash("sha1").update(body).digest("hex");
 
     // Walk back while the block is identical, to report a range rather than a
-    // single date: "unchanged since" is the number that shows the drift.
-    let unchangedSince = newest.mtime;
-    for (const f of files.slice(files.indexOf(newest) + 1, MAX_COMPARED * 2)) {
-      const other = extractBlock(await readFile(f.path, "utf8").catch(() => ""));
+    // single date: "unchanged since" is the number that shows the drift. A
+    // session with no block is skipped, since it shows nothing either way; a
+    // different block ends the run.
+    let unchangedSince = newest.at;
+    let compared = 0;
+    for (const s of sessions.slice(1)) {
+      if (!s.file) continue;
+      if (++compared > MAX_COMPARED) break;
+      const other = extractBlock(await readFile(s.file, "utf8").catch(() => ""));
       if (other === null) continue;
       if (createHash("sha1").update(other).digest("hex") !== hash) break;
-      unchangedSince = f.mtime;
+      unchangedSince = s.at;
     }
 
     return {
       status: "found",
       layout: classify(body),
       chars: body.length,
-      newest: new Date(newest.mtime).toISOString().slice(0, 10),
-      unchangedSince: new Date(unchangedSince).toISOString().slice(0, 10),
+      newest: day(newest.at),
+      unchangedSince: day(unchangedSince),
       corrections: countCorrections(body),
     };
   } catch {
@@ -95,25 +104,43 @@ export async function probeCoworkSession(): Promise<CoworkProbe> {
   }
 }
 
-async function collect(
-  dir: string,
-  out: Array<{ path: string; mtime: number }>,
-  depth: number,
-  budget: { dirs: number },
-): Promise<void> {
-  if (depth > 6 || budget.dirs <= 0) return;
-  budget.dirs--;
-  for (const entry of await readdir(dir, { withFileTypes: true }).catch(() => [])) {
-    const full = join(dir, entry.name);
-    // Not followed: a symlink loop under a directory nobody documents should not
-    // be able to hang a server boot.
-    if (entry.isDirectory() && !entry.isSymbolicLink()) {
-      await collect(full, out, depth + 1, budget);
-    } else if (entry.isFile() && entry.name === "CLAUDE.md") {
-      const st = await stat(full).catch(() => null);
-      if (st) out.push({ path: full, mtime: st.mtimeMs });
+function day(ms: number): string {
+  return new Date(ms).toISOString().slice(0, 10);
+}
+
+// Three fixed levels of directories, then a stat or two per session. This used
+// to walk six levels of everything under the root looking for CLAUDE.md: on one
+// machine about 14,000 directories of plugin caches, uploads and outputs, half
+// a second of every server boot, against a 20,000-directory cap that a few more
+// weeks of sessions would have hit, cutting the walk wherever readdir order put
+// the cut.
+async function listSessions(root: string): Promise<Session[]> {
+  const out: Session[] = [];
+  for (const account of await subdirs(root)) {
+    for (const org of await subdirs(account)) {
+      const found = await Promise.all((await subdirs(org)).map((dir) => sessionAt(dir)));
+      for (const s of found) if (s) out.push(s);
     }
   }
+  return out;
+}
+
+async function sessionAt(dir: string): Promise<Session | null> {
+  const claudeDir = join(dir, ".claude");
+  const file = join(claudeDir, "CLAUDE.md");
+  const st = await stat(file).catch(() => null);
+  if (st?.isFile()) return { file, at: st.mtimeMs };
+  // Only a directory with a .claude inside is a session; the same level holds
+  // caches and settings directories that are not.
+  const dirSt = await stat(claudeDir).catch(() => null);
+  return dirSt?.isDirectory() ? { file: null, at: dirSt.mtimeMs } : null;
+}
+
+// Not followed: a symlink loop under a directory nobody documents should not be
+// able to hang a server boot.
+async function subdirs(dir: string): Promise<string[]> {
+  const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
+  return entries.filter((e) => e.isDirectory() && !e.isSymbolicLink()).map((e) => join(dir, e.name));
 }
 
 function extractBlock(content: string): string | null {
