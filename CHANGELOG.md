@@ -33,6 +33,17 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ### Fixed
 
+- **The weekly digest proposed thousands of near-duplicates.** Vectors are
+  stored per chunk, and the digest compared them as if each were a page: it
+  paired every long page with itself and listed each pair of pages once per
+  matching pair of chunks, and with the e5 models, where unrelated pages of one
+  store sit around 0.87, its 0.9 cut let one pair in ten through. On a
+  221-page store that was 4,664 proposals. Each pair of pages is now scored by
+  its closest parts, and the ten closest are proposed.
+- **A write re-embedded the whole page.** Appending one line to a 60-chunk
+  page meant 60 chunks of inference, 4.8 s under the lock every other writer
+  waits on. Vectors now remember the text they were made from, so only the
+  parts that changed are embedded again: the same append takes about 60 ms.
 - **A symlink whose target did not exist yet was replaced by a regular file.**
   A dotfiles repo commonly symlinks `~/.claude/CLAUDE.md`; on a checkout that
   carries the link but not the file, `realpath` refuses the link, and the write
