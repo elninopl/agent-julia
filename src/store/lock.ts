@@ -29,11 +29,16 @@ const delay = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms
 // exact race the lock exists to prevent, now with two processes convinced they
 // own it. A stale lock is only reclaimed when its token is unchanged across the
 // staleness window, which a live holder refreshes.
+//
+// `waitMs: 0` is a try-lock: for work any one process can do on behalf of all
+// of them, where finding it already taken means someone else is doing it.
 export async function withStoreLock<T>(
   root: string,
   fn: () => Promise<T>,
-  name = "store",
+  opts: { name?: string; waitMs?: number } = {},
 ): Promise<T | null> {
+  const name = opts.name ?? "store";
+  const waitMs = opts.waitMs ?? WAIT_MS;
   const internal = join(root, ".agent-julia");
   const lockDir = join(internal, `${name}.lock`);
   const tokenFile = join(lockDir, "owner");
@@ -43,7 +48,7 @@ export async function withStoreLock<T>(
 
   await mkdir(internal, { recursive: true });
   const token = `${process.pid}:${randomUUID()}`;
-  const deadline = Date.now() + WAIT_MS;
+  const deadline = Date.now() + waitMs;
 
   for (;;) {
     let mine = false;
@@ -63,8 +68,8 @@ export async function withStoreLock<T>(
           continue;
         }
       }
-      if (Date.now() > deadline) {
-        warn(`${name} lock busy — skipping this operation (the next write picks the changes up)`);
+      if (Date.now() >= deadline) {
+        if (waitMs > 0) warn(`${name} lock busy — skipping this operation (the next write picks the changes up)`);
         return null;
       }
       await delay(POLL_MS);

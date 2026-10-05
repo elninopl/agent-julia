@@ -48,10 +48,10 @@ export async function buildRuntime(): Promise<Runtime> {
   if (config.git) await ensureGitRepo(config.memoryDir);
 
   const paths = storePaths(config.memoryDir);
+  // Opening the index loads no model. Re-embedding after a model change is a
+  // startup task the server runs once the client is connected: done here, it
+  // held the handshake for as long as the whole store took to embed.
   const indexer = Indexer.open(paths, config);
-
-  // The index is disposable; re-embed if the embedding model changed under us.
-  await indexer.reembedIfStale();
 
   return { config, paths, indexer };
 }
