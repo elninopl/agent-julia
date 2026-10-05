@@ -506,6 +506,26 @@ describe("voice corrections can be withdrawn", () => {
     expect((await readCorrections(paths)).length).toBe(2);
   });
 
+  it("keeps both effects when a retract and appends from other sessions overlap", async () => {
+    // retract reads the file, edits one line and writes the whole file back. An
+    // append landing between the read and the write used to be erased.
+    const dir = mkdtempSync(join(tmpdir(), "aj-retract-race-"));
+    const paths = storePaths(dir);
+    await appendCorrection(paths, "Never open with the user's name.");
+
+    const added = Array.from({ length: 8 }, (_, i) => `Concurrent rule ${i}.`);
+    const [res] = await Promise.all([
+      retractCorrection(paths, "open with the user's name"),
+      ...added.map((rule) => appendCorrection(paths, rule)),
+    ]);
+
+    expect(res.status).toBe("ok");
+    const left = await readCorrections(paths);
+    expect(left.join("\n")).not.toContain("open with the user's name");
+    expect(left).toEqual(expect.arrayContaining(added.map((rule) => `- ${rule}`)));
+    expect(left).toHaveLength(added.length);
+  });
+
   it("refuses a correction too long to be one rule, rather than cutting it", async () => {
     const dir = mkdtempSync(join(tmpdir(), "aj-bound-"));
     const paths = storePaths(dir);
