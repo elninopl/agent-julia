@@ -28,20 +28,48 @@ export interface ServerEntry {
 // embeddings could be chosen, downloaded, indexed, and still never load.
 function candidates(): ServerEntry[] {
   const out: ServerEntry[] = [];
+  const node = stableNodePath(process.execPath);
   const entry = process.argv[1];
   if (entry && !entry.includes(`${sep}_npx${sep}`) && existsSync(entry)) {
     try {
-      out.push({ command: process.execPath, args: [realpathSync(entry), "serve"] });
+      out.push({ command: node, args: [realpathSync(entry), "serve"] });
     } catch {
       // unreadable — skip it
     }
   }
   const global = globalBinary();
   if (global && !out.some((c) => c.args[0] === global)) {
-    out.push({ command: process.execPath, args: [global, "serve"] });
+    out.push({ command: node, args: [global, "serve"] });
   }
   out.push({ command: "npx", args: ["-y", "agent-julia@latest", "serve"] });
   return out;
+}
+
+export interface PathProbe {
+  exists: (path: string) => boolean;
+  realpath: (path: string) => string;
+}
+
+// process.execPath is the resolved binary, which under Homebrew is a versioned
+// Cellar path like /opt/homebrew/Cellar/node/26.4.0/bin/node. `brew upgrade node`
+// plus the cleanup that follows deletes that directory, and every Claude session
+// then fails to start the server. Homebrew keeps opt/<formula> pointing at the
+// installed version, so register that, but only when it is the same binary we
+// are running now: a launcher that silently switches Node versions is a
+// different bug.
+export function stableNodePath(
+  execPath: string,
+  probe: PathProbe = { exists: existsSync, realpath: realpathSync },
+): string {
+  const m = /^(.+)\/Cellar\/(node(?:@\d+)?)\/[^/]+\/bin\/node$/.exec(execPath);
+  if (!m) return execPath;
+  const stable = `${m[1]}/opt/${m[2]}/bin/node`;
+  try {
+    if (probe.exists(stable) && probe.realpath(stable) === probe.realpath(execPath)) return stable;
+  } catch {
+    // a dangling opt link is worth no more than the Cellar path
+  }
+  return execPath;
 }
 
 function globalBinary(): string | null {

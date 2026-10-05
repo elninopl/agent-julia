@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { readFile, readdir } from "node:fs/promises";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { Config } from "../config/schema.js";
 import { storePaths } from "../store/paths.js";
 import { listPageIds, readPage } from "../store/markdown.js";
@@ -68,16 +68,46 @@ export function defaultTargets(): DoctorTargets {
   };
 }
 
-async function hasMcpEntry(configPath: string): Promise<boolean> {
-  if (!existsSync(configPath)) return false;
+// The entry being there is not the same as the server starting. A launcher
+// registered as an absolute path breaks the moment that path goes away — a
+// Homebrew upgrade deleting the old Cellar node, a moved checkout — and every
+// session then fails to connect while the key itself looks fine.
+async function mcpCheck(name: string, configPath: string): Promise<DoctorCheck> {
+  const missing: DoctorCheck = {
+    name,
+    status: "fail",
+    detail: `agent-julia is not registered in ${configPath}`,
+    fix: "npx agent-julia sync",
+  };
+  if (!existsSync(configPath)) return missing;
+  let entry: { command?: unknown; args?: unknown } | null;
   try {
     const data = JSON.parse(await readFile(configPath, "utf8")) as {
       mcpServers?: Record<string, unknown>;
     };
-    return Boolean(data.mcpServers && "agent-julia" in data.mcpServers);
+    if (!data.mcpServers || !("agent-julia" in data.mcpServers)) return missing;
+    entry = data.mcpServers["agent-julia"] as typeof entry;
   } catch {
-    return false;
+    return missing;
   }
+  const command = typeof entry?.command === "string" ? entry.command : null;
+  const args: unknown = entry?.args;
+  const script = Array.isArray(args) && typeof args[0] === "string" ? args[0] : null;
+  const gone =
+    command && isAbsolute(command) && !existsSync(command)
+      ? `the program it launches no longer exists: ${command}`
+      : script && isAbsolute(script) && !existsSync(script)
+        ? `the script it runs no longer exists: ${script}`
+        : null;
+  if (gone) {
+    return {
+      name,
+      status: "fail",
+      detail: `registered in ${configPath}, but ${gone} — no session can start the server`,
+      fix: "npx agent-julia sync",
+    };
+  }
+  return { name, status: "ok", detail: configPath };
 }
 
 // Run every check. Read-only: doctor never repairs anything itself — each
@@ -249,30 +279,8 @@ export async function runDoctor(config: Config, t: DoctorTargets = defaultTarget
   }
 
   // --- MCP registration ---
-  if (wantCode) {
-    checks.push(
-      (await hasMcpEntry(t.claudeCodeConfig))
-        ? { name: "mcp (code)", status: "ok", detail: t.claudeCodeConfig }
-        : {
-            name: "mcp (code)",
-            status: "fail",
-            detail: `agent-julia is not registered in ${t.claudeCodeConfig}`,
-            fix: "npx agent-julia sync",
-          },
-    );
-  }
-  if (wantDesktop && t.desktopConfig) {
-    checks.push(
-      (await hasMcpEntry(t.desktopConfig))
-        ? { name: "mcp (cowork)", status: "ok", detail: t.desktopConfig }
-        : {
-            name: "mcp (cowork)",
-            status: "fail",
-            detail: `agent-julia is not registered in ${t.desktopConfig}`,
-            fix: "npx agent-julia sync",
-          },
-    );
-  }
+  if (wantCode) checks.push(await mcpCheck("mcp (code)", t.claudeCodeConfig));
+  if (wantDesktop && t.desktopConfig) checks.push(await mcpCheck("mcp (cowork)", t.desktopConfig));
 
   // --- Persona block: Claude Code ---
   const composed = await composeCore(paths, config);

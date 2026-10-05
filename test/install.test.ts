@@ -4,6 +4,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   symlinkSync,
   writeFileSync,
   existsSync,
@@ -17,7 +18,7 @@ import { composeCore } from "../src/persona/compose.js";
 import { refreshIndexMd } from "../src/store/catalog.js";
 import { writePage } from "../src/store/markdown.js";
 import { storePaths } from "../src/store/paths.js";
-import { mergeMcpServerForTest } from "../src/wizard/register.js";
+import { mergeMcpServerForTest, stableNodePath } from "../src/wizard/register.js";
 import { ConfigSchema } from "../src/config/schema.js";
 
 function tmp(): string {
@@ -196,6 +197,62 @@ describe("registering a launcher that can do the job", () => {
     const after = JSON.parse(readFileSync(file, "utf8"));
     expect(after.keep).toBe("me");
     expect(after.mcpServers["agent-julia"]).toEqual({ command: "/opt/x/agent-julia", args: ["serve"] });
+  });
+});
+
+describe("a node path that survives brew upgrade", () => {
+  // A fake filesystem: every path that exists, and what each resolves to.
+  function probe(links: Record<string, string>) {
+    return {
+      exists: (p: string) => p in links,
+      realpath: (p: string) => {
+        if (!(p in links)) throw new Error(`ENOENT ${p}`);
+        return links[p]!;
+      },
+    };
+  }
+
+  it("registers opt/<formula> instead of the versioned Cellar path", () => {
+    const cellar = "/opt/homebrew/Cellar/node/26.4.0/bin/node";
+    const fs = probe({ [cellar]: cellar, "/opt/homebrew/opt/node/bin/node": cellar });
+    expect(stableNodePath(cellar, fs)).toBe("/opt/homebrew/opt/node/bin/node");
+  });
+
+  it("handles a versioned formula and an Intel prefix", () => {
+    const cellar = "/usr/local/Cellar/node@22/22.11.0/bin/node";
+    const fs = probe({ [cellar]: cellar, "/usr/local/opt/node@22/bin/node": cellar });
+    expect(stableNodePath(cellar, fs)).toBe("/usr/local/opt/node@22/bin/node");
+  });
+
+  it("keeps the Cellar path when opt points at a different version", () => {
+    // Already upgraded underneath a running process: switching the launcher to
+    // another Node version is not this function's call to make.
+    const cellar = "/opt/homebrew/Cellar/node/26.4.0/bin/node";
+    const fs = probe({ [cellar]: cellar, "/opt/homebrew/opt/node/bin/node": "/opt/homebrew/Cellar/node/27.0.0/bin/node" });
+    expect(stableNodePath(cellar, fs)).toBe(cellar);
+  });
+
+  it("keeps the path when there is no opt link, or nothing Homebrew about it", () => {
+    const cellar = "/opt/homebrew/Cellar/node/26.4.0/bin/node";
+    expect(stableNodePath(cellar, probe({ [cellar]: cellar }))).toBe(cellar);
+    expect(stableNodePath("/usr/bin/node", probe({}))).toBe("/usr/bin/node");
+    expect(stableNodePath("/Users/me/.nvm/versions/node/v24.1.0/bin/node", probe({}))).toBe(
+      "/Users/me/.nvm/versions/node/v24.1.0/bin/node",
+    );
+    expect(stableNodePath("/opt/homebrew/Cellar/nodenv/1.5.0/bin/node", probe({}))).toBe(
+      "/opt/homebrew/Cellar/nodenv/1.5.0/bin/node",
+    );
+  });
+
+  it.skipIf(process.platform === "win32")("follows a real Homebrew-shaped layout on disk", () => {
+    const prefix = realpathSync(mkdtempSync(join(tmpdir(), "aj-brew-")));
+    const bin = join(prefix, "Cellar", "node", "26.4.0", "bin");
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(join(bin, "node"), "", "utf8");
+    mkdirSync(join(prefix, "opt"));
+    symlinkSync("../Cellar/node/26.4.0", join(prefix, "opt", "node"));
+
+    expect(stableNodePath(join(bin, "node"))).toBe(join(prefix, "opt", "node", "bin", "node"));
   });
 });
 

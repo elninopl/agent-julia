@@ -134,6 +134,60 @@ describe("doctor", () => {
   });
 });
 
+describe("a registration that can no longer start", () => {
+  function setup() {
+    const { dir, targets } = sandbox();
+    const memoryDir = join(dir, "mem");
+    mkdirSync(memoryDir, { recursive: true });
+    const cfg = ConfigSchema.parse({ memoryDir, git: false, surfaces: ["code", "cowork"] });
+    const register = (file: string, entry: unknown) =>
+      writeFileSync(file, JSON.stringify({ mcpServers: { "agent-julia": entry } }), "utf8");
+    return { dir, targets, cfg, register };
+  }
+
+  it("fails when the registered node binary is gone", async () => {
+    // What `brew upgrade node` and the cleanup after it leave behind: the key is
+    // still there, the Cellar directory it names is not.
+    const { dir, targets, cfg, register } = setup();
+    const script = join(dir, "index.js");
+    writeFileSync(script, "", "utf8");
+    const gone = join(dir, "Cellar", "node", "26.4.0", "bin", "node");
+    register(targets.claudeCodeConfig, { command: gone, args: [script, "serve"] });
+    register(targets.desktopConfig!, { command: gone, args: [script, "serve"] });
+
+    const checks = await runDoctor(cfg, targets);
+    for (const name of ["mcp (code)", "mcp (cowork)"]) {
+      const c = byName(checks, name);
+      expect(c.status).toBe("fail");
+      expect(c.detail).toContain(gone);
+      expect(c.fix).toContain("agent-julia sync");
+    }
+  });
+
+  it("fails when the script the launcher runs is gone", async () => {
+    const { dir, targets, cfg, register } = setup();
+    const gone = join(dir, "moved-checkout", "dist", "index.js");
+    register(targets.claudeCodeConfig, { command: process.execPath, args: [gone, "serve"] });
+
+    const c = byName(await runDoctor(cfg, targets), "mcp (code)");
+    expect(c.status).toBe("fail");
+    expect(c.detail).toContain(gone);
+  });
+
+  it("passes a launcher whose paths exist, and leaves PATH lookups alone", async () => {
+    const { dir, targets, cfg, register } = setup();
+    const script = join(dir, "index.js");
+    writeFileSync(script, "", "utf8");
+    register(targets.claudeCodeConfig, { command: process.execPath, args: [script, "serve"] });
+    // npx is resolved on PATH by the client; doctor has no business guessing.
+    register(targets.desktopConfig!, { command: "npx", args: ["-y", "agent-julia@latest", "serve"] });
+
+    const checks = await runDoctor(cfg, targets);
+    expect(byName(checks, "mcp (code)").status).toBe("ok");
+    expect(byName(checks, "mcp (cowork)").status).toBe("ok");
+  });
+});
+
 describe("voice fetch reports on a client that actually connected", () => {
   it("ignores a record left by something that never started the server", async () => {
     // A scratch script or a one-off client leaves a fetch record behind. Reading
