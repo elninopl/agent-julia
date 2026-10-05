@@ -1,13 +1,17 @@
 import { existsSync } from "node:fs";
 import { appendFile, readFile, writeFile } from "node:fs/promises";
 import { StorePaths } from "../store/paths.js";
-import { todayISO } from "../store/markdown.js";
+import { todayISO, writeFileAtomic } from "../store/markdown.js";
+import { withStoreLock } from "../store/lock.js";
 
 // L3 — user voice corrections. Append-only, highest precedence. Kept separate from
 // preset (L2) and core (L1) and surfaced into the injected core.
-// A single correction that runs longer than this is a document, not a rule, and
-// it crowds out the ones after it.
-const MAX_CORRECTION_CHARS = 600;
+// The longest single correction accepted. At the default contextBudget of 1200
+// tokens the corrections share is roughly 470 tokens, about 1,900 characters, so
+// one rule this long still leaves room for others; real ones run to about 950.
+// Anything longer is several rules, and it is refused, never cut: the old cap
+// of 600 stored a prefix that stopped mid-quote and read as a complete rule.
+export const MAX_CORRECTION_CHARS = 1200;
 
 const HEADER = `# Voice corrections
 
@@ -15,15 +19,46 @@ const HEADER = `# Voice corrections
 > override the style preset and the universal core. Newest at the bottom.
 `;
 
-export async function appendCorrection(paths: StorePaths, note: string): Promise<void> {
-  if (!existsSync(paths.voiceCorrections)) {
-    await writeFile(paths.voiceCorrections, HEADER + "\n", "utf8");
+// Every Claude session runs its own server against this one file. retract
+// rewrites the whole file, so an append from another session that landed
+// between its read and its write was erased; two first appends could each
+// write the header and the second would truncate the first one's rule. The
+// store lock serializes them. A lock that cannot be had in time is an error,
+// never a quiet skip: the caller is about to tell the user it was saved.
+async function underStoreLock<T>(paths: StorePaths, fn: () => Promise<T>): Promise<T> {
+  const res = await withStoreLock(paths.root, async () => ({ value: await fn() }));
+  if (!res) {
+    throw new Error(
+      "another agent-julia process is writing to this store and did not finish in time; " +
+        "voice-corrections.md was not changed. Try again.",
+    );
   }
+  return res.value;
+}
+
+export type AppendResult =
+  | { status: "ok"; saved: string }
+  | { status: "empty" }
+  | { status: "too-long"; length: number; max: number };
+
+// `saved` is the text as stored, which is not always the note as given: the
+// caller must show that, not the note.
+export async function appendCorrection(paths: StorePaths, note: string): Promise<AppendResult> {
   // Bounded and single-line. This text goes into the always-on prompt of every
   // surface with no review step, and the reader only ever takes the first line,
   // so a long or multi-line correction was silently half-applied.
-  const clean = note.trim().replace(/\s+/g, " ").slice(0, MAX_CORRECTION_CHARS);
-  await appendFile(paths.voiceCorrections, `- ${todayISO()} — ${clean}\n`, "utf8");
+  const clean = note.trim().replace(/\s+/g, " ");
+  if (!clean) return { status: "empty" };
+  if (clean.length > MAX_CORRECTION_CHARS) {
+    return { status: "too-long", length: clean.length, max: MAX_CORRECTION_CHARS };
+  }
+  await underStoreLock(paths, async () => {
+    if (!existsSync(paths.voiceCorrections)) {
+      await writeFile(paths.voiceCorrections, HEADER + "\n", "utf8");
+    }
+    await appendFile(paths.voiceCorrections, `- ${todayISO()} — ${clean}\n`, "utf8");
+  });
+  return { status: "ok", saved: clean };
 }
 
 // Withdraw a correction. Commented out rather than deleted: the file is the
@@ -31,14 +66,16 @@ export async function appendCorrection(paths: StorePaths, note: string): Promise
 // dropped it on this date" is worth more than a gap. Until this existed, the
 // only way to take a rule out of the global prompt of every surface was to open
 // the markdown by hand.
-export async function retractCorrection(
-  paths: StorePaths,
-  match: string,
-): Promise<
+export type RetractResult =
   | { status: "ok"; retracted: string }
   | { status: "none" }
-  | { status: "ambiguous"; candidates: string[] }
-> {
+  | { status: "ambiguous"; candidates: string[] };
+
+export async function retractCorrection(paths: StorePaths, match: string): Promise<RetractResult> {
+  return underStoreLock(paths, () => retractLocked(paths, match));
+}
+
+async function retractLocked(paths: StorePaths, match: string): Promise<RetractResult> {
   if (!existsSync(paths.voiceCorrections)) return { status: "none" };
   const raw = await readFile(paths.voiceCorrections, "utf8");
   const needle = match.trim().toLowerCase();
@@ -52,7 +89,7 @@ export async function retractCorrection(
   }
   const { l, i } = hits[0]!;
   lines[i] = `<!-- retracted ${todayISO()}: ${l.replace(/^- /, "")} -->`;
-  await writeFile(paths.voiceCorrections, lines.join("\n"), "utf8");
+  await writeFileAtomic(paths.voiceCorrections, lines.join("\n"));
   return { status: "ok", retracted: l.replace(/^- /, "") };
 }
 

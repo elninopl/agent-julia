@@ -12,7 +12,13 @@ import { copyToClipboard } from "../util/clipboard.js";
 import { buildInjectedCore, STARTUP_BLOCK_ID } from "../persona/startup.js";
 import { PASTE_LAYOUT, configFingerprint, pasteBody, pasteHash } from "../persona/paste.js";
 import { storePaths } from "../store/paths.js";
-import { endMarker, hasManagedBlock, removeManagedBlock, startMarker, upsertManagedBlock } from "../managed/block.js";
+import {
+  hasManagedBlock,
+  managedBlock,
+  removeManagedBlock,
+  upsertManagedBlock,
+  writeFileAtomic,
+} from "../managed/block.js";
 import { installSkills, skillsTargetDir, uninstallSkills } from "../skills/install.js";
 import { EXPORT_BLOCK_ID as EXPORTED_BLOCK_ID } from "../export/export.js";
 
@@ -28,20 +34,48 @@ export interface ServerEntry {
 // embeddings could be chosen, downloaded, indexed, and still never load.
 function candidates(): ServerEntry[] {
   const out: ServerEntry[] = [];
+  const node = stableNodePath(process.execPath);
   const entry = process.argv[1];
   if (entry && !entry.includes(`${sep}_npx${sep}`) && existsSync(entry)) {
     try {
-      out.push({ command: process.execPath, args: [realpathSync(entry), "serve"] });
+      out.push({ command: node, args: [realpathSync(entry), "serve"] });
     } catch {
       // unreadable — skip it
     }
   }
   const global = globalBinary();
   if (global && !out.some((c) => c.args[0] === global)) {
-    out.push({ command: process.execPath, args: [global, "serve"] });
+    out.push({ command: node, args: [global, "serve"] });
   }
   out.push({ command: "npx", args: ["-y", "agent-julia@latest", "serve"] });
   return out;
+}
+
+export interface PathProbe {
+  exists: (path: string) => boolean;
+  realpath: (path: string) => string;
+}
+
+// process.execPath is the resolved binary, which under Homebrew is a versioned
+// Cellar path like /opt/homebrew/Cellar/node/26.4.0/bin/node. `brew upgrade node`
+// plus the cleanup that follows deletes that directory, and every Claude session
+// then fails to start the server. Homebrew keeps opt/<formula> pointing at the
+// installed version, so register that, but only when it is the same binary we
+// are running now: a launcher that silently switches Node versions is a
+// different bug.
+export function stableNodePath(
+  execPath: string,
+  probe: PathProbe = { exists: existsSync, realpath: realpathSync },
+): string {
+  const m = /^(.+)\/Cellar\/(node(?:@\d+)?)\/[^/]+\/bin\/node$/.exec(execPath);
+  if (!m) return execPath;
+  const stable = `${m[1]}/opt/${m[2]}/bin/node`;
+  try {
+    if (probe.exists(stable) && probe.realpath(stable) === probe.realpath(execPath)) return stable;
+  } catch {
+    // a dangling opt link is worth no more than the Cellar path
+  }
+  return execPath;
 }
 
 function globalBinary(): string | null {
@@ -167,6 +201,8 @@ export interface SurfacesState {
   boots?: Record<string, { at: string }>;
   fetches?: Record<string, { at: string; coreHash: string }>;
   migrationNotices?: { count: number; lastAt: string };
+  /** When the boot-time search for an old layout-1 paste ran, and what it saw. */
+  legacyPasteCheck?: { at: string; seen: string };
 }
 
 export async function readSurfaces(path = surfacesStatePath()): Promise<SurfacesState> {
@@ -258,9 +294,7 @@ export async function mergeMcpServerForTest(path: string, name: string, entry: S
   // state, and a truncated one is a broken install.
   const bak = `${path}.agent-julia-bak`;
   if (existsSync(path) && !existsSync(bak)) await copyFile(path, bak);
-  const tmp = `${path}.${process.pid}.tmp`;
-  await writeFile(tmp, JSON.stringify(data, null, 2) + "\n", "utf8");
-  await rename(tmp, path);
+  await writeFileAtomic(path, JSON.stringify(data, null, 2) + "\n");
   log(`registered MCP server '${name}' in ${path}`);
   return true;
 }
@@ -278,14 +312,17 @@ function manualMcpStep(surface: Surface, action: string, path: string): InstallS
   };
 }
 
-async function removeMcpServer(path: string, name: string): Promise<boolean> {
+// Exported for tests. Written the same way as the registration: Claude Code
+// reads this file while it runs, and a plain writeFile truncates it in place,
+// so a read landing mid-write saw half a JSON document.
+export async function removeMcpServer(path: string, name: string): Promise<boolean> {
   if (!existsSync(path)) return false;
   try {
     const data = JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
     const servers = data.mcpServers as Record<string, unknown> | undefined;
     if (!servers || !(name in servers)) return false;
     delete servers[name];
-    await writeFile(path, JSON.stringify(data, null, 2) + "\n", "utf8");
+    await writeFileAtomic(path, JSON.stringify(data, null, 2) + "\n");
     return true;
   } catch {
     return false;
@@ -440,9 +477,9 @@ export async function refreshInjectedCore(
   for (const t of targets) {
     if (!existsSync(t.path)) continue;
     const body = t.body === "core" ? core : paste;
-    const block = `${startMarker(STARTUP_BLOCK_ID)}\n${body.trim()}\n${endMarker(STARTUP_BLOCK_ID)}`;
     const content = await readFile(t.path, "utf8");
-    if (!hasManagedBlock(content, STARTUP_BLOCK_ID) || content.includes(block)) continue;
+    if (!hasManagedBlock(content, STARTUP_BLOCK_ID)) continue;
+    if (content.includes(managedBlock(STARTUP_BLOCK_ID, body))) continue;
     await upsertManagedBlock(t.path, STARTUP_BLOCK_ID, body);
     refreshed++;
   }
@@ -483,7 +520,7 @@ export async function buildInstructions(config: Config): Promise<string> {
       `  1. In ${desktop ?? "<Claude Desktop config>"}, merge this into the top-level object:`,
       mcpSnippet().replace(/^/gm, "     "),
       "  2. Paste this block into Settings → Instructions for Claude:",
-      `${startMarker(STARTUP_BLOCK_ID)}\n${pasteForDesktop}\n${endMarker(STARTUP_BLOCK_ID)}`.replace(/^/gm, "     "),
+      managedBlock(STARTUP_BLOCK_ID, pasteForDesktop).replace(/^/gm, "     "),
       "     It is short on purpose: your voice and corrections are fetched at runtime, so it",
       "     does not go stale. If you also use Claude on the web or your phone, where this",
       "     connector does not reach, run `agent-julia paste --with-voice` for the long form.",

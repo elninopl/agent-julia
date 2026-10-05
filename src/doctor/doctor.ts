@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { readFile, readdir } from "node:fs/promises";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { Config } from "../config/schema.js";
 import { storePaths } from "../store/paths.js";
 import { listPageIds, readPage } from "../store/markdown.js";
@@ -14,10 +14,10 @@ import { injectedCoreFrom, STARTUP_BLOCK_ID } from "../persona/startup.js";
 import { composeCore } from "../persona/compose.js";
 import { INSTRUCTIONS_BUDGET, coreHashOf, serverInstructions } from "../persona/startup.js";
 import { PASTE_LAYOUT, configFingerprint, pasteBody, pasteHash } from "../persona/paste.js";
-import { probeCoworkSession } from "../surfaces/cowork-probe.js";
+import { coworkSessionRoots, probeCoworkSession } from "../surfaces/cowork-probe.js";
 import { ABSORB_BATCH_LIMIT, codeMemoryRoot, codeMemoryStatus } from "../surfaces/code-memory.js";
 import { estimateTokens } from "../util/tokens.js";
-import { endMarker, hasManagedBlock, startMarker } from "../managed/block.js";
+import { hasManagedBlock, managedBlock } from "../managed/block.js";
 import { SHIPPED_SKILLS, shippedSkillsDir, skillsTargetDir } from "../skills/install.js";
 import {
   claudeCodeConfigPath,
@@ -53,6 +53,8 @@ export interface DoctorTargets {
   surfaces: string;
   skillsDir: string;
   codeMemoryRoot: string;
+  /** Where Claude Desktop keeps its Cowork sessions. */
+  coworkSessions: string[];
 }
 
 export function defaultTargets(): DoctorTargets {
@@ -65,19 +67,50 @@ export function defaultTargets(): DoctorTargets {
     surfaces: surfacesStatePath(),
     skillsDir: skillsTargetDir(),
     codeMemoryRoot: codeMemoryRoot(),
+    coworkSessions: coworkSessionRoots(),
   };
 }
 
-async function hasMcpEntry(configPath: string): Promise<boolean> {
-  if (!existsSync(configPath)) return false;
+// The entry being there is not the same as the server starting. A launcher
+// registered as an absolute path breaks the moment that path goes away — a
+// Homebrew upgrade deleting the old Cellar node, a moved checkout — and every
+// session then fails to connect while the key itself looks fine.
+async function mcpCheck(name: string, configPath: string): Promise<DoctorCheck> {
+  const missing: DoctorCheck = {
+    name,
+    status: "fail",
+    detail: `agent-julia is not registered in ${configPath}`,
+    fix: "npx agent-julia sync",
+  };
+  if (!existsSync(configPath)) return missing;
+  let entry: { command?: unknown; args?: unknown } | null;
   try {
     const data = JSON.parse(await readFile(configPath, "utf8")) as {
       mcpServers?: Record<string, unknown>;
     };
-    return Boolean(data.mcpServers && "agent-julia" in data.mcpServers);
+    if (!data.mcpServers || !("agent-julia" in data.mcpServers)) return missing;
+    entry = data.mcpServers["agent-julia"] as typeof entry;
   } catch {
-    return false;
+    return missing;
   }
+  const command = typeof entry?.command === "string" ? entry.command : null;
+  const args: unknown = entry?.args;
+  const script = Array.isArray(args) && typeof args[0] === "string" ? args[0] : null;
+  const gone =
+    command && isAbsolute(command) && !existsSync(command)
+      ? `the program it launches no longer exists: ${command}`
+      : script && isAbsolute(script) && !existsSync(script)
+        ? `the script it runs no longer exists: ${script}`
+        : null;
+  if (gone) {
+    return {
+      name,
+      status: "fail",
+      detail: `registered in ${configPath}, but ${gone} — no session can start the server`,
+      fix: "npx agent-julia sync",
+    };
+  }
+  return { name, status: "ok", detail: configPath };
 }
 
 // Run every check. Read-only: doctor never repairs anything itself — each
@@ -249,30 +282,8 @@ export async function runDoctor(config: Config, t: DoctorTargets = defaultTarget
   }
 
   // --- MCP registration ---
-  if (wantCode) {
-    checks.push(
-      (await hasMcpEntry(t.claudeCodeConfig))
-        ? { name: "mcp (code)", status: "ok", detail: t.claudeCodeConfig }
-        : {
-            name: "mcp (code)",
-            status: "fail",
-            detail: `agent-julia is not registered in ${t.claudeCodeConfig}`,
-            fix: "npx agent-julia sync",
-          },
-    );
-  }
-  if (wantDesktop && t.desktopConfig) {
-    checks.push(
-      (await hasMcpEntry(t.desktopConfig))
-        ? { name: "mcp (cowork)", status: "ok", detail: t.desktopConfig }
-        : {
-            name: "mcp (cowork)",
-            status: "fail",
-            detail: `agent-julia is not registered in ${t.desktopConfig}`,
-            fix: "npx agent-julia sync",
-          },
-    );
-  }
+  if (wantCode) checks.push(await mcpCheck("mcp (code)", t.claudeCodeConfig));
+  if (wantDesktop && t.desktopConfig) checks.push(await mcpCheck("mcp (cowork)", t.desktopConfig));
 
   // --- Persona block: Claude Code ---
   const composed = await composeCore(paths, config);
@@ -301,7 +312,7 @@ export async function runDoctor(config: Config, t: DoctorTargets = defaultTarget
       detail: `core ${composed.tokens}/${config.contextBudget} tokens; injected block ${estimateTokens(core)} (core + memory instruction)`,
     });
   }
-  const block = `${startMarker(STARTUP_BLOCK_ID)}\n${core.trim()}\n${endMarker(STARTUP_BLOCK_ID)}`;
+  const block = managedBlock(STARTUP_BLOCK_ID, core);
   if (wantCode) {
     const content = existsSync(t.claudeCodeMemory) ? await readFile(t.claudeCodeMemory, "utf8") : "";
     if (!hasManagedBlock(content, STARTUP_BLOCK_ID)) {
@@ -385,7 +396,7 @@ export async function runDoctor(config: Config, t: DoctorTargets = defaultTarget
     }
 
     // The only real evidence: what Claude Desktop seeded its last session with.
-    const probe = await probeCoworkSession();
+    const probe = await probeCoworkSession(t.coworkSessions);
     if (probe.status === "unreadable") {
       checks.push({
         name: "paste seen",
@@ -393,10 +404,15 @@ export async function runDoctor(config: Config, t: DoctorTargets = defaultTarget
         detail: "could not read Claude Desktop's session files (undocumented path, it may have moved). No signal either way.",
       });
     } else if (probe.status === "none") {
+      // Only the newest session counts. An older block is what the field held
+      // back then, and a re-paste prompt built on it is a prompt about the past.
       checks.push({
         name: "paste seen",
         status: "unknown",
-        detail: "no Cowork session on this machine carried an agent-julia block, so there is nothing to read.",
+        detail: probe.newest
+          ? `the newest Cowork session (${probe.newest}) left no agent-julia block on disk. Recent Claude Desktop ` +
+            "versions often write an empty instructions file or none at all, so this says nothing either way."
+          : "there is no Cowork session on this machine, so there is nothing to read.",
       });
     } else if (probe.layout === PASTE_LAYOUT || marker?.variant === "with-voice") {
       checks.push({
@@ -561,7 +577,7 @@ export async function runDoctor(config: Config, t: DoctorTargets = defaultTarget
   // --- Exported persona files ---
   if (config.exports.length > 0) {
     const text = await exportText(config);
-    const exportBlock = `${startMarker(EXPORT_BLOCK_ID)}\n${text.trim()}\n${endMarker(EXPORT_BLOCK_ID)}`;
+    const exportBlock = managedBlock(EXPORT_BLOCK_ID, text);
     for (const p of config.exports) {
       if (!existsSync(p)) {
         checks.push({

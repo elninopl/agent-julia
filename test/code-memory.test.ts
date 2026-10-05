@@ -5,8 +5,10 @@ import { describe, expect, it } from "vitest";
 import {
   ABSORB_BATCH_LIMIT,
   adoptCodeMemory,
+  adoptCodeMemoryIfChanged,
   codeMemoryStatus,
   decodeWorkingDir,
+  findCodeMemoryProjects,
   releaseCodeMemory,
 } from "../src/surfaces/code-memory.js";
 import { Indexer } from "../src/index/indexer.js";
@@ -234,6 +236,63 @@ describe("a directory that keeps a knowledge base of its own", () => {
     } finally {
       indexer.close();
     }
+  });
+});
+
+describe("adoption at boot", () => {
+  // Every Claude session starts a server, and each one used to read the whole
+  // store and walk every project's documentation to rewrite nothing.
+  it("is skipped while nothing it reads has changed, and runs again when something does", async () => {
+    const { dir, projects, memory, paths, config } = sandbox("absorb");
+    const indexer = Indexer.open(paths, config);
+    try {
+      const first = await adoptCodeMemoryIfChanged(paths, indexer, config, projects);
+      expect(first?.pointers).toBe(1);
+      // Its own write (the pointer block) earns one more run, which finds
+      // nothing to do; after that, boots skip.
+      expect((await adoptCodeMemoryIfChanged(paths, indexer, config, projects))?.pointers).toBe(0);
+      expect(await adoptCodeMemoryIfChanged(paths, indexer, config, projects)).toBeNull();
+
+      // Claude Code writes a fact.
+      writeFileSync(join(memory, "deploy-notes.md"), MEMORY_FILE, "utf8");
+      expect((await adoptCodeMemoryIfChanged(paths, indexer, config, projects))?.absorbed).toBe(1);
+      await adoptCodeMemoryIfChanged(paths, indexer, config, projects);
+      expect(await adoptCodeMemoryIfChanged(paths, indexer, config, projects)).toBeNull();
+
+      // A page in the store claims the project.
+      await writePage(paths, "atlas", `---\nproject: ${join(dir, "my-repo")}\n---\n\nAbout it.`, {});
+      expect(await adoptCodeMemoryIfChanged(paths, indexer, config, projects)).not.toBeNull();
+      expect(readFileSync(join(memory, "MEMORY.md"), "utf8")).toContain("page in agent-julia is `atlas`");
+      await adoptCodeMemoryIfChanged(paths, indexer, config, projects);
+      expect(await adoptCodeMemoryIfChanged(paths, indexer, config, projects)).toBeNull();
+
+      // The client drops the block from its index.
+      writeFileSync(join(memory, "MEMORY.md"), "# Memory index\n", "utf8");
+      expect((await adoptCodeMemoryIfChanged(paths, indexer, config, projects))?.pointers).toBe(1);
+      expect(readFileSync(join(memory, "MEMORY.md"), "utf8")).toContain("lives in agent-julia");
+
+      // `sync` goes straight to adoptCodeMemory and never skips.
+      await adoptCodeMemoryIfChanged(paths, indexer, config, projects);
+      expect((await adoptCodeMemory(paths, indexer, config, projects)).projects).toBe(1);
+    } finally {
+      indexer.close();
+    }
+  });
+});
+
+describe("a machine with many projects", () => {
+  it("finds every memory directory, however far down the listing it sits", async () => {
+    // Most of ~/.claude/projects never gets a memory directory. The cap used to
+    // cut the raw listing before filtering, so a project past the first 200
+    // entries was invisible to adoption and to doctor.
+    const dir = tempDir("aj-many-");
+    for (let i = 0; i < 600; i++) mkdirSync(join(dir, `-work-p${i}`));
+    const withMemory = [17, 250, 401, 555, 599].map((i) => `-work-p${i}`);
+    for (const slug of withMemory) mkdirSync(join(dir, slug, "memory"));
+
+    const found = await findCodeMemoryProjects(dir);
+    expect(found.map((p) => p.slug).sort()).toEqual([...withMemory].sort());
+    expect((await codeMemoryStatus(dir)).projects).toBe(5);
   });
 });
 

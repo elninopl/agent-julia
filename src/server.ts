@@ -36,55 +36,87 @@ async function packageVersion(): Promise<string> {
   }
 }
 
-// Startup housekeeping: pull, maintenance, and refreshing what init/sync
-// installed. Deliberately run AFTER the transport is connected. Every step here
-// touches the network or the whole store, and any one of them stalling used to
-// cost the session its memory tools before the client ever finished the
-// handshake — invisibly, because a stdio server's diagnostics go nowhere the
-// user looks. Tools answer while this runs; the index is already open.
+// Where detectLegacyPaste looks, injectable so a test never reads or writes
+// the real ~/.config/agent-julia or Claude Desktop's session tree.
+export interface LegacyPasteTargets {
+  marker: string;
+  legacyMarker: string;
+  surfaces: string;
+  sessionRoots: string[];
+}
+
 // Was this machine ever asked to paste, or seen running, the old long block?
 // Evidence only — the mirror file exists for everyone with the cowork surface,
 // including people who never pasted at all, so it is not evidence and is not
 // used as such.
-async function detectLegacyPaste(config: Config): Promise<void> {
+export async function detectLegacyPaste(config: Config, targets?: LegacyPasteTargets): Promise<void> {
   try {
     // Nothing to migrate for an install that never had a Desktop surface, and
     // walking Claude Desktop's session tree on every boot to learn that is work
     // nobody asked for.
     if (!config.surfaces.includes("cowork") && !config.surfaces.includes("dispatch")) return;
-    const { readPasteMarker, writePasteMarker, legacyPasteMarkerPath } = await import(
-      "./wizard/register.js"
-    );
-    const marker = await readPasteMarker();
+    const register = await import("./wizard/register.js");
+    const { readPasteMarker, writePasteMarker, readSurfaces, mergeSurfaces } = register;
+    const { probeCoworkSession, coworkSessionRoots } = await import("./surfaces/cowork-probe.js");
+    const t = targets ?? {
+      marker: register.coworkPasteMarkerPath(),
+      legacyMarker: register.legacyPasteMarkerPath(),
+      surfaces: register.surfacesStatePath(),
+      sessionRoots: coworkSessionRoots(),
+    };
+    const marker = await readPasteMarker(t.marker);
     if (marker && marker.previousLayout !== undefined) return;
     if (marker && marker.layout >= 2) return;
+    // Answered on an earlier boot. Every outcome that writes no marker used to
+    // leave nothing behind, so every boot of every session walked Claude
+    // Desktop's session tree again to reach the same answer.
+    if ((await readSurfaces(t.surfaces)).legacyPasteCheck) return;
 
     const { existsSync } = await import("node:fs");
-    const askedUnderLayout1 = existsSync(legacyPasteMarkerPath());
-    const { probeCoworkSession } = await import("./surfaces/cowork-probe.js");
-    const probe = await probeCoworkSession();
+    const askedUnderLayout1 = existsSync(t.legacyMarker);
+    const probe = await probeCoworkSession(t.sessionRoots);
     // A layout-2 sighting settles it, even when the old sha1 marker is still on
     // disk: the account-scoped field may have been fixed from another machine.
-    if (probe.status === "found" && (probe.layout ?? 1) >= 2) return;
+    const seenLayout2 = probe.status === "found" && (probe.layout ?? 1) >= 2;
     const seenLayout1 = probe.status === "found" && probe.layout === 1;
-    if (!askedUnderLayout1 && !seenLayout1) return;
+    if (seenLayout2 || (!askedUnderLayout1 && !seenLayout1)) {
+      // Not after an unreadable tree: that is no answer, and it costs nothing
+      // to ask again.
+      if (probe.status !== "unreadable") {
+        const seen = probe.status === "found" ? `layout ${probe.layout}` : "no block";
+        await mergeSurfaces(
+          (prev) => ({ ...prev, legacyPasteCheck: { at: new Date().toISOString(), seen } }),
+          t.surfaces,
+        );
+      }
+      return;
+    }
 
     const { pasteBody, pasteHash, configFingerprint, PASTE_LAYOUT } = await import("./persona/paste.js");
-    await writePasteMarker({
-      layout: marker?.layout ?? 1,
-      variant: "stable",
-      stableHash: marker?.stableHash ?? pasteHash(await pasteBody(config)),
-      configFingerprint: marker?.configFingerprint ?? configFingerprint(config),
-      askedAt: marker?.askedAt ?? new Date().toISOString(),
-      askedOn: marker?.askedOn ?? "unknown",
-      previousLayout: 1,
-    });
+    await writePasteMarker(
+      {
+        layout: marker?.layout ?? 1,
+        variant: "stable",
+        stableHash: marker?.stableHash ?? pasteHash(await pasteBody(config)),
+        configFingerprint: marker?.configFingerprint ?? configFingerprint(config),
+        askedAt: marker?.askedAt ?? new Date().toISOString(),
+        askedOn: marker?.askedOn ?? "unknown",
+        previousLayout: 1,
+      },
+      t.marker,
+    );
     log(`Claude Desktop still has the old long paste (layout 1); the current one is layout ${PASTE_LAYOUT}`);
   } catch {
     // evidence gathering must never take the server down
   }
 }
 
+// Startup housekeeping: pull, maintenance, and refreshing what init/sync
+// installed. Deliberately run AFTER the transport is connected. Every step here
+// touches the network or the whole store, and any one of them stalling used to
+// cost the session its memory tools before the client ever finished the
+// handshake — invisibly, because a stdio server's diagnostics go nowhere the
+// user looks. Tools answer while this runs; the index is already open.
 async function runStartupTasks(rt: Runtime): Promise<void> {
   await detectLegacyPaste(rt.config);
   // Two-machine sync: pull the store from its remote before maintenance reads
@@ -137,18 +169,29 @@ async function runStartupTasks(rt: Runtime): Promise<void> {
   // touch copies carrying the agent-julia ownership marker; the persona refresh
   // never creates a block, only updates existing ones. Non-fatal.
   try {
-    // Under the store lock: every Claude session spawns its own server, and on a
+    // One server at a time: every Claude session spawns its own server, and on a
     // busy machine a dozen of them boot at once and rewrite ~/.claude/CLAUDE.md
     // and ~/.claude/skills at the same moment.
-    const { adoptCodeMemory } = await import("./surfaces/code-memory.js");
-    const refreshed = await withStoreLock(rt.config.memoryDir, async () => ({
-      steps: await installSkills(skillsTargetDir()),
-      cores: await refreshInjectedCore(rt.config),
-      exports: await refreshExports(rt.config),
-      // Claude Code's own per-project memory: point it here, and (when asked)
-      // bring in whatever was written there instead of here.
-      code: await adoptCodeMemory(rt.paths, rt.indexer, rt.config),
-    }));
+    //
+    // Its own lock, not the store's. None of this writes the store: the files it
+    // rewrites carry their own file locks, and an absorb goes through ingest,
+    // which takes the store lock for itself. Under the store lock, a session
+    // calling ingest while another one booted waited behind the whole refresh,
+    // and after 15 s lost the write.
+    const { adoptCodeMemoryIfChanged } = await import("./surfaces/code-memory.js");
+    const refreshed = await withStoreLock(
+      rt.config.memoryDir,
+      async () => ({
+        steps: await installSkills(skillsTargetDir()),
+        cores: await refreshInjectedCore(rt.config),
+        exports: await refreshExports(rt.config),
+        // Claude Code's own per-project memory: point it here, and (when asked)
+        // bring in whatever was written there instead of here. Skipped when
+        // neither the store nor those directories changed since the last run.
+        code: await adoptCodeMemoryIfChanged(rt.paths, rt.indexer, rt.config),
+      }),
+      { name: "refresh" },
+    );
     if (!refreshed) {
       log("refresh: another server was doing it — skipped");
     } else {
@@ -156,8 +199,10 @@ async function runStartupTasks(rt: Runtime): Promise<void> {
       log(
         `refresh: ${steps.filter((s) => s.status === "done").length}/${steps.length} skill(s), ` +
           `${cores} persona block(s), ${exports} export(s), ` +
-          `code memory ${code.pointers}/${code.projects} pointed` +
-          (code.absorbed > 0 ? `, ${code.absorbed} absorbed` : ""),
+          (code
+            ? `code memory ${code.pointers}/${code.projects} pointed` +
+              (code.absorbed > 0 ? `, ${code.absorbed} absorbed` : "")
+            : "code memory unchanged"),
       );
     }
   } catch (err) {

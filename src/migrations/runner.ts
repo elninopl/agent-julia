@@ -1,12 +1,13 @@
 import { existsSync } from "node:fs";
-import { cp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { CURRENT_SCHEMA_VERSION, Config } from "../config/schema.js";
 import { saveConfig } from "../config/config.js";
 import { StorePaths, storePaths } from "../store/paths.js";
 import { commitAll } from "../store/git.js";
 import { log } from "../util/log.js";
-import { todayISO } from "../store/markdown.js";
+import { todayISO, writeFileAtomic } from "../store/markdown.js";
+import { withStoreLock } from "../store/lock.js";
 import { Migration, MigrationContext } from "./types.js";
 import { migration0001 } from "./0001-initial.js";
 
@@ -27,26 +28,59 @@ async function readState(paths: StorePaths): Promise<MigrationState> {
   }
 }
 
+// Temp file plus rename: every boot reads this without a lock, and a torn or
+// truncated file reads as schema 0, which would send the store through every
+// migration again.
 async function writeState(paths: StorePaths, state: MigrationState): Promise<void> {
   await mkdir(paths.internalDir, { recursive: true });
-  await writeFile(paths.migrationStatePath, JSON.stringify(state, null, 2) + "\n", "utf8");
+  await writeFileAtomic(paths.migrationStatePath, JSON.stringify(state, null, 2) + "\n");
 }
 
-// Brings an older store up to the current schema on startup. Each step is ordered,
-// idempotent, and backed up before it touches user data.
-export async function migrate(config: Config): Promise<{ config: Config; ranAny: boolean }> {
-  const paths = storePaths(config.memoryDir);
-  const state = await readState(paths);
-
-  // Refuse to operate a store written by a newer agent-julia: a forward migration
-  // may have reshaped the markdown, and this older binary would silently corrupt
-  // it (and downgrade the recorded schemaVersion). Upgrade instead.
+// Refuse to operate a store written by a newer agent-julia: a forward migration
+// may have reshaped the markdown, and this older binary would silently corrupt
+// it (and downgrade the recorded schemaVersion). Upgrade instead.
+function refuseNewer(state: MigrationState): void {
   if (state.schemaVersion > CURRENT_SCHEMA_VERSION) {
     throw new Error(
       `This memory store was written by a newer agent-julia (store schema v${state.schemaVersion}, ` +
         `this version supports v${CURRENT_SCHEMA_VERSION}). Upgrade: npm i -g agent-julia@latest`,
     );
   }
+}
+
+// Long enough for a migration's backup and rewrite of a large store. A server
+// still waiting past this fails its boot rather than migrate alongside another.
+const MIGRATE_WAIT_MS = 60_000;
+
+// Brings an older store up to the current schema on startup. Each step is ordered,
+// idempotent, and backed up before it touches user data.
+//
+// One process at a time. Every Claude session starts a server, and the first
+// boots after an upgrade arrive together: each of them backed the store up,
+// ran the same steps over the same files and saved the config, and the five
+// config backups filled with copies written after the migration, pushing out
+// the ones from before it. Under the store lock the state is read again; a
+// server that waited finds the work done and moves on.
+export async function migrate(config: Config): Promise<{ config: Config; ranAny: boolean }> {
+  const paths = storePaths(config.memoryDir);
+  // Unlocked first look: on every boot but the first after a schema change
+  // there is nothing to do, and that must not cost a lock.
+  const seen = await readState(paths);
+  refuseNewer(seen);
+  if (seen.schemaVersion === CURRENT_SCHEMA_VERSION) return { config, ranAny: false };
+
+  const result = await withStoreLock(paths.root, () => migrateLocked(config, paths), { waitMs: MIGRATE_WAIT_MS });
+  if (!result) {
+    throw new Error(
+      "another agent-julia process is migrating this memory store and has not finished; start again in a moment",
+    );
+  }
+  return result;
+}
+
+async function migrateLocked(config: Config, paths: StorePaths): Promise<{ config: Config; ranAny: boolean }> {
+  const state = await readState(paths);
+  refuseNewer(state);
 
   const fromVersion = Math.max(state.schemaVersion, 0);
 
@@ -62,7 +96,10 @@ export async function migrate(config: Config): Promise<{ config: Config; ranAny:
         schemaVersion: CURRENT_SCHEMA_VERSION,
       });
     }
-    return { config, ranAny: false };
+    // Also the way out for a server that waited while another one migrated.
+    // That one saved the config; saving it again would only push another
+    // pre-migration backup out of the ring.
+    return { config: { ...config, schemaVersion: CURRENT_SCHEMA_VERSION }, ranAny: false };
   }
 
   const ctx: MigrationContext = {

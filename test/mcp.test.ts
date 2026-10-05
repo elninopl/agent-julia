@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -60,5 +60,72 @@ describe("MCP tool round-trip", () => {
 
     const core = textOf(await client.callTool({ name: "get_core", arguments: {} }));
     expect(core).toContain("Julia");
+  });
+
+  // correct_voice refreshes ~/.claude/CLAUDE.md and get_core records itself in
+  // ~/.config/agent-julia; point home at a sandbox so the suite never touches
+  // the developer's own.
+  async function sandboxedSession() {
+    const home = mkdtempSync(join(tmpdir(), "aj-home-"));
+    const before = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+    process.env.HOME = home;
+    process.env.USERPROFILE = home;
+
+    const dir = mkdtempSync(join(tmpdir(), "aj-mcp-"));
+    const config = ConfigSchema.parse({ memoryDir: dir, git: false, search: "fts" });
+    await migrate(config);
+    const paths = storePaths(dir);
+    const indexer = Indexer.open(paths, config);
+    const server = new McpServer({ name: "agent-julia", version: "test" });
+    registerTools(server, { config, paths, indexer });
+    const client = new Client({ name: "test-client", version: "test" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+    cleanup = async () => {
+      await client.close();
+      indexer.close();
+      for (const [k, v] of Object.entries(before)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    };
+    return { client, paths, home };
+  }
+
+  it("correct_voice shows what it stored, and refuses what it would have to cut", async () => {
+    const { client, paths } = await sandboxedSession();
+
+    const saved = textOf(
+      await client.callTool({ name: "correct_voice", arguments: { note: "No headers\nin short replies." } }),
+    );
+    expect(saved).toContain("Saved: No headers in short replies.");
+
+    const tooLong = "Write plainly. ".repeat(100);
+    const refused = textOf(await client.callTool({ name: "correct_voice", arguments: { note: tooLong } }));
+    expect(refused).toMatch(/^Nothing saved/);
+    expect(refused).toContain("Split it");
+    expect(readFileSync(paths.voiceCorrections, "utf8")).not.toContain("Write plainly.");
+  });
+
+  it("get_core records a fetch once per core, not on every call", async () => {
+    const { client, home } = await sandboxedSession();
+    const surfaces = join(home, ".config", "agent-julia", "surfaces.json");
+    const fetched = () => JSON.parse(readFileSync(surfaces, "utf8")).fetches["test-client"];
+
+    await client.callTool({ name: "get_core", arguments: {} });
+    const first = fetched();
+    const writtenAt = statSync(surfaces).mtimeMs;
+
+    // Same client, same core, moments later: nothing new for doctor to learn.
+    await new Promise((r) => setTimeout(r, 20));
+    await client.callTool({ name: "get_core", arguments: {} });
+    expect(fetched()).toEqual(first);
+    expect(statSync(surfaces).mtimeMs).toBe(writtenAt);
+
+    // A new correction is a new core, and that is recorded at once.
+    await client.callTool({ name: "correct_voice", arguments: { note: "Shorter answers." } });
+    const out = textOf(await client.callTool({ name: "get_core", arguments: {} }));
+    expect(out).toContain("Shorter answers.");
+    expect(fetched().coreHash).not.toBe(first.coreHash);
   });
 });

@@ -1,9 +1,12 @@
 import {
+  chmodSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
+  realpathSync,
+  statSync,
   symlinkSync,
   writeFileSync,
   existsSync,
@@ -17,7 +20,7 @@ import { composeCore } from "../src/persona/compose.js";
 import { refreshIndexMd } from "../src/store/catalog.js";
 import { writePage } from "../src/store/markdown.js";
 import { storePaths } from "../src/store/paths.js";
-import { mergeMcpServerForTest } from "../src/wizard/register.js";
+import { mergeMcpServerForTest, removeMcpServer, stableNodePath } from "../src/wizard/register.js";
 import { ConfigSchema } from "../src/config/schema.js";
 
 function tmp(): string {
@@ -196,6 +199,104 @@ describe("registering a launcher that can do the job", () => {
     const after = JSON.parse(readFileSync(file, "utf8"));
     expect(after.keep).toBe("me");
     expect(after.mcpServers["agent-julia"]).toEqual({ command: "/opt/x/agent-julia", args: ["serve"] });
+  });
+});
+
+describe("rewriting a Claude config file another program reads", () => {
+  // File modes mean little on Windows; the rename part is checked everywhere.
+  const posix = process.platform !== "win32";
+
+  it("unregisters by replacing the file, not truncating it, and keeps its mode", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "aj-unreg-"));
+    const file = join(dir, "claude.json");
+    writeFileSync(
+      file,
+      JSON.stringify({ keep: "me", mcpServers: { other: { command: "x" }, "agent-julia": { command: "y" } } }),
+      "utf8",
+    );
+    chmodSync(file, 0o600);
+    const inode = statSync(file).ino;
+
+    expect(await removeMcpServer(file, "agent-julia")).toBe(true);
+
+    const after = JSON.parse(readFileSync(file, "utf8"));
+    expect(after.keep).toBe("me");
+    expect(after.mcpServers).toEqual({ other: { command: "x" } });
+    // A new inode is the rename: Claude Code reading mid-write sees the old
+    // file or the new one, never half of either.
+    expect(statSync(file).ino).not.toBe(inode);
+    if (posix) expect(statSync(file).mode & 0o777).toBe(0o600);
+    expect(readdirSync(dir).filter((f) => f.includes(".tmp"))).toEqual([]);
+
+    expect(await removeMcpServer(file, "agent-julia")).toBe(false);
+  });
+
+  it.skipIf(process.platform === "win32")("keeps the mode when registering, too", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "aj-reg-mode-"));
+    const file = join(dir, "claude.json");
+    writeFileSync(file, JSON.stringify({ keep: "me" }), "utf8");
+    chmodSync(file, 0o600);
+
+    await mergeMcpServerForTest(file, "agent-julia", { command: "npx", args: ["serve"] });
+
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+    expect(JSON.parse(readFileSync(file, "utf8")).keep).toBe("me");
+  });
+});
+
+describe("a node path that survives brew upgrade", () => {
+  // A fake filesystem: every path that exists, and what each resolves to.
+  function probe(links: Record<string, string>) {
+    return {
+      exists: (p: string) => p in links,
+      realpath: (p: string) => {
+        if (!(p in links)) throw new Error(`ENOENT ${p}`);
+        return links[p]!;
+      },
+    };
+  }
+
+  it("registers opt/<formula> instead of the versioned Cellar path", () => {
+    const cellar = "/opt/homebrew/Cellar/node/26.4.0/bin/node";
+    const fs = probe({ [cellar]: cellar, "/opt/homebrew/opt/node/bin/node": cellar });
+    expect(stableNodePath(cellar, fs)).toBe("/opt/homebrew/opt/node/bin/node");
+  });
+
+  it("handles a versioned formula and an Intel prefix", () => {
+    const cellar = "/usr/local/Cellar/node@22/22.11.0/bin/node";
+    const fs = probe({ [cellar]: cellar, "/usr/local/opt/node@22/bin/node": cellar });
+    expect(stableNodePath(cellar, fs)).toBe("/usr/local/opt/node@22/bin/node");
+  });
+
+  it("keeps the Cellar path when opt points at a different version", () => {
+    // Already upgraded underneath a running process: switching the launcher to
+    // another Node version is not this function's call to make.
+    const cellar = "/opt/homebrew/Cellar/node/26.4.0/bin/node";
+    const fs = probe({ [cellar]: cellar, "/opt/homebrew/opt/node/bin/node": "/opt/homebrew/Cellar/node/27.0.0/bin/node" });
+    expect(stableNodePath(cellar, fs)).toBe(cellar);
+  });
+
+  it("keeps the path when there is no opt link, or nothing Homebrew about it", () => {
+    const cellar = "/opt/homebrew/Cellar/node/26.4.0/bin/node";
+    expect(stableNodePath(cellar, probe({ [cellar]: cellar }))).toBe(cellar);
+    expect(stableNodePath("/usr/bin/node", probe({}))).toBe("/usr/bin/node");
+    expect(stableNodePath("/Users/me/.nvm/versions/node/v24.1.0/bin/node", probe({}))).toBe(
+      "/Users/me/.nvm/versions/node/v24.1.0/bin/node",
+    );
+    expect(stableNodePath("/opt/homebrew/Cellar/nodenv/1.5.0/bin/node", probe({}))).toBe(
+      "/opt/homebrew/Cellar/nodenv/1.5.0/bin/node",
+    );
+  });
+
+  it.skipIf(process.platform === "win32")("follows a real Homebrew-shaped layout on disk", () => {
+    const prefix = realpathSync(mkdtempSync(join(tmpdir(), "aj-brew-")));
+    const bin = join(prefix, "Cellar", "node", "26.4.0", "bin");
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(join(bin, "node"), "", "utf8");
+    mkdirSync(join(prefix, "opt"));
+    symlinkSync("../Cellar/node/26.4.0", join(prefix, "opt", "node"));
+
+    expect(stableNodePath(join(bin, "node"))).toBe(join(prefix, "opt", "node", "bin", "node"));
   });
 });
 

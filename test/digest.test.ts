@@ -79,6 +79,56 @@ describe("weekly digest proposals", () => {
   });
 });
 
+describe("near-duplicate proposals over chunked pages", () => {
+  // Every chunk embeds to the same vector: the worst case for a comparison
+  // that treats chunks as pages.
+  const flat: EmbeddingProvider = {
+    id: "fake-flat",
+    dims: 3,
+    enabled: true,
+    async embed(texts) {
+      return texts.map(() => [1, 0, 0]);
+    },
+    async embedQuery() {
+      return [1, 0, 0];
+    },
+  };
+  const longPage = (topic: string) =>
+    Array.from({ length: 4 }, (_, i) => `## ${topic} ${i}\n\n${"Notes on the same subject. ".repeat(12)}`).join("\n\n");
+
+  it("never pairs a page with itself, lists each pair once, and keeps only the closest few", async () => {
+    const { paths, config } = fresh();
+    for (let n = 0; n < 6; n++) await writePage(paths, `page-${n}`, longPage(`part-${n}`), {});
+    const idx = Indexer.open(paths, config, flat);
+    try {
+      await idx.sync();
+      const { nearDuplicates } = await buildProposals(paths, idx);
+      expect(nearDuplicates.every((d) => d.a !== d.b)).toBe(true);
+      const keys = nearDuplicates.map((d) => [d.a, d.b].sort().join("+"));
+      expect(new Set(keys).size).toBe(keys.length);
+      // 6 pages are 15 pairs, all identical; the digest shows ten.
+      expect(nearDuplicates).toHaveLength(10);
+    } finally {
+      idx.close();
+    }
+  });
+
+  it("ignores vectors from another model", async () => {
+    const { paths, config } = fresh();
+    await writePage(paths, "one", "alpha", {});
+    await writePage(paths, "two", "beta", {});
+    let idx = Indexer.open(paths, config, flat);
+    await idx.sync();
+    idx.close();
+    idx = Indexer.open(paths, config, { ...flat, id: "fake-flat-v2" });
+    try {
+      expect((await buildProposals(paths, idx)).nearDuplicates).toEqual([]);
+    } finally {
+      idx.close();
+    }
+  });
+});
+
 describe("archivePage", () => {
   it("moves the page out of pages/ into archive/", async () => {
     const { paths } = fresh();

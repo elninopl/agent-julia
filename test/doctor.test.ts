@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -10,6 +10,7 @@ import { coreHash } from "../src/wizard/register.js";
 import { storePaths } from "../src/store/paths.js";
 import { writePage } from "../src/store/markdown.js";
 import { ConfigSchema } from "../src/config/schema.js";
+import { appendCorrection } from "../src/persona/corrections.js";
 
 function sandbox(): { dir: string; targets: DoctorTargets } {
   const dir = mkdtempSync(join(tmpdir(), "aj-doctor-"));
@@ -26,6 +27,8 @@ function sandbox(): { dir: string; targets: DoctorTargets } {
       // An empty sandbox: doctor must not read the developer's real
       // ~/.claude/projects while the suite runs.
       codeMemoryRoot: join(dir, "projects"),
+      // Likewise Claude Desktop's session tree.
+      coworkSessions: [join(dir, "sessions")],
     },
   };
 }
@@ -122,6 +125,36 @@ describe("doctor", () => {
     expect(instructions.detail).toMatch(/bytes of 1800|bytes of 1,800/);
   });
 
+  it("asks for a re-paste only on the strength of the newest Desktop session", async () => {
+    const { dir, targets } = sandbox();
+    const memoryDir = join(dir, "mem");
+    mkdirSync(memoryDir, { recursive: true });
+    const cfg = ConfigSchema.parse({ memoryDir, git: false, surfaces: ["cowork"] });
+    const seed = (name: string, content: string, day: string) => {
+      const claudeDir = join(targets.coworkSessions[0]!, "acct", "org", name, ".claude");
+      mkdirSync(claudeDir, { recursive: true });
+      const at = new Date(`${day}T08:00:00Z`);
+      writeFileSync(join(claudeDir, "CLAUDE.md"), content, "utf8");
+      utimesSync(join(claudeDir, "CLAUDE.md"), at, at);
+    };
+    const layout1 =
+      "<!-- agent-julia:persona-core:start -->\n# Persona\n<!-- agent-julia:persona-core:end -->\n";
+
+    // A weeks-old layout-1 session behind an empty newest one is history.
+    seed("local_old", layout1, "2026-08-20");
+    seed("1a2b3c4d", "", "2026-10-01");
+    let seen = byName(await runDoctor(cfg, targets), "paste seen");
+    expect(seen.status).toBe("unknown");
+    expect(seen.detail).toContain("2026-10-01");
+    expect(seen.fix).toBeUndefined();
+
+    // The newest session really carrying the old block is still worth a warning.
+    seed("5e6f7a8b", layout1, "2026-10-02");
+    seen = byName(await runDoctor(cfg, targets), "paste seen");
+    expect(seen.status).toBe("warn");
+    expect(seen.detail).toContain("2026-10-02");
+  });
+
   it("never reports a failure for something it merely cannot see", async () => {
     const { dir, targets } = sandbox();
     const memoryDir = join(dir, "mem");
@@ -131,6 +164,76 @@ describe("doctor", () => {
     for (const name of ["paste seen", "voice fetch"]) {
       expect(byName(checks, name).status).not.toBe("fail");
     }
+  });
+});
+
+describe("a persona block that quotes our own marker", () => {
+  it("is reported current, the same way the boot refresh sees it", async () => {
+    const { dir, targets } = sandbox();
+    const memoryDir = join(dir, "mem");
+    mkdirSync(memoryDir, { recursive: true });
+    const cfg = ConfigSchema.parse({ memoryDir, git: false, surfaces: ["code"] });
+    const paths = storePaths(memoryDir);
+    await appendCorrection(paths, "Never paste <!-- agent-julia:persona-core:start --> into a reply.");
+
+    await upsertManagedBlock(targets.claudeCodeMemory, STARTUP_BLOCK_ID, await buildInjectedCore(paths, cfg));
+
+    const c = byName(await runDoctor(cfg, targets), "persona (code)");
+    expect(c.status).toBe("ok");
+  });
+});
+
+describe("a registration that can no longer start", () => {
+  function setup() {
+    const { dir, targets } = sandbox();
+    const memoryDir = join(dir, "mem");
+    mkdirSync(memoryDir, { recursive: true });
+    const cfg = ConfigSchema.parse({ memoryDir, git: false, surfaces: ["code", "cowork"] });
+    const register = (file: string, entry: unknown) =>
+      writeFileSync(file, JSON.stringify({ mcpServers: { "agent-julia": entry } }), "utf8");
+    return { dir, targets, cfg, register };
+  }
+
+  it("fails when the registered node binary is gone", async () => {
+    // What `brew upgrade node` and the cleanup after it leave behind: the key is
+    // still there, the Cellar directory it names is not.
+    const { dir, targets, cfg, register } = setup();
+    const script = join(dir, "index.js");
+    writeFileSync(script, "", "utf8");
+    const gone = join(dir, "Cellar", "node", "26.4.0", "bin", "node");
+    register(targets.claudeCodeConfig, { command: gone, args: [script, "serve"] });
+    register(targets.desktopConfig!, { command: gone, args: [script, "serve"] });
+
+    const checks = await runDoctor(cfg, targets);
+    for (const name of ["mcp (code)", "mcp (cowork)"]) {
+      const c = byName(checks, name);
+      expect(c.status).toBe("fail");
+      expect(c.detail).toContain(gone);
+      expect(c.fix).toContain("agent-julia sync");
+    }
+  });
+
+  it("fails when the script the launcher runs is gone", async () => {
+    const { dir, targets, cfg, register } = setup();
+    const gone = join(dir, "moved-checkout", "dist", "index.js");
+    register(targets.claudeCodeConfig, { command: process.execPath, args: [gone, "serve"] });
+
+    const c = byName(await runDoctor(cfg, targets), "mcp (code)");
+    expect(c.status).toBe("fail");
+    expect(c.detail).toContain(gone);
+  });
+
+  it("passes a launcher whose paths exist, and leaves PATH lookups alone", async () => {
+    const { dir, targets, cfg, register } = setup();
+    const script = join(dir, "index.js");
+    writeFileSync(script, "", "utf8");
+    register(targets.claudeCodeConfig, { command: process.execPath, args: [script, "serve"] });
+    // npx is resolved on PATH by the client; doctor has no business guessing.
+    register(targets.desktopConfig!, { command: "npx", args: ["-y", "agent-julia@latest", "serve"] });
+
+    const checks = await runDoctor(cfg, targets);
+    expect(byName(checks, "mcp (code)").status).toBe("ok");
+    expect(byName(checks, "mcp (cowork)").status).toBe("ok");
   });
 });
 

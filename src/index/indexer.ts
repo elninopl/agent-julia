@@ -20,6 +20,7 @@ import {
   clearEmbeddings,
   dropOtherModels,
   embedChunks,
+  knownVectors,
   pagesWithoutVectors,
   semanticDelete,
   semanticStore,
@@ -63,7 +64,8 @@ export class Indexer {
     // Embed first (async, no lock held), then write FTS row, vector, and hash in
     // one transaction so a crash can't leave a recorded hash for a page whose
     // embedding never landed (which sync() would never re-embed).
-    const vectors = await embedChunks(this.provider, title, page.body);
+    const known = this.provider.enabled ? knownVectors(this.db, id, this.provider.id) : undefined;
+    const vectors = await embedChunks(this.provider, title, page.body, known);
     this.db.exec("BEGIN IMMEDIATE");
     try {
       ftsUpsert(this.db, id, title, page.body);

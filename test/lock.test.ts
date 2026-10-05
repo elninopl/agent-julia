@@ -58,6 +58,31 @@ describe("the store lock", () => {
       indexer.close();
     }
   });
+
+  it("lets an ingest through while another server holds the boot refresh", async () => {
+    // The refresh used to run under the store lock, so a session saving a fact
+    // while another one booted waited out the refresh and could lose the write.
+    const dir = mkdtempSync(join(tmpdir(), "aj-lock4-"));
+    const paths = storePaths(dir);
+    const cfg = ConfigSchema.parse({ memoryDir: dir, search: "fts", git: false });
+    const indexer = Indexer.open(paths, cfg);
+    try {
+      let release!: () => void;
+      const held = new Promise<void>((r) => (release = r));
+      const refresh = withStoreLock(dir, () => held, { name: "refresh" });
+      await new Promise((r) => setTimeout(r, 20));
+
+      const started = Date.now();
+      await ingest(paths, indexer, "note", "saved during a boot", { git: false });
+      expect(Date.now() - started).toBeLessThan(5_000);
+      expect((await readPage(paths, "note"))!.body).toContain("saved during a boot");
+
+      release();
+      await refresh;
+    } finally {
+      indexer.close();
+    }
+  });
 });
 
 describe("page writes are atomic", () => {

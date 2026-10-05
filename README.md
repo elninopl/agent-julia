@@ -220,7 +220,7 @@ Two halves, delivered differently, because one of them can be written for you an
 
 The server also hands every client a short set of instructions when it connects — who the agent is, what it must never store, and the instruction to load the rest. That part needs no paste at all, so a machine where you never finished the setup still gets a named agent that knows what it must not keep.
 
-`agent-julia doctor` reports what it actually knows here, and says plainly what it cannot: it has no way to read the in-app field, so it tells you what it last asked you to paste, what the last Desktop session was seen running with, and whether the voice has genuinely been fetched there.
+`agent-julia doctor` reports what it actually knows here, and says plainly what it cannot: it has no way to read the in-app field, so it tells you what it last asked you to paste, what the newest Desktop session was started with when it left a copy on disk (recent Claude Desktop versions often do not), and whether the voice has genuinely been fetched there.
 
 Optionally back the store with a git remote — a private GitHub repo, say — set in the wizard or later with `agent-julia remote <url>`. By default it syncs on maintenance (and server startup), best-effort, so an offline moment or a missing credential never blocks a write; it just pushes on the next run. Turn on `gitAutoPush` to push after every write instead, trading a network round-trip per write for immediate off-machine backup. `agent-julia push` syncs on demand. With a remote set, the server also **pulls on startup** — so on a second machine, a session starts from what the first one pushed; a merge conflict is aborted (never left half-done) and reported for a by-hand `agent-julia pull`.
 
@@ -237,7 +237,7 @@ You drive Agent Julia by talking to it (see [Usage](#usage)); these are the unde
 | `read` | Read a page exactly as stored, front matter included |
 | `list` | List pages with title, status, and date (bounded; takes `limit` and `since`) |
 | `ingest` | Write a page: `append` a fact, or `replace` the whole thing (schema-enforced, guarded, git-committed) |
-| `correct_voice` | Record a voice correction |
+| `correct_voice` | Record a voice correction (one rule per call, up to 1,200 characters; a longer one is refused, never cut) |
 | `retract_correction` | Withdraw one, keeping the record of having had it |
 | `history` | How one page changed: when, what was added, what was removed |
 | `related` | Walk the `[[wiki-links]]` around a page |

@@ -358,14 +358,14 @@ async function main(): Promise<void> {
         "./persona/paste.js"
       );
       const { storePaths } = await import("./store/paths.js");
-      const { startMarker, endMarker } = await import("./managed/block.js");
+      const { managedBlock } = await import("./managed/block.js");
       const { STARTUP_BLOCK_ID } = await import("./persona/startup.js");
       const { writePasteMarker } = await import("./wizard/register.js");
       const { copyToClipboard } = await import("./util/clipboard.js");
       const { hostname } = await import("node:os");
 
       const body = withVoice ? await pasteWithVoice(storePaths(cfg.memoryDir), cfg) : await pasteBody(cfg);
-      const block = `${startMarker(STARTUP_BLOCK_ID)}\n${body.trim()}\n${endMarker(STARTUP_BLOCK_ID)}`;
+      const block = managedBlock(STARTUP_BLOCK_ID, body);
       const copied = await copyToClipboard(block);
 
       console.log(block);

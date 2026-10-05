@@ -195,3 +195,63 @@ describe("a change of model or precision", () => {
     }
   });
 });
+
+describe("a write re-embeds only the parts of a page that changed", () => {
+  function counting() {
+    const seen: string[] = [];
+    const provider: EmbeddingProvider = {
+      ...fakeProvider(),
+      async embed(texts) {
+        seen.push(...texts);
+        return texts.map(vec);
+      },
+    };
+    return { provider, seen };
+  }
+  const sections = (n: number) =>
+    Array.from({ length: n }, (_, i) => `## Part ${i}\n\n${"Sailing notes, written down the same evening. ".repeat(6)}`).join("\n\n");
+
+  it("sends only new chunks to the provider on an append, and none on a rewrite of the same text", async () => {
+    const { paths, config } = freshStore("semantic");
+    const { provider, seen } = counting();
+    const idx = Indexer.open(paths, config, provider);
+    try {
+      await writePage(paths, "log", sections(6), {});
+      await idx.indexPage("log");
+      expect(seen).toHaveLength(6);
+
+      seen.length = 0;
+      await writePage(paths, "log", `## Part 6\n\n${"One more evening at anchor. ".repeat(10)}`, { mode: "append" });
+      await idx.indexPage("log");
+      expect(seen).toHaveLength(1);
+      expect(seen[0]).toContain("Part 6");
+      expect(idx.db.prepare("SELECT COUNT(*) AS n FROM embeddings WHERE id = 'log'").get()!.n).toBe(7);
+
+      seen.length = 0;
+      await idx.indexPage("log");
+      expect(seen).toHaveLength(0);
+      expect((await idx.search("sailing", 3))[0]!.id).toBe("log");
+    } finally {
+      idx.close();
+    }
+  });
+
+  it("adds the column to an index built before it, without dropping the vectors", async () => {
+    const { paths, config } = freshStore("semantic");
+    await writePage(paths, "brew-notes", "coffee", {});
+    let idx = Indexer.open(paths, config, fakeProvider());
+    await idx.sync();
+    // What an index from before the column looks like.
+    idx.db.exec("ALTER TABLE embeddings DROP COLUMN hash;");
+    idx.close();
+
+    idx = Indexer.open(paths, config, fakeProvider());
+    try {
+      const cols = idx.db.prepare("PRAGMA table_info(embeddings)").all().map((c) => c.name);
+      expect(cols).toContain("hash");
+      expect(embeddedIds(idx.db)).toEqual(["brew-notes"]);
+    } finally {
+      idx.close();
+    }
+  });
+});

@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { warn } from "../util/log.js";
 import { randomUUID } from "node:crypto";
-import { copyFile, mkdir, readFile, readlink, realpath, rename, unlink, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, readFile, readlink, realpath, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { withFileLock } from "./lock.js";
 import { basename, dirname, join, resolve } from "node:path";
 
@@ -35,6 +35,19 @@ async function backupOnce(filePath: string): Promise<void> {
   }
 }
 
+// The block exactly as upsert writes it. Every "is it current?" check compares
+// against this rather than building the string by hand: the body is cleaned
+// below, and a check that skipped the cleaning never matched what was on disk,
+// so the file was rewritten on every boot and doctor called it stale forever.
+export function managedBlock(id: string, body: string): string {
+  // The body can carry user-authored text (voice corrections quote whatever the
+  // user said). Strip anything that looks like our markers — a literal end
+  // marker inside the body would close the region early and leak the rest of
+  // the block as permanent user content on the next upsert.
+  const safeBody = body.replace(/<!--\s*agent-julia:[\s\S]*?-->/g, "").trim();
+  return `${startMarker(id)}\n${safeBody}\n${endMarker(id)}`;
+}
+
 export function hasManagedBlock(content: string, id: string): boolean {
   return blockRegion(id).test(content);
 }
@@ -62,12 +75,7 @@ async function upsertLocked(
   const existed = existsSync(filePath);
   await backupOnce(filePath);
 
-  // The body can carry user-authored text (voice corrections quote whatever the
-  // user said). Strip anything that looks like our markers — a literal end
-  // marker inside the body would close the region early and leak the rest of
-  // the block as permanent user content on the next upsert.
-  const safeBody = body.replace(/<!--\s*agent-julia:[\s\S]*?-->/g, "").trim();
-  const block = `${startMarker(id)}\n${safeBody}\n${endMarker(id)}`;
+  const block = managedBlock(id, body);
   let current = existed ? await readFile(filePath, "utf8") : "";
 
   // A file with a start marker and no end marker (a half-finished hand edit, a
@@ -110,13 +118,23 @@ export async function removeManagedBlock(filePath: string, id: string): Promise<
 }
 
 // Temp file plus rename. These files belong to the user, not to us: a truncated
-// ~/.claude/CLAUDE.md is a broken Claude install and a lost profile.
-async function writeFileAtomic(path: string, content: string): Promise<void> {
+// ~/.claude/CLAUDE.md is a broken Claude install and a lost profile, and Claude
+// Code reads ~/.claude.json while it runs. The rename puts a new file in place,
+// so the old one's mode is carried over by hand: both Claude config files are
+// 0600, and a fresh temp file gets whatever the umask allows, usually 0644.
+export async function writeFileAtomic(path: string, content: string): Promise<void> {
   const target = await resolveLink(path);
+  const mode = await stat(target).then(
+    (s) => s.mode & 0o7777,
+    () => null,
+  );
   // pid alone is not unique: one process can be writing two blocks at once.
   const tmp = `${target}.${process.pid}.${randomUUID().slice(0, 8)}.tmp`;
   try {
-    await writeFile(tmp, content, "utf8");
+    // Created with the old mode, so it is never more open than the original,
+    // even before the chmod puts back any bits the umask took away.
+    await writeFile(tmp, content, mode === null ? "utf8" : { encoding: "utf8", mode });
+    if (mode !== null) await chmod(tmp, mode);
     await rename(tmp, target);
   } catch (err) {
     await unlink(tmp).catch(() => undefined);
