@@ -46,6 +46,20 @@ jobs:
       - run: npm run build
       - run: npm test
 
+  # Backstop for the local hooks (.githooks): a push that skipped them still
+  # cannot reach main or a release unnoticed. The names come from a secret.
+  names:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - name: No private project names in the tree
+        env:
+          AJ_FORBIDDEN_NAMES: ${{ secrets.AJ_FORBIDDEN_NAMES }}
+        run: node scripts/check-names.mjs --tree
+
   audit:
     runs-on: ubuntu-latest
     steps:

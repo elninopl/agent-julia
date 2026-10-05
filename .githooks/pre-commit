@@ -1,0 +1,3 @@
+#!/bin/sh
+# Private project names must not reach this public repo. See scripts/check-names.mjs.
+exec node "$(git rev-parse --show-toplevel)/scripts/check-names.mjs" --staged

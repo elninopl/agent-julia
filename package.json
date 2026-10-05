@@ -35,6 +35,8 @@
     "serve": "tsx src/index.ts serve",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json",
     "test": "vitest run",
+    "check:names": "node scripts/check-names.mjs --tree",
+    "hooks": "git config core.hooksPath .githooks",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {

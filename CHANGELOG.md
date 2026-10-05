@@ -52,6 +52,11 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ## [0.1.42] - 2026-10-05
 
+### Changed
+
+- The examples in the tool descriptions, the server instructions and the
+  README use a made-up project name.
+
 ### Fixed
 
 - **The local embedding model no longer lives inside every server.** Each

@@ -46,7 +46,7 @@ You don't call tools or memorize commands. You talk to your agent by name, and i
 **Save something** *(→ `ingest`)*
 
 - "Remember that we dropped Redis — we're on Postgres LISTEN/NOTIFY now."
-- "Note for the Privé project: the weekly review moved to Mondays."
+- "Note for the Atlas project: the weekly review moved to Mondays."
 - The agent also tries to capture durable facts on its own — but treat that as a
   bonus, not a guarantee (see the note below). Saying "remember: …" is the
   reliable channel.
@@ -62,7 +62,7 @@ You don't call tools or memorize commands. You talk to your agent by name, and i
 **Recall** *(→ `search`, `read`)*
 
 - "What did we decide about auth?"
-- "What do you know about the Privé pricing model?"
+- "What do you know about the Atlas pricing model?"
 - "Did I say anything about onboarding last week?"
 
 **Steer the voice** *(→ `correct_voice`)*
@@ -342,6 +342,8 @@ git push --follow-tags
 ```
 
 A `vX.Y.Z` tag triggers the release workflow: it checks the tag against `package.json`, runs the tests, publishes to npm via Trusted Publishing (OIDC — no stored token, provenance attached automatically), and cuts a GitHub release from the matching CHANGELOG section.
+
+Some names must never appear in this repository. `npm run hooks` points git at `.githooks`, whose pre-commit, commit-msg and pre-push hooks run `scripts/check-names.mjs` over what is about to leave the machine: added lines, file paths, commit messages and branch names, ignoring case and accents. The names themselves stay out of the repo, in `git config --global --add agentjulia.forbiddenName <name>`, and in the `AJ_FORBIDDEN_NAMES` secret for CI and the release workflow, which check the whole tree. To check a PR description before posting it, pipe it to `node scripts/check-names.mjs --stdin`.
 
 ## Credits
 
