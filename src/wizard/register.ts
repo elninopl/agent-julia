@@ -12,7 +12,13 @@ import { copyToClipboard } from "../util/clipboard.js";
 import { buildInjectedCore, STARTUP_BLOCK_ID } from "../persona/startup.js";
 import { PASTE_LAYOUT, configFingerprint, pasteBody, pasteHash } from "../persona/paste.js";
 import { storePaths } from "../store/paths.js";
-import { hasManagedBlock, managedBlock, removeManagedBlock, upsertManagedBlock } from "../managed/block.js";
+import {
+  hasManagedBlock,
+  managedBlock,
+  removeManagedBlock,
+  upsertManagedBlock,
+  writeFileAtomic,
+} from "../managed/block.js";
 import { installSkills, skillsTargetDir, uninstallSkills } from "../skills/install.js";
 import { EXPORT_BLOCK_ID as EXPORTED_BLOCK_ID } from "../export/export.js";
 
@@ -286,9 +292,7 @@ export async function mergeMcpServerForTest(path: string, name: string, entry: S
   // state, and a truncated one is a broken install.
   const bak = `${path}.agent-julia-bak`;
   if (existsSync(path) && !existsSync(bak)) await copyFile(path, bak);
-  const tmp = `${path}.${process.pid}.tmp`;
-  await writeFile(tmp, JSON.stringify(data, null, 2) + "\n", "utf8");
-  await rename(tmp, path);
+  await writeFileAtomic(path, JSON.stringify(data, null, 2) + "\n");
   log(`registered MCP server '${name}' in ${path}`);
   return true;
 }
@@ -306,14 +310,17 @@ function manualMcpStep(surface: Surface, action: string, path: string): InstallS
   };
 }
 
-async function removeMcpServer(path: string, name: string): Promise<boolean> {
+// Exported for tests. Written the same way as the registration: Claude Code
+// reads this file while it runs, and a plain writeFile truncates it in place,
+// so a read landing mid-write saw half a JSON document.
+export async function removeMcpServer(path: string, name: string): Promise<boolean> {
   if (!existsSync(path)) return false;
   try {
     const data = JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
     const servers = data.mcpServers as Record<string, unknown> | undefined;
     if (!servers || !(name in servers)) return false;
     delete servers[name];
-    await writeFile(path, JSON.stringify(data, null, 2) + "\n", "utf8");
+    await writeFileAtomic(path, JSON.stringify(data, null, 2) + "\n");
     return true;
   } catch {
     return false;

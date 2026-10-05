@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { warn } from "../util/log.js";
 import { randomUUID } from "node:crypto";
-import { copyFile, mkdir, readFile, readlink, realpath, rename, unlink, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, readFile, readlink, realpath, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { withFileLock } from "./lock.js";
 import { basename, dirname, join, resolve } from "node:path";
 
@@ -118,13 +118,23 @@ export async function removeManagedBlock(filePath: string, id: string): Promise<
 }
 
 // Temp file plus rename. These files belong to the user, not to us: a truncated
-// ~/.claude/CLAUDE.md is a broken Claude install and a lost profile.
-async function writeFileAtomic(path: string, content: string): Promise<void> {
+// ~/.claude/CLAUDE.md is a broken Claude install and a lost profile, and Claude
+// Code reads ~/.claude.json while it runs. The rename puts a new file in place,
+// so the old one's mode is carried over by hand: both Claude config files are
+// 0600, and a fresh temp file gets whatever the umask allows, usually 0644.
+export async function writeFileAtomic(path: string, content: string): Promise<void> {
   const target = await resolveLink(path);
+  const mode = await stat(target).then(
+    (s) => s.mode & 0o7777,
+    () => null,
+  );
   // pid alone is not unique: one process can be writing two blocks at once.
   const tmp = `${target}.${process.pid}.${randomUUID().slice(0, 8)}.tmp`;
   try {
-    await writeFile(tmp, content, "utf8");
+    // Created with the old mode, so it is never more open than the original,
+    // even before the chmod puts back any bits the umask took away.
+    await writeFile(tmp, content, mode === null ? "utf8" : { encoding: "utf8", mode });
+    if (mode !== null) await chmod(tmp, mode);
     await rename(tmp, target);
   } catch (err) {
     await unlink(tmp).catch(() => undefined);

@@ -1,10 +1,12 @@
 import {
+  chmodSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
   realpathSync,
+  statSync,
   symlinkSync,
   writeFileSync,
   existsSync,
@@ -18,7 +20,7 @@ import { composeCore } from "../src/persona/compose.js";
 import { refreshIndexMd } from "../src/store/catalog.js";
 import { writePage } from "../src/store/markdown.js";
 import { storePaths } from "../src/store/paths.js";
-import { mergeMcpServerForTest, stableNodePath } from "../src/wizard/register.js";
+import { mergeMcpServerForTest, removeMcpServer, stableNodePath } from "../src/wizard/register.js";
 import { ConfigSchema } from "../src/config/schema.js";
 
 function tmp(): string {
@@ -197,6 +199,48 @@ describe("registering a launcher that can do the job", () => {
     const after = JSON.parse(readFileSync(file, "utf8"));
     expect(after.keep).toBe("me");
     expect(after.mcpServers["agent-julia"]).toEqual({ command: "/opt/x/agent-julia", args: ["serve"] });
+  });
+});
+
+describe("rewriting a Claude config file another program reads", () => {
+  // File modes mean little on Windows; the rename part is checked everywhere.
+  const posix = process.platform !== "win32";
+
+  it("unregisters by replacing the file, not truncating it, and keeps its mode", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "aj-unreg-"));
+    const file = join(dir, "claude.json");
+    writeFileSync(
+      file,
+      JSON.stringify({ keep: "me", mcpServers: { other: { command: "x" }, "agent-julia": { command: "y" } } }),
+      "utf8",
+    );
+    chmodSync(file, 0o600);
+    const inode = statSync(file).ino;
+
+    expect(await removeMcpServer(file, "agent-julia")).toBe(true);
+
+    const after = JSON.parse(readFileSync(file, "utf8"));
+    expect(after.keep).toBe("me");
+    expect(after.mcpServers).toEqual({ other: { command: "x" } });
+    // A new inode is the rename: Claude Code reading mid-write sees the old
+    // file or the new one, never half of either.
+    expect(statSync(file).ino).not.toBe(inode);
+    if (posix) expect(statSync(file).mode & 0o777).toBe(0o600);
+    expect(readdirSync(dir).filter((f) => f.includes(".tmp"))).toEqual([]);
+
+    expect(await removeMcpServer(file, "agent-julia")).toBe(false);
+  });
+
+  it.skipIf(process.platform === "win32")("keeps the mode when registering, too", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "aj-reg-mode-"));
+    const file = join(dir, "claude.json");
+    writeFileSync(file, JSON.stringify({ keep: "me" }), "utf8");
+    chmodSync(file, 0o600);
+
+    await mergeMcpServerForTest(file, "agent-julia", { command: "npx", args: ["serve"] });
+
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+    expect(JSON.parse(readFileSync(file, "utf8")).keep).toBe("me");
   });
 });
 
