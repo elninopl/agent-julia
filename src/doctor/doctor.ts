@@ -183,7 +183,9 @@ export async function runDoctor(config: Config, t: DoctorTargets = defaultTarget
   } else {
     try {
       const db = openDb(paths, ftsTokenizerFor(config.language));
-      embedded = embeddedIds(db).length;
+      // Counted under the active model: vectors a previous model or precision
+      // left behind are not used by search, so they do not count as embedded.
+      embedded = embeddedIds(db, makeEmbeddingProvider(config.embedding).id).length;
       db.close();
       checks.push({ name: "index", status: "ok", detail: paths.dbPath });
     } catch (err) {

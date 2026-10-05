@@ -1,9 +1,10 @@
-import { EmbeddingConfig } from "../config/schema.js";
+import { EmbeddingConfig, LocalDtype } from "../config/schema.js";
 import { warn } from "../util/log.js";
+import { EmbedProcess } from "./embed-process.js";
 
 // A pluggable embedding backend. The "none" provider keeps agent-julia fully
 // offline and key-free; hybrid/semantic search then fall back to FTS. The
-// "local" provider runs a small model in-process (no server, no API).
+// "local" provider runs a small model on this machine (no server, no API).
 export interface EmbeddingProvider {
   readonly id: string; // stable identifier stored alongside vectors (model fingerprint)
   readonly dims: number;
@@ -13,6 +14,8 @@ export interface EmbeddingProvider {
   // Embed a single query. Some models (e5) need an asymmetric prefix vs documents;
   // by default it's the same as embed().
   embedQuery(text: string): Promise<number[] | null>;
+  // Release whatever the provider holds (the local model's process).
+  close?(): void;
 }
 
 class NoneProvider implements EmbeddingProvider {
@@ -27,55 +30,45 @@ class NoneProvider implements EmbeddingProvider {
   }
 }
 
-// Local, in-process embeddings via transformers.js (ONNX). No server, no API key,
-// fully offline after the first model download. Optional dependency: loaded
-// dynamically so the base install stays tiny. Models are the multilingual-e5
-// family (~118 languages); the wizard offers small/base/large quality tiers.
+// Local embeddings via transformers.js (ONNX). No server, no API key, fully
+// offline after the first model download. Optional dependency, and never loaded
+// into the server's own process: the model runs in a short-lived child
+// (embed-process.ts).
+// Models are the multilingual-e5 family (~118 languages); the wizard offers
+// small/base/large quality tiers.
 const LOCAL_PKG = "@huggingface/transformers";
 const DEFAULT_LOCAL_MODEL = "Xenova/multilingual-e5-small";
+const DEFAULT_LOCAL_DTYPE: LocalDtype = "q8";
 
 class LocalProvider implements EmbeddingProvider {
   readonly enabled = true;
   readonly dims: number;
   readonly id: string;
-  private readonly model: string;
-  // Cache the (heavy) pipeline load.
-  private pipe: Promise<(input: string[], opts: object) => Promise<{ tolist(): number[][] }>> | null = null;
+  private readonly worker: EmbedProcess;
 
   constructor(cfg: EmbeddingConfig) {
-    this.model = cfg.model ?? DEFAULT_LOCAL_MODEL;
+    const model = cfg.model ?? DEFAULT_LOCAL_MODEL;
+    const dtype = cfg.dtype ?? DEFAULT_LOCAL_DTYPE;
     this.dims = cfg.dims ?? 384;
-    this.id = `local:${this.model}:${this.dims}`;
-  }
-
-  private async extractor() {
-    if (!this.pipe) {
-      this.pipe = (async () => {
-        const mod = (await import(LOCAL_PKG)) as { pipeline: (task: string, model: string) => Promise<unknown> };
-        return (await mod.pipeline("feature-extraction", this.model)) as (
-          input: string[],
-          opts: object,
-        ) => Promise<{ tolist(): number[][] }>;
-      })();
-    }
-    return this.pipe;
+    // The precision is part of the fingerprint: q8 and fp32 vectors of the same
+    // text are close but not equal, so changing it re-embeds the store once.
+    this.id = `local:${model}:${this.dims}:${dtype}`;
+    this.worker = new EmbedProcess({ model, dtype });
   }
 
   // e5 expects "passage: " for documents and "query: " for queries.
-  private async run(texts: string[]): Promise<number[][]> {
-    if (texts.length === 0) return [];
-    const extract = await this.extractor();
-    const out = await extract(texts, { pooling: "mean", normalize: true });
-    return out.tolist();
-  }
-
   async embed(texts: string[]): Promise<number[][]> {
-    return this.run(texts.map((t) => `passage: ${t}`));
+    if (texts.length === 0) return [];
+    return this.worker.embed(texts.map((t) => `passage: ${t}`));
   }
 
   async embedQuery(text: string): Promise<number[] | null> {
-    const [v] = await this.run([`query: ${text}`]);
+    const [v] = await this.worker.embed([`query: ${text}`]);
     return v ?? null;
+  }
+
+  close(): void {
+    this.worker.close();
   }
 }
 
@@ -86,7 +79,8 @@ async function symmetricQuery(provider: EmbeddingProvider, text: string): Promis
 }
 
 // Probe whether the optional local-embeddings package is installed, so the wizard
-// can guide the user before they commit to it.
+// can guide the user before they commit to it. Imports it into the calling
+// process, so it is for short-lived commands (wizard, doctor), never the server.
 export async function checkLocalEmbeddingsAvailable(): Promise<boolean> {
   try {
     await import(LOCAL_PKG);
@@ -98,20 +92,22 @@ export async function checkLocalEmbeddingsAvailable(): Promise<boolean> {
 
 export const LOCAL_EMBEDDINGS_PACKAGE = LOCAL_PKG;
 
-// Local model quality tiers (multilingual-e5 family). Bigger = better recall,
-// more disk and RAM, slower per query. `disk` is the one-time quantized ONNX
-// download (cached); `ram` is the rough working-set when the model is loaded.
+// Local model quality tiers (multilingual-e5 family), measured at q8 on an
+// Apple Silicon Mac. `disk` is the one-time download, cached by transformers.js.
+// `ram` is what the embedding process holds while it is alive — from the first
+// search or write until a minute after the last one — and nothing otherwise.
+// Per chunk of ~450 tokens: small ~19 ms, base ~37 ms, large ~110 ms.
 export const LOCAL_MODEL_TIERS = {
-  small: { model: "Xenova/multilingual-e5-small", dims: 384, disk: "~120 MB", ram: "~0.3 GB" },
-  base: { model: "Xenova/multilingual-e5-base", dims: 768, disk: "~280 MB", ram: "~0.6 GB" },
-  large: { model: "Xenova/multilingual-e5-large", dims: 1024, disk: "~560 MB", ram: "~1.3 GB" },
+  small: { model: "Xenova/multilingual-e5-small", dims: 384, disk: "~120 MB", ram: "~0.8 GB" },
+  base: { model: "Xenova/multilingual-e5-base", dims: 768, disk: "~280 MB", ram: "~1.1 GB" },
+  large: { model: "Xenova/multilingual-e5-large", dims: 1024, disk: "~560 MB", ram: "~1.7 GB" },
 } as const;
 export type LocalModelTier = keyof typeof LOCAL_MODEL_TIERS;
 
-// Suggest a tier from the machine's RAM and CPU cores. RAM rarely binds (even
-// large needs only ~1.3 GB); the bigger model's real cost is slower CPU inference
-// per query, so cores matter more. Stay conservative — large stays a deliberate
-// opt-in rather than an automatic recommendation.
+// Suggest a tier from the machine's RAM and CPU cores. RAM rarely binds — even
+// large holds ~1.7 GB, and only while it is in use — so the real cost of a
+// bigger model is slower CPU inference per query, and cores matter more. Stay
+// conservative: large stays a deliberate opt-in rather than a recommendation.
 export function recommendLocalTier(totalRamGB: number, cpuCores: number): LocalModelTier {
   if (totalRamGB < 8 || cpuCores < 4) return "small";
   if (totalRamGB >= 16 && cpuCores >= 8) return "base";

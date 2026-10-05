@@ -190,9 +190,10 @@ export async function runWizard(): Promise<void> {
         const cores = cpus().length;
         const rec = recommendLocalTier(ramGB, cores);
         info(
-          `Each model is a one-time download cached on disk, and loads into RAM (~the download size plus a little) ` +
-            `while search runs. This machine has ~${ramGB} GB RAM and ${cores} CPU cores — RAM fits any tier easily, ` +
-            `so the suggestion leans on cores, since a bigger model is mainly slower per query on the CPU.`,
+          `Each model is a one-time download cached on disk. It loads into a separate process while a search or ` +
+            `a write needs it, and that process exits after a minute without use, giving the RAM back. This machine ` +
+            `has ~${ramGB} GB RAM and ${cores} CPU cores — RAM fits any tier easily, so the suggestion leans on cores, ` +
+            `since a bigger model is mainly slower per query on the CPU.`,
         );
         const tier = await p.choice<LocalModelTier>([
           {

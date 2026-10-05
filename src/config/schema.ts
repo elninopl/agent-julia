@@ -41,6 +41,11 @@ export type WeeklyMaintenance = (typeof WEEKLY_MAINTENANCE)[number];
 export const EMBEDDING_PROVIDERS = ["none", "local", "openai-compatible"] as const;
 export type EmbeddingProviderKind = (typeof EMBEDDING_PROVIDERS)[number];
 
+// Weight precision of a local model. Unset means q8: fp32 of multilingual-e5-base
+// holds ~2.8 GB while loaded against ~0.9 GB for q8, and ranks the same pages.
+export const LOCAL_DTYPES = ["fp32", "fp16", "q8", "int8", "uint8", "q4"] as const;
+export type LocalDtype = (typeof LOCAL_DTYPES)[number];
+
 export const EmbeddingConfigSchema = z.object({
   provider: z.enum(EMBEDDING_PROVIDERS).default("none"),
   // For openai-compatible: base URL + model. API key is read from env, never stored.
@@ -48,6 +53,7 @@ export const EmbeddingConfigSchema = z.object({
   model: z.string().optional(),
   apiKeyEnv: z.string().default("AGENT_JULIA_EMBED_API_KEY"),
   dims: z.number().int().positive().optional(),
+  dtype: z.enum(LOCAL_DTYPES).optional(),
 });
 export type EmbeddingConfig = z.infer<typeof EmbeddingConfigSchema>;
 

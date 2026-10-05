@@ -33,6 +33,45 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ### Fixed
 
+- **The local embedding model no longer lives inside every server.** Each
+  Claude session runs its own `agent-julia serve`, and the first search or
+  write in a session loaded the model into that process for good: ONNX Runtime
+  does not give its memory back while the process lives, not after a GC and
+  not after `dispose()`. On the maintainer's machine 13 of 54 servers held
+  between 1.3 and 5.4 GB each, 37 GB in all, with the swap full. The model now
+  runs in a child process started on demand, which embeds eight chunks at a
+  time (peak memory follows the batch size, speed does not) and exits after a
+  minute without use. Measured on a copy of the same store: an idle server
+  sits at 46-54 MB after a search and a write, the first search after a quiet
+  minute takes ~0.8 s and later ones ~20 ms. A server that is killed takes the
+  child with it.
+- **Local models run at 8-bit precision, and the fingerprint says so.** No
+  precision was ever requested, and transformers.js v4 then downloads full
+  fp32: 1.1 GB on disk and ~2.8 GB in memory for `multilingual-e5-base`,
+  against the ~280 MB and ~0.6 GB the wizard quoted. `q8` holds ~1.1 GB while
+  running and ranked the same top page for 27 of 28 queries against the
+  maintainer's store. `embedding.dtype` sets it explicitly, and the tier sizes
+  in the wizard and here are now measured rather than estimated. The precision
+  is part of the embedding fingerprint, so the first start after upgrading
+  re-embeds the store once, in the background (~50 s for 221 pages). The fp32
+  file can be deleted afterwards: `model.onnx` under
+  `@huggingface/transformers/.cache/Xenova/<model>/onnx/` in the global
+  `node_modules`.
+- **Re-embedding no longer holds up the connection, and only one server does
+  it.** It ran before the server answered the client's handshake, so after a
+  model change every session starting meanwhile waited for the whole store,
+  and each of them re-embedded it in parallel with its own copy of the model.
+  It now runs after connecting, page by page with nothing wiped first, under a
+  lock the other servers skip instead of waiting for. Startup maintenance takes
+  a lock of the same kind: four servers booting onto a changed store used to
+  reindex the same pages four times. Semantic search compares only vectors
+  from the active model, so a page not yet re-embedded is missing from
+  semantic results for that minute (keyword search still finds it) rather than
+  ranked against vectors from a different model.
+- **A client that left during a slow start went unnoticed.** The shutdown
+  handler was defined after the startup tasks, so the stdin and transport
+  listeners were attached only once those finished, and the parent watchdog
+  firing in the meantime hit an uninitialised binding and crashed the process.
 - **A symlink whose target did not exist yet was replaced by a regular file.**
   A dotfiles repo commonly symlinks `~/.claude/CLAUDE.md`; on a checkout that
   carries the link but not the file, `realpath` refuses the link, and the write

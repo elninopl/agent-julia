@@ -9,7 +9,7 @@ import { getMeta, setMeta } from "./index/db.js";
 import { latestStoreMtime } from "./store/markdown.js";
 import { runMaintenance } from "./maintenance/maintenance.js";
 import { pullFromRemote } from "./store/git.js";
-import { waitForIdle } from "./store/lock.js";
+import { waitForIdle, withStoreLock } from "./store/lock.js";
 import { installSkills, skillsTargetDir } from "./skills/install.js";
 import { refreshInjectedCore } from "./wizard/register.js";
 import { refreshExports } from "./export/export.js";
@@ -100,16 +100,29 @@ async function runStartupTasks(rt: Runtime): Promise<void> {
   // session spawns its own serve, so running full maintenance (read all pages,
   // refresh the catalog, git add/commit) on every cold start is pure repeated
   // cost. The mtime check is a readdir + stat, no content reads. Non-fatal.
+  //
+  // One server at a time. Sessions that boot together all see the same change
+  // (a pull, a hand edit), and each of them reindexing it meant each starting
+  // its own copy of the embedding model for the same pages. The index is
+  // shared, so whoever holds the lock does it for everyone.
   try {
     const latest = await latestStoreMtime(rt.paths);
     const stored = Number(getMeta(rt.indexer.db, MAINT_MTIME_KEY) ?? 0);
     if (latest > stored) {
-      const report = await runMaintenance(rt.paths, rt.indexer, rt.config, "auto");
-      setMeta(rt.indexer.db, MAINT_MTIME_KEY, String(latest));
-      log(
-        `maintenance: +${report.indexAdded}/~${report.indexUpdated}/-${report.indexRemoved} indexed, ` +
-          `${report.staleFlagged.length} stale, ${report.orphanLinks.length} orphan link(s)`,
+      const report = await withStoreLock(
+        rt.paths.root,
+        () => runMaintenance(rt.paths, rt.indexer, rt.config, "auto"),
+        { name: "maintenance", waitMs: 0 },
       );
+      if (report) {
+        setMeta(rt.indexer.db, MAINT_MTIME_KEY, String(latest));
+        log(
+          `maintenance: +${report.indexAdded}/~${report.indexUpdated}/-${report.indexRemoved} indexed, ` +
+            `${report.staleFlagged.length} stale, ${report.orphanLinks.length} orphan link(s)`,
+        );
+      } else {
+        log("maintenance: another server is running it — skipped");
+      }
     } else {
       log("maintenance: store unchanged since last run — skipped");
     }
@@ -127,7 +140,6 @@ async function runStartupTasks(rt: Runtime): Promise<void> {
     // Under the store lock: every Claude session spawns its own server, and on a
     // busy machine a dozen of them boot at once and rewrite ~/.claude/CLAUDE.md
     // and ~/.claude/skills at the same moment.
-    const { withStoreLock } = await import("./store/lock.js");
     const { adoptCodeMemory } = await import("./surfaces/code-memory.js");
     const refreshed = await withStoreLock(rt.config.memoryDir, async () => ({
       steps: await installSkills(skillsTargetDir()),
@@ -150,6 +162,15 @@ async function runStartupTasks(rt: Runtime): Promise<void> {
     );
   } catch (err) {
     warn("startup refresh failed (continuing):", (err as Error).message);
+  }
+
+  // Last, because it can take a while: vectors for pages that lack them under
+  // the active model. Not gated on the store watermark above, since a change of
+  // model or precision changes no page. A no-op on almost every boot.
+  try {
+    await rt.indexer.reembedIfStale();
+  } catch (err) {
+    warn("startup re-embed failed (continuing):", (err as Error).message);
   }
 }
 
@@ -200,8 +221,45 @@ function startParentWatchdog(onOrphaned: () => void): void {
 // resources over a tool call.
 export async function startServer(): Promise<void> {
   const rt = await buildRuntime();
-  // Assigned once the handler below exists; the transport can close before then.
-  let shutdownRef: ((why: string) => void) | null = null;
+
+  // Defined, and wired to every way the session can end, before the transport
+  // connects and before the startup tasks run. It used to be declared after
+  // them: a client that left during a slow boot was not noticed until they
+  // finished, and the watchdog firing in that window hit an uninitialised
+  // binding and crashed the process mid-write.
+  let down = false;
+  const shutdown = (why: string) => {
+    if (down) return;
+    down = true;
+    log(`shutting down (${why})`);
+    // Give an in-flight write its lock and its commit. process.exit() used to
+    // fire immediately, so a shutdown landing mid-ingest could leave the page on
+    // disk, the journal appended and nothing committed. The deadline keeps a
+    // wedged operation from turning into a process that never exits.
+    const deadline = setTimeout(() => process.exit(0), DRAIN_MS);
+    deadline.unref?.();
+    void (async () => {
+      try {
+        await waitForIdle(DRAIN_MS);
+      } finally {
+        clearTimeout(deadline);
+        try {
+          // Also stops the embedding process, if one is running.
+          rt.indexer.close();
+        } catch {
+          // closing a db that is already gone is not worth a failed exit
+        }
+        process.exit(0);
+      }
+    })();
+  };
+  process.on("SIGINT", () => shutdown("SIGINT"));
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  // Reap the server when its client goes away. Claude spawns one serve per
+  // session and may close the stdio pipe without sending a signal; without this
+  // the process (and its npm-exec wrapper) lingers for hours.
+  process.stdin.on("end", () => shutdown("stdin ended"));
+  process.stdin.on("close", () => shutdown("stdin closed"));
 
   const server = new McpServer(
     { name: "agent-julia", version: await packageVersion() },
@@ -236,10 +294,12 @@ export async function startServer(): Promise<void> {
   recordBootWhenKnown(server);
 
   const transport = new StdioServerTransport();
+  // Assigned before connect: the SDK chains its own handler onto
+  // transport.onclose inside connect(), and assigning afterwards discarded it.
   const priorOnClose = transport.onclose;
   transport.onclose = () => {
     priorOnClose?.();
-    shutdownRef?.("transport closed");
+    shutdown("transport closed");
   };
   await server.connect(transport);
   log(`agent-julia serving "${rt.config.name}" — memory: ${rt.config.memoryDir}`);
@@ -247,41 +307,4 @@ export async function startServer(): Promise<void> {
   startParentWatchdog(() => shutdown("the client that started this server is gone"));
 
   await runStartupTasks(rt);
-
-  let down = false;
-  const shutdown = (why: string) => {
-    if (down) return;
-    down = true;
-    log(`shutting down (${why})`);
-    // Give an in-flight write its lock and its commit. process.exit() used to
-    // fire immediately, so a shutdown landing mid-ingest could leave the page on
-    // disk, the journal appended and nothing committed. The deadline keeps a
-    // wedged operation from turning into a process that never exits.
-    const deadline = setTimeout(() => process.exit(0), DRAIN_MS);
-    deadline.unref?.();
-    void (async () => {
-      try {
-        await waitForIdle(DRAIN_MS);
-      } finally {
-        clearTimeout(deadline);
-        try {
-          rt.indexer.close();
-        } catch {
-          // closing a db that is already gone is not worth a failed exit
-        }
-        process.exit(0);
-      }
-    })();
-  };
-
-  // Registered BEFORE connect: the SDK chains its own handler onto
-  // transport.onclose inside connect(), and assigning afterwards discarded it.
-  shutdownRef = shutdown;
-  process.on("SIGINT", () => shutdown("SIGINT"));
-  process.on("SIGTERM", () => shutdown("SIGTERM"));
-  // Reap the server when its client goes away. Claude spawns one serve per
-  // session and may close the stdio pipe without sending a signal; without this
-  // the process (and its npm-exec wrapper) lingers for hours.
-  process.stdin.on("end", () => shutdown("stdin ended"));
-  process.stdin.on("close", () => shutdown("stdin closed"));
 }
