@@ -1,5 +1,5 @@
 import { Dirent, existsSync, readdirSync, statSync } from "node:fs";
-import { copyFile, readdir, readFile, rm, stat } from "node:fs/promises";
+import { copyFile, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
@@ -11,6 +11,7 @@ import { latestStoreMtime, readPage, writeFileAtomic } from "../store/markdown.j
 import { getMeta, setMeta } from "../index/db.js";
 import { managedBlock, removeManagedBlock, startMarker, upsertManagedBlock } from "../managed/block.js";
 import { ingest } from "../store/ingest.js";
+import { withStoreLock } from "../store/lock.js";
 import {
   PageSource,
   ROUTING_RULE,
@@ -230,8 +231,9 @@ export async function adoptCodeMemory(
       let absorbing = config.codeMemory === "absorb";
       if (config.codeMemory === "absorb" && !tooMany) {
         for (const file of loose) {
-          if (await absorbFile(paths, indexer, config, project, file)) report.absorbed++;
-          else report.pending++;
+          const outcome = await absorbFile(paths, indexer, config, project, file);
+          if (outcome === "absorbed") report.absorbed++;
+          else if (outcome === "kept") report.pending++;
         }
       } else {
         report.pending += loose.length;
@@ -369,14 +371,35 @@ async function looseFiles(project: CodeMemoryProject): Promise<string[]> {
   return out.sort();
 }
 
+// What became of one loose file: moved into the store, left in place (empty,
+// or changed while it was being moved), or already moved by another run.
+type AbsorbOutcome = "absorbed" | "kept" | "taken";
+
+// Read, check, append and replace as one step under the store lock. A boot and
+// a `sync` running side by side both read the page, both found the fact
+// missing, and both appended it; the second now waits, re-reads the file, and
+// finds the pointer the first one left.
 async function absorbFile(
   paths: StorePaths,
   indexer: Indexer,
   config: Config,
   project: CodeMemoryProject,
   file: string,
-): Promise<boolean> {
-  const raw = await readFile(file, "utf8");
+): Promise<AbsorbOutcome> {
+  const outcome = await withStoreLock(paths.root, () => absorbLocked(paths, indexer, config, project, file));
+  if (outcome === null) throw new Error("another agent-julia process held the store too long");
+  return outcome;
+}
+
+async function absorbLocked(
+  paths: StorePaths,
+  indexer: Indexer,
+  config: Config,
+  project: CodeMemoryProject,
+  file: string,
+): Promise<AbsorbOutcome> {
+  const raw = await readFile(file, "utf8").catch(() => null);
+  if (raw === null || raw.includes(ABSORBED_MARK)) return "taken";
   let parsed: { data: Record<string, unknown>; content: string };
   try {
     parsed = parseFrontmatter(raw);
@@ -386,7 +409,7 @@ async function absorbFile(
     parsed = { data: {}, content: raw };
   }
   const body = parsed.content.trim();
-  if (body.length === 0) return false;
+  if (body.length === 0) return "kept";
 
   const page = pageForProject(project);
   const name = String(parsed.data.name ?? basename(file, ".md"));
@@ -396,41 +419,47 @@ async function absorbFile(
   // on the next boot.
   const digest = createHash("sha1").update(body).digest("hex").slice(0, 8);
   const existing = await readPage(paths, page);
-  if (existing?.body.includes(digest)) {
-    await leavePointer(file, parsed.data, page, name);
-    return true;
+  if (!existing?.body.includes(digest)) {
+    const section = [
+      `## ${name}`,
+      "",
+      `_Captured by Claude Code in ${project.workingDir ?? project.slug} · ${basename(file)} · ${digest}_`,
+      ...(description ? ["", `**${description}**`] : []),
+      "",
+      body,
+    ].join("\n");
+
+    // Already inside the store lock, so ingest passes straight through it.
+    await ingest(paths, indexer, page, section, {
+      mode: "append",
+      title: `Claude Code memory: ${project.name}`,
+      git: config.git,
+      autoPush: config.gitAutoPush,
+    });
   }
-
-  const section = [
-    `## ${name}`,
-    "",
-    `_Captured by Claude Code in ${project.workingDir ?? project.slug} · ${basename(file)} · ${digest}_`,
-    ...(description ? ["", `**${description}**`] : []),
-    "",
-    body,
-  ].join("\n");
-
-  await ingest(paths, indexer, page, section, {
-    mode: "append",
-    title: `Claude Code memory: ${project.name}`,
-    git: config.git,
-    autoPush: config.gitAutoPush,
-  });
-  await leavePointer(file, parsed.data, page, name);
-  return true;
+  return (await leavePointer(file, raw, parsed.data, page, name)) ? "absorbed" : "kept";
 }
 
 // Replace the file with a pointer, keeping the front matter that makes the
 // client recall it: the description is the key it ranks on, so a stub that drops
 // it would quietly remove the fact from recall instead of redirecting it.
+//
+// Only while the file still holds what was just stored. Claude Code takes none
+// of our locks, and a version it wrote during the ingest used to be copied into
+// the backup and then replaced, so it reached the .bak and never the store.
+// Left alone, it is absorbed as a new fact on the next run. The gap between
+// this read and the rename remains, but it is that short now, not the length
+// of an ingest.
 async function leavePointer(
   file: string,
+  absorbed: string,
   data: Record<string, unknown>,
   page: string,
   name: string,
-): Promise<void> {
+): Promise<boolean> {
+  if ((await readFile(file, "utf8").catch(() => null)) !== absorbed) return false;
   const backup = `${file}.agent-julia-bak`;
-  if (!existsSync(backup)) await copyFile(file, backup);
+  if (!existsSync(backup)) await writeFile(backup, absorbed, "utf8");
   const body = [
     `${ABSORBED_MARK} page=${page} -->`,
     "",
@@ -439,6 +468,7 @@ async function leavePointer(
     "Don't edit this file: write through `ingest` so every surface sees the change.",
   ].join("\n");
   await writeFileAtomic(file, `${stringifyFrontmatter(body, data).trimEnd()}\n`);
+  return true;
 }
 
 // Rewrite the pointer block only when it would change. A dozen servers boot at
