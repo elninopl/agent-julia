@@ -22,7 +22,11 @@ export interface Proposals {
   oversizedPages: Array<{ id: string; tokens: number }>;
 }
 
+// A floor, not the signal: e5 puts unrelated text of the same store well above
+// 0.9 (median page pair 0.87 on a 221-page store), so the closest few pairs are
+// what is worth an owner's time, not every pair over a line.
 const DUPLICATE_SIMILARITY = 0.9;
+const MAX_DUPLICATES = 10;
 const OVERSIZED_TOKENS = 1200;
 const STALE_AFTER_DAYS = 270;
 
@@ -57,27 +61,40 @@ export async function buildProposals(paths: StorePaths, indexer: Indexer): Promi
     (id) => !hasInbound.has(id) && (outbound.get(id) ?? []).filter((l) => idSet.has(l)).length === 0,
   );
 
-  // Near-duplicates by pairwise cosine over the stored vectors. O(N²) over a
-  // personal KB is nothing; skipped entirely when embeddings are off.
+  // Near-duplicates: how close each pair of pages gets at its closest parts.
+  // Vectors are stored per chunk, and comparing rows as if they were pages
+  // paired every page with itself and listed each page pair once per matching
+  // chunk pair: on a 221-page store that was 4,664 proposals, 1,061 of them a
+  // page and itself. Only the active model's vectors are compared. O(chunks²)
+  // over a personal KB is nothing; skipped entirely when embeddings are off.
   const nearDuplicates: Proposals["nearDuplicates"] = [];
   if (indexer.provider.enabled) {
-    const rows = indexer.db.prepare("SELECT id, vector FROM embeddings").all() as Array<{
-      id: string;
-      vector: Buffer;
-    }>;
+    const rows = indexer.db
+      .prepare("SELECT id, vector FROM embeddings WHERE model = ?")
+      .all(indexer.provider.id) as Array<{ id: string; vector: Buffer }>;
     const vecs = rows
       .filter((r) => idSet.has(r.id))
       .map((r) => ({ id: r.id, vec: blobToVector(r.vector) }));
+    const closest = new Map<string, { a: string; b: string; similarity: number }>();
     for (let i = 0; i < vecs.length; i++) {
       for (let j = i + 1; j < vecs.length; j++) {
-        if (vecs[i]!.vec.length !== vecs[j]!.vec.length) continue;
-        const sim = cosineSimilarity(vecs[i]!.vec, vecs[j]!.vec);
-        if (sim >= DUPLICATE_SIMILARITY) {
-          nearDuplicates.push({ a: vecs[i]!.id, b: vecs[j]!.id, similarity: Number(sim.toFixed(3)) });
-        }
+        const x = vecs[i]!;
+        const y = vecs[j]!;
+        if (x.id === y.id || x.vec.length !== y.vec.length) continue;
+        const sim = cosineSimilarity(x.vec, y.vec);
+        if (sim < DUPLICATE_SIMILARITY) continue;
+        const [a, b] = x.id < y.id ? [x.id, y.id] : [y.id, x.id];
+        const key = `${a}\u0000${b}`;
+        const prev = closest.get(key);
+        if (!prev || sim > prev.similarity) closest.set(key, { a, b, similarity: sim });
       }
     }
-    nearDuplicates.sort((x, y) => y.similarity - x.similarity);
+    nearDuplicates.push(
+      ...[...closest.values()]
+        .sort((x, y) => y.similarity - x.similarity)
+        .slice(0, MAX_DUPLICATES)
+        .map((d) => ({ ...d, similarity: Number(d.similarity.toFixed(3)) })),
+    );
   }
 
   return { nearDuplicates, staleCandidates, orphanLinks, unlinkedPages, oversizedPages };
