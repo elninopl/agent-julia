@@ -58,6 +58,43 @@ changes, which always ship an automatic, backup-protected data migration.
 - **`get_core` does less per conversation.** It read the store once per
   rendering and rewrote `surfaces.json` on every call. It now reads once, and
   records a fetch only when the core changed or ten minutes have passed.
+- **A booting server could make a save in another session fail.** The
+  startup refresh (skills, persona blocks, Claude Code memory) ran under the
+  store lock, so an `ingest` in a session opened alongside it waited behind
+  the whole refresh and gave up after 15 s. The refresh has a lock of its own.
+- **Skills are no longer rewritten on every start.** Every server copied the
+  whole skill tree over the installed one, non-atomically, while Claude was
+  reading it, and a file dropped from the package stayed forever. Only files
+  whose bytes changed are written, through a temp file and a rename, and files
+  the package no longer ships are removed from our own copy.
+- **`doctor` asked for a re-paste on the strength of a weeks-old session.**
+  The Claude Desktop probe skipped sessions that left no copy of their
+  instructions and reported the newest one that did. The newest session now
+  decides, and one without a copy reads as unknown. The probe reads the three
+  levels where session files live instead of walking ~14,000 directories:
+  about 1.2 s down to about 20 ms on the maintainer's machine.
+- **The search for an old pasted layout ran on every start.** When it found
+  nothing to report it recorded nothing either, so every server walked Claude
+  Desktop's sessions again. Its answer is now recorded once.
+- **Claude Code memory adoption is skipped when nothing changed.** It read
+  every page of the store and walked project documentation trees on every
+  start. A signature of the store and the memory directories now decides, and
+  `sync` always runs it in full.
+- **Projects past the first 200 entries of `~/.claude/projects` were
+  invisible.** The cap was applied before keeping only directories with a
+  memory, so the rest went unseen, by `doctor` too. It now counts only those.
+- **Absorbing could append a fact twice or lose an edit.** The check for an
+  already absorbed file ran outside the store lock, and the file was not read
+  again before the pointer replaced it. Each file is now checked, absorbed and
+  replaced under the lock, from a fresh read.
+- **Two waiters could both take the same stale lock.** Each confirmed the
+  dead holder on its own and removed the lock, so the second removed the lock
+  the first had just taken. Reclaiming now goes through a guard and checks the
+  lock again under it, in both lock implementations.
+- **Servers starting together after an upgrade each ran the migration.**
+  Every one backed up the store, migrated it and saved the config, pushing the
+  pre-migration copies out of the five config backups. Migrations run under
+  the store lock now; a server that waited finds the work done.
 - **The weekly digest proposed thousands of near-duplicates.** Vectors are
   stored per chunk, and the digest compared them as if each were a page: it
   paired every long page with itself and listed each pair of pages once per
