@@ -7,6 +7,16 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ## [Unreleased]
 
+## [0.1.43] - 2026-10-05
+
+> **One thing to do after upgrading.** Run `agent-julia sync` once. Until
+> then the Claude apps keep launching the server through the Node path that
+> was registered before, which on a Homebrew install is a versioned directory
+> the next `brew upgrade node` deletes. `sync` registers the stable one.
+> The first server to start also adds a short block to the memory index of
+> each Claude Code project that already has one (see Added); `codeMemory:
+> "off"` in the config prevents it.
+
 ### Added
 
 - **A page can say where the rest of what it is about actually lives, and
