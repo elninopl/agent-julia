@@ -65,6 +65,24 @@ const MIN_CORRECTIONS_TOKENS = 120;
 // Blank lines joining the sections.
 const SEPARATOR_TOKENS = 10;
 
+// What the core is made of, read from disk once. Kept apart from rendering so a
+// caller that needs the core at two budgets (get_core) reads the files once,
+// and both renderings describe the same corrections file even if a correction
+// lands in between.
+export interface CoreInputs {
+  coreVoice: string;
+  voice: string;
+  corrections: string[];
+}
+
+export async function loadCoreInputs(paths: StorePaths, config: Config): Promise<CoreInputs> {
+  return {
+    coreVoice: await loadCoreVoice(),
+    voice: await loadVoice(paths, config),
+    corrections: await readCorrections(paths),
+  };
+}
+
 // Build the budgeted persona core for injection — written as direct instruction,
 // not a serialized config. Precedence is by ordering: corrections (last, labeled
 // as overriding) win over the universal core, which sits over the style voice.
@@ -74,13 +92,15 @@ export async function composeCore(
   config: Config,
   opts: { budget?: number } = {},
 ): Promise<ComposedCore> {
+  return renderCore(await loadCoreInputs(paths, config), config, opts.budget);
+}
+
+export function renderCore(inputs: CoreInputs, config: Config, budgetOverride?: number): ComposedCore {
   // The ceiling is a parameter because it means different things in different
   // places: the injected block sits in the system prompt and must not crowd it
   // out, while a tool result does not and should not be trimmed for that reason.
-  const budget = opts.budget ?? config.contextBudget;
-  const coreVoice = await loadCoreVoice();
-  const voice = await loadVoice(paths, config);
-  const corrections = await readCorrections(paths);
+  const budget = budgetOverride ?? config.contextBudget;
+  const { coreVoice, voice, corrections } = inputs;
 
   // Identity and the privacy rail come off the top: both are small and neither is
   // ever worth cutting.

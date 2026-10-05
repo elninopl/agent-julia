@@ -7,7 +7,7 @@ import { ingest } from "../store/ingest.js";
 import { refreshIndexMd } from "../store/catalog.js";
 import { commitAll, pageHistory, pushToRemote } from "../store/git.js";
 import { MAX_CORRECTION_CHARS, appendCorrection, retractCorrection } from "../persona/corrections.js";
-import { composeCore } from "../persona/compose.js";
+import { loadCoreInputs, renderCore } from "../persona/compose.js";
 import { coreHashOf, memoryInstruction } from "../persona/startup.js";
 import { PASTE_LAYOUT } from "../persona/paste.js";
 import { mergeSurfaces, readPasteMarker, readSurfaces, refreshInjectedCore } from "../wizard/register.js";
@@ -35,16 +35,24 @@ function clientName(server: McpServer): string {
 
 // Bookkeeping so `doctor` can answer the only question that matters about the
 // unreadable Desktop field: does the current voice actually arrive there.
-async function recordFetch(client: string, coreHash: string): Promise<void> {
+async function recordFetch(client: string, coreHash: string): Promise<boolean> {
   try {
     await mergeSurfaces((prev) => ({
       ...prev,
       fetches: { ...prev.fetches, [client]: { at: new Date().toISOString(), coreHash } },
     }));
+    return true;
   } catch {
     // never fail a read because a counter could not be written
+    return false;
   }
 }
+
+// One Claude Desktop server answers every conversation in the app, and each
+// conversation starts with get_core. Taking the lock and rewriting
+// surfaces.json every time to record the same client and the same core tells
+// doctor nothing new, so a repeat within this window is not written.
+const FETCH_RECORD_INTERVAL_MS = 10 * 60 * 1000;
 
 const NOTICE_CAP = 3;
 const NOTICE_INTERVAL_MS = 24 * 60 * 60 * 1000;
@@ -81,6 +89,7 @@ async function migrationNotice(client: string): Promise<string> {
 // Wire the MCP tool surface onto an McpServer instance.
 export function registerTools(server: McpServer, rt: Runtime): void {
   const { paths, indexer, config } = rt;
+  const lastFetchRecord = new Map<string, { hash: string; at: number }>();
 
   server.registerTool(
     "retract_correction",
@@ -140,12 +149,18 @@ export function registerTools(server: McpServer, rt: Runtime): void {
       // the tool returns a wider rendering because a tool result is not in the
       // system prompt. Hashing the wide one would mean `since` never matched for
       // anyone whose core is clamped — which is exactly the user this helps.
-      const canonical = await composeCore(paths, config);
-      const core = await composeCore(paths, config, { budget: config.contextBudget * 2 });
+      // One read of the store for both, so the hash always describes the core
+      // returned next to it.
+      const inputs = await loadCoreInputs(paths, config);
+      const canonical = renderCore(inputs, config);
+      const core = renderCore(inputs, config, config.contextBudget * 2);
       const hash = coreHashOf(canonical.text);
       const short = hash.slice(0, 8);
       const client = clientName(server);
-      await recordFetch(client, hash);
+      const last = lastFetchRecord.get(client);
+      if (!last || last.hash !== hash || Date.now() - last.at >= FETCH_RECORD_INTERVAL_MS) {
+        if (await recordFetch(client, hash)) lastFetchRecord.set(client, { hash, at: Date.now() });
+      }
 
       const corrections = (core.text.match(/^- /gm) ?? []).length;
       if (since && (since === hash || since === short)) {

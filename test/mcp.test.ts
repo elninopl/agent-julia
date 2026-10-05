@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -62,9 +62,10 @@ describe("MCP tool round-trip", () => {
     expect(core).toContain("Julia");
   });
 
-  it("correct_voice shows what it stored, and refuses what it would have to cut", async () => {
-    // correct_voice refreshes ~/.claude/CLAUDE.md; point home at a sandbox so
-    // the suite never rewrites the developer's own.
+  // correct_voice refreshes ~/.claude/CLAUDE.md and get_core records itself in
+  // ~/.config/agent-julia; point home at a sandbox so the suite never touches
+  // the developer's own.
+  async function sandboxedSession() {
     const home = mkdtempSync(join(tmpdir(), "aj-home-"));
     const before = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
     process.env.HOME = home;
@@ -88,6 +89,11 @@ describe("MCP tool round-trip", () => {
         else process.env[k] = v;
       }
     };
+    return { client, paths, home };
+  }
+
+  it("correct_voice shows what it stored, and refuses what it would have to cut", async () => {
+    const { client, paths } = await sandboxedSession();
 
     const saved = textOf(
       await client.callTool({ name: "correct_voice", arguments: { note: "No headers\nin short replies." } }),
@@ -99,5 +105,27 @@ describe("MCP tool round-trip", () => {
     expect(refused).toMatch(/^Nothing saved/);
     expect(refused).toContain("Split it");
     expect(readFileSync(paths.voiceCorrections, "utf8")).not.toContain("Write plainly.");
+  });
+
+  it("get_core records a fetch once per core, not on every call", async () => {
+    const { client, home } = await sandboxedSession();
+    const surfaces = join(home, ".config", "agent-julia", "surfaces.json");
+    const fetched = () => JSON.parse(readFileSync(surfaces, "utf8")).fetches["test-client"];
+
+    await client.callTool({ name: "get_core", arguments: {} });
+    const first = fetched();
+    const writtenAt = statSync(surfaces).mtimeMs;
+
+    // Same client, same core, moments later: nothing new for doctor to learn.
+    await new Promise((r) => setTimeout(r, 20));
+    await client.callTool({ name: "get_core", arguments: {} });
+    expect(fetched()).toEqual(first);
+    expect(statSync(surfaces).mtimeMs).toBe(writtenAt);
+
+    // A new correction is a new core, and that is recorded at once.
+    await client.callTool({ name: "correct_voice", arguments: { note: "Shorter answers." } });
+    const out = textOf(await client.callTool({ name: "get_core", arguments: {} }));
+    expect(out).toContain("Shorter answers.");
+    expect(fetched().coreHash).not.toBe(first.coreHash);
   });
 });
