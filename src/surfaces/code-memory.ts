@@ -77,7 +77,12 @@ export interface CodeMemoryProject {
 export async function findCodeMemoryProjects(root = codeMemoryRoot()): Promise<CodeMemoryProject[]> {
   const out: CodeMemoryProject[] = [];
   const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
-  for (const entry of entries.slice(0, MAX_PROJECTS)) {
+  // The cap counts directories that have a memory, not every entry. Most
+  // project directories never get one, and cutting the listing first hid the
+  // ones that do from adoption and from doctor whenever readdir happened to
+  // put them past the first 200.
+  for (const entry of entries) {
+    if (out.length >= MAX_PROJECTS) break;
     if (!entry.isDirectory()) continue;
     const dir = join(root, entry.name, "memory");
     if (!existsSync(dir)) continue;

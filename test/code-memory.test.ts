@@ -8,6 +8,7 @@ import {
   adoptCodeMemoryIfChanged,
   codeMemoryStatus,
   decodeWorkingDir,
+  findCodeMemoryProjects,
   releaseCodeMemory,
 } from "../src/surfaces/code-memory.js";
 import { Indexer } from "../src/index/indexer.js";
@@ -276,6 +277,22 @@ describe("adoption at boot", () => {
     } finally {
       indexer.close();
     }
+  });
+});
+
+describe("a machine with many projects", () => {
+  it("finds every memory directory, however far down the listing it sits", async () => {
+    // Most of ~/.claude/projects never gets a memory directory. The cap used to
+    // cut the raw listing before filtering, so a project past the first 200
+    // entries was invisible to adoption and to doctor.
+    const dir = tempDir("aj-many-");
+    for (let i = 0; i < 600; i++) mkdirSync(join(dir, `-work-p${i}`));
+    const withMemory = [17, 250, 401, 555, 599].map((i) => `-work-p${i}`);
+    for (const slug of withMemory) mkdirSync(join(dir, slug, "memory"));
+
+    const found = await findCodeMemoryProjects(dir);
+    expect(found.map((p) => p.slug).sort()).toEqual([...withMemory].sort());
+    expect((await codeMemoryStatus(dir)).projects).toBe(5);
   });
 });
 
