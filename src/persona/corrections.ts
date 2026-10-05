@@ -5,9 +5,12 @@ import { todayISO } from "../store/markdown.js";
 
 // L3 — user voice corrections. Append-only, highest precedence. Kept separate from
 // preset (L2) and core (L1) and surfaced into the injected core.
-// A single correction that runs longer than this is a document, not a rule, and
-// it crowds out the ones after it.
-const MAX_CORRECTION_CHARS = 600;
+// The longest single correction accepted. At the default contextBudget of 1200
+// tokens the corrections share is roughly 470 tokens, about 1,900 characters, so
+// one rule this long still leaves room for others; real ones run to about 950.
+// Anything longer is several rules, and it is refused, never cut: the old cap
+// of 600 stored a prefix that stopped mid-quote and read as a complete rule.
+export const MAX_CORRECTION_CHARS = 1200;
 
 const HEADER = `# Voice corrections
 
@@ -15,15 +18,27 @@ const HEADER = `# Voice corrections
 > override the style preset and the universal core. Newest at the bottom.
 `;
 
-export async function appendCorrection(paths: StorePaths, note: string): Promise<void> {
-  if (!existsSync(paths.voiceCorrections)) {
-    await writeFile(paths.voiceCorrections, HEADER + "\n", "utf8");
-  }
+export type AppendResult =
+  | { status: "ok"; saved: string }
+  | { status: "empty" }
+  | { status: "too-long"; length: number; max: number };
+
+// `saved` is the text as stored, which is not always the note as given: the
+// caller must show that, not the note.
+export async function appendCorrection(paths: StorePaths, note: string): Promise<AppendResult> {
   // Bounded and single-line. This text goes into the always-on prompt of every
   // surface with no review step, and the reader only ever takes the first line,
   // so a long or multi-line correction was silently half-applied.
-  const clean = note.trim().replace(/\s+/g, " ").slice(0, MAX_CORRECTION_CHARS);
+  const clean = note.trim().replace(/\s+/g, " ");
+  if (!clean) return { status: "empty" };
+  if (clean.length > MAX_CORRECTION_CHARS) {
+    return { status: "too-long", length: clean.length, max: MAX_CORRECTION_CHARS };
+  }
+  if (!existsSync(paths.voiceCorrections)) {
+    await writeFile(paths.voiceCorrections, HEADER + "\n", "utf8");
+  }
   await appendFile(paths.voiceCorrections, `- ${todayISO()} — ${clean}\n`, "utf8");
+  return { status: "ok", saved: clean };
 }
 
 // Withdraw a correction. Commented out rather than deleted: the file is the

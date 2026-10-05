@@ -6,7 +6,7 @@ import { pageId } from "../store/paths.js";
 import { ingest } from "../store/ingest.js";
 import { refreshIndexMd } from "../store/catalog.js";
 import { commitAll, pageHistory, pushToRemote } from "../store/git.js";
-import { appendCorrection, retractCorrection } from "../persona/corrections.js";
+import { MAX_CORRECTION_CHARS, appendCorrection, retractCorrection } from "../persona/corrections.js";
 import { composeCore } from "../persona/compose.js";
 import { coreHashOf, memoryInstruction } from "../persona/startup.js";
 import { PASTE_LAYOUT } from "../persona/paste.js";
@@ -327,11 +327,20 @@ export function registerTools(server: McpServer, rt: Runtime): void {
       title: "Record a voice correction",
       description:
         "Record how the user wants you to write, the moment they tell you — even in passing, even mid-task. " +
-        "Highest precedence: it overrides the style preset and the universal rules from the next turn on.",
+        "Highest precedence: it overrides the style preset and the universal rules from the next turn on. " +
+        `One rule per call, at most ${MAX_CORRECTION_CHARS} characters; a longer note is refused, so split it.`,
       inputSchema: { note: z.string().describe("The correction, in the user's words") },
     },
     async ({ note }) => {
-      await appendCorrection(paths, note);
+      const res = await appendCorrection(paths, note);
+      if (res.status === "empty") return text("Nothing saved: the correction was empty.");
+      if (res.status === "too-long") {
+        return text(
+          `Nothing saved: the correction is ${res.length} characters and the limit is ${res.max}. ` +
+            "It is more than one rule. Split it into separate corrections, one rule each, and call " +
+            "correct_voice once per rule. Keep each one complete; do not shorten a rule to make it fit.",
+        );
+      }
       if (config.git) {
         const committed = await commitAll(paths.root, "Update memory: voice correction");
         if (committed && config.gitAutoPush) await pushToRemote(paths.root);
@@ -339,7 +348,7 @@ export function registerTools(server: McpServer, rt: Runtime): void {
       // Make the Claude Code block current now rather than two sessions later.
       await refreshInjectedCore(config).catch(() => undefined);
       return text(
-        `Saved: ${note}\n\n` +
+        `Saved: ${res.saved}\n\n` +
           "Apply it from this turn on. It is not yet in your system prompt for this session " +
           "(that refreshes at the next server start), and other surfaces pick it up from get_core " +
           "in their next conversation.",

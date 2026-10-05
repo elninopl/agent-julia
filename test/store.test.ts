@@ -9,7 +9,12 @@ import { ingest } from "../src/store/ingest.js";
 import { archivePage, listArchivedIds, listPageIds, listPages, readPage, unarchivePage, writePage } from "../src/store/markdown.js";
 import { listStoreCommits, pageHistory, pushToRemote, revertCommit, setRemoteUrl } from "../src/store/git.js";
 import { migrate } from "../src/migrations/runner.js";
-import { appendCorrection, readCorrections, retractCorrection } from "../src/persona/corrections.js";
+import {
+  MAX_CORRECTION_CHARS,
+  appendCorrection,
+  readCorrections,
+  retractCorrection,
+} from "../src/persona/corrections.js";
 import { ConfigSchema } from "../src/config/schema.js";
 
 describe("git gating on ingest", () => {
@@ -501,11 +506,37 @@ describe("voice corrections can be withdrawn", () => {
     expect((await readCorrections(paths)).length).toBe(2);
   });
 
-  it("bounds a correction so one cannot crowd out the rest", async () => {
+  it("refuses a correction too long to be one rule, rather than cutting it", async () => {
     const dir = mkdtempSync(join(tmpdir(), "aj-bound-"));
     const paths = storePaths(dir);
-    await appendCorrection(paths, "x".repeat(5000));
-    const stored = (await readCorrections(paths))[0]!;
-    expect(stored.length).toBeLessThan(700);
+    const res = await appendCorrection(paths, "x".repeat(5000));
+    expect(res).toEqual({ status: "too-long", length: 5000, max: MAX_CORRECTION_CHARS });
+    expect(await readCorrections(paths)).toEqual([]);
+  });
+
+  it("keeps a long rule whole", async () => {
+    // The old 600-character cap stored the first 600 characters of a real
+    // correction, ending mid-quote, and reported the full text as saved.
+    const dir = mkdtempSync(join(tmpdir(), "aj-whole-"));
+    const paths = storePaths(dir);
+    const rule =
+      "No calques from business English. " +
+      Array.from({ length: 24 }, (_, i) => `Example ${i}: say what you mean in plain words.`).join(" ") +
+      " End of rule.";
+    expect(rule.length).toBeGreaterThan(900);
+    expect(rule.length).toBeLessThanOrEqual(MAX_CORRECTION_CHARS);
+
+    const res = await appendCorrection(paths, rule);
+    expect(res).toEqual({ status: "ok", saved: rule });
+    expect(await readCorrections(paths)).toEqual([`- ${rule}`]);
+  });
+
+  it("returns the text as stored, which is flattened onto one line", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "aj-flat-"));
+    const paths = storePaths(dir);
+    const res = await appendCorrection(paths, "  No headers\n\nin short   replies. ");
+    expect(res).toEqual({ status: "ok", saved: "No headers in short replies." });
+    expect(await appendCorrection(paths, " \n ")).toEqual({ status: "empty" });
+    expect(await readCorrections(paths)).toEqual(["- No headers in short replies."]);
   });
 });
