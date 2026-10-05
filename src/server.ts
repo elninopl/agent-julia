@@ -178,7 +178,7 @@ async function runStartupTasks(rt: Runtime): Promise<void> {
     // which takes the store lock for itself. Under the store lock, a session
     // calling ingest while another one booted waited behind the whole refresh,
     // and after 15 s lost the write.
-    const { adoptCodeMemory } = await import("./surfaces/code-memory.js");
+    const { adoptCodeMemoryIfChanged } = await import("./surfaces/code-memory.js");
     const refreshed = await withStoreLock(
       rt.config.memoryDir,
       async () => ({
@@ -186,8 +186,9 @@ async function runStartupTasks(rt: Runtime): Promise<void> {
         cores: await refreshInjectedCore(rt.config),
         exports: await refreshExports(rt.config),
         // Claude Code's own per-project memory: point it here, and (when asked)
-        // bring in whatever was written there instead of here.
-        code: await adoptCodeMemory(rt.paths, rt.indexer, rt.config),
+        // bring in whatever was written there instead of here. Skipped when
+        // neither the store nor those directories changed since the last run.
+        code: await adoptCodeMemoryIfChanged(rt.paths, rt.indexer, rt.config),
       }),
       { name: "refresh" },
     );
@@ -198,8 +199,10 @@ async function runStartupTasks(rt: Runtime): Promise<void> {
       log(
         `refresh: ${steps.filter((s) => s.status === "done").length}/${steps.length} skill(s), ` +
           `${cores} persona block(s), ${exports} export(s), ` +
-          `code memory ${code.pointers}/${code.projects} pointed` +
-          (code.absorbed > 0 ? `, ${code.absorbed} absorbed` : ""),
+          (code
+            ? `code memory ${code.pointers}/${code.projects} pointed` +
+              (code.absorbed > 0 ? `, ${code.absorbed} absorbed` : "")
+            : "code memory unchanged"),
       );
     }
   } catch (err) {

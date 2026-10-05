@@ -7,7 +7,8 @@ import { Config } from "../config/schema.js";
 import { Indexer } from "../index/indexer.js";
 import { StorePaths, pageId } from "../store/paths.js";
 import { parseFrontmatter, stringifyFrontmatter } from "../store/frontmatter.js";
-import { readPage, writeFileAtomic } from "../store/markdown.js";
+import { latestStoreMtime, readPage, writeFileAtomic } from "../store/markdown.js";
+import { getMeta, setMeta } from "../index/db.js";
 import { managedBlock, removeManagedBlock, startMarker, upsertManagedBlock } from "../managed/block.js";
 import { ingest } from "../store/ingest.js";
 import {
@@ -260,6 +261,54 @@ export async function adoptCodeMemory(
     }
   }
   return report;
+}
+
+const ADOPTION_SIG_KEY = "code_memory_sig";
+
+// The boot-time half of adoptCodeMemory: run it only when something it reads
+// has changed since the last clean run. It reads every page in the store to
+// find project routes and walks each project's documentation tree, and every
+// Claude session's server did that at boot to rewrite nothing. Returns null
+// when it skipped. `sync` calls adoptCodeMemory directly and always runs.
+export async function adoptCodeMemoryIfChanged(
+  paths: StorePaths,
+  indexer: Indexer,
+  config: Config,
+  root = codeMemoryRoot(),
+): Promise<AdoptionReport | null> {
+  if (config.codeMemory === "off") return null;
+  // Taken before the run, not after: the run's own writes (the pointer block,
+  // absorbed files, the store) then make the next boot run once more and find
+  // nothing to do, while a change the client makes mid-run is never folded
+  // into a watermark that claims it was handled.
+  const sig = await adoptionSignature(paths, config, root);
+  if (getMeta(indexer.db, ADOPTION_SIG_KEY) === sig) return null;
+  const report = await adoptCodeMemory(paths, indexer, config, root);
+  if (report.failed === 0) setMeta(indexer.db, ADOPTION_SIG_KEY, sig);
+  return report;
+}
+
+// Everything the outcome depends on, by stat rather than by content: the store
+// watermark maintenance uses, every file in each memory directory (the index
+// and the facts, added, edited or removed), each working directory's own
+// mtime (a _doc or CLAUDE.md appearing or going), and the block's wording and
+// mode. A file added deep inside a project's _doc only moves the count shown in
+// the block; that catches up on the next change here or on `sync`.
+async function adoptionSignature(paths: StorePaths, config: Config, root: string): Promise<string> {
+  const h = createHash("sha1");
+  h.update(pointerBody(config, { page: "p", projectPage: "q", sources: [{ kind: "dir", at: "d" }], workingDir: "w" }));
+  h.update(`\0store:${await latestStoreMtime(paths)}`);
+  for (const project of await findCodeMemoryProjects(root)) {
+    h.update(`\0${project.dir}`);
+    if (project.workingDir) {
+      h.update(`\0wd:${(await stat(project.workingDir).catch(() => null))?.mtimeMs ?? 0}`);
+    }
+    for (const name of (await readdir(project.dir).catch(() => [] as string[])).sort()) {
+      const st = await stat(join(project.dir, name)).catch(() => null);
+      h.update(`\0${name}:${st?.mtimeMs ?? 0}:${st?.size ?? 0}`);
+    }
+  }
+  return h.digest("hex");
 }
 
 // Non-mutating view of the same directories, for doctor.
