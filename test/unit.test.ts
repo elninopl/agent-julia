@@ -27,7 +27,7 @@ describe("page id resolution", () => {
 
 describe("markdown helpers", () => {
   it("extracts wiki links", () => {
-    expect(extractLinks("see [[elnino]] and [[Prive-Game|Privé]]")).toEqual(["elnino", "prive-game"]);
+    expect(extractLinks("see [[elnino]] and [[Atlas-App|Atlas]]")).toEqual(["elnino", "atlas-app"]);
   });
   it("produces ISO dates", () => {
     expect(todayISO(new Date("2026-06-21T10:00:00Z"))).toBe("2026-06-21");
@@ -96,7 +96,7 @@ describe("page id is a security boundary", () => {
   });
 
   it("keeps ordinary ids unchanged", () => {
-    expect(pageId("prive-game")).toBe("prive-game");
+    expect(pageId("atlas-app")).toBe("atlas-app");
     expect(pageId("v2.plan_notes")).toBe("v2.plan_notes");
   });
 });

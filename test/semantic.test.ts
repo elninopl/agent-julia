@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -140,6 +140,58 @@ describe("a page is embedded in parts, not as one vector", () => {
       expect(hits.map((h) => h.id)).toContain("mixed");
     } finally {
       indexer.close();
+    }
+  });
+});
+
+describe("a change of model or precision", () => {
+  it("re-embeds page by page, searches only the active model's vectors, then drops the old ones", async () => {
+    const { paths, config } = freshStore("semantic");
+    await writePage(paths, "brew-notes", "coffee coffee brewing", {});
+    await writePage(paths, "boat-log", "sailing across the bay", {});
+    let idx = Indexer.open(paths, config, fakeProvider());
+    await idx.sync();
+    idx.close();
+
+    // Same vectors, new fingerprint: what a dtype change looks like.
+    idx = Indexer.open(paths, config, { ...fakeProvider(), id: "fake-v2" });
+    try {
+      // Vectors from another model are not ranked against this model's query.
+      expect(await idx.search("coffee", 3)).toEqual([]);
+      expect(embeddedIds(idx.db, "fake-v2")).toEqual([]);
+
+      expect(await idx.reembedIfStale()).toBe(true);
+      expect((await idx.search("coffee", 3))[0]!.id).toBe("brew-notes");
+      const models = idx.db.prepare("SELECT DISTINCT model FROM embeddings").all().map((r) => r.model);
+      expect(models).toEqual(["fake-v2"]);
+      expect(await idx.reembedIfStale()).toBe(false);
+    } finally {
+      idx.close();
+    }
+  });
+
+  it("leaves the re-embed to the process already doing it", async () => {
+    const { paths, config } = freshStore("semantic");
+    await writePage(paths, "brew-notes", "coffee", {});
+    const idx = Indexer.open(paths, config, fakeProvider(new Set(["coffee"])));
+    try {
+      await idx.sync();
+      expect(embeddedIds(idx.db)).toEqual([]);
+
+      // Another server holds the embed lock, freshly.
+      const lock = join(paths.root, ".agent-julia", "embed.lock");
+      mkdirSync(lock, { recursive: true });
+      writeFileSync(join(lock, "owner"), "4242:someone-else");
+
+      const healthy = Indexer.open(paths, config, fakeProvider());
+      try {
+        expect(await healthy.reembedIfStale()).toBe(false);
+        expect(embeddedIds(healthy.db)).toEqual([]);
+      } finally {
+        healthy.close();
+      }
+    } finally {
+      idx.close();
     }
   });
 });

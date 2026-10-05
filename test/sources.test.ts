@@ -18,7 +18,7 @@ import { writePage } from "../src/store/markdown.js";
 describe("declaring where the rest of a project's knowledge lives", () => {
   it("reads the object form and the one a person types by hand", () => {
     const fm = {
-      project: "~/Sites/prive",
+      project: "~/Sites/atlas",
       sources: [
         { kind: "dir", at: "_doc", about: "product and technical docs" },
         { kind: "mcp", at: "acme", how: "docs_search, docs_read", about: "company docs" },
@@ -26,7 +26,7 @@ describe("declaring where the rest of a project's knowledge lives", () => {
         "https://example.test/wiki — the old wiki",
       ],
     };
-    expect(readProjects(fm)).toEqual(["~/Sites/prive"]);
+    expect(readProjects(fm)).toEqual(["~/Sites/atlas"]);
     const sources = readSources(fm);
     expect(sources).toHaveLength(4);
     expect(sources[0]).toMatchObject({ kind: "dir", at: "_doc" });
@@ -49,8 +49,8 @@ describe("declaring where the rest of a project's knowledge lives", () => {
   });
 
   it("resolves a relative path against the project it belongs to", () => {
-    const [line] = renderSources([{ kind: "dir", at: "_doc" }], "/Users/me/Sites/prive");
-    expect(line).toContain("/Users/me/Sites/prive/_doc");
+    const [line] = renderSources([{ kind: "dir", at: "_doc" }], "/Users/me/Sites/atlas");
+    expect(line).toContain(join("/Users/me/Sites/atlas", "_doc"));
   });
 });
 
@@ -87,7 +87,7 @@ describe("routing reaches whoever reads the page", () => {
     mkdirSync(project);
     await writePage(
       paths,
-      "prive",
+      "atlas",
       ["---", `project: ${project}`, "sources:", "  - kind: dir", "    at: _doc", "---", "", "The page."].join("\n"),
       {},
     );
@@ -97,7 +97,7 @@ describe("routing reaches whoever reads the page", () => {
     // and so is a ~/Sites that turns out to be a symlink.
     const routes = await loadRoutes(paths);
     const key = await normalizeDir(project);
-    expect(routes.get(key)?.page).toBe("prive");
+    expect(routes.get(key)?.page).toBe("atlas");
     expect(routes.get(key)?.sources[0]).toMatchObject({ at: "_doc" });
   });
 
@@ -107,10 +107,10 @@ describe("routing reaches whoever reads the page", () => {
 
   it("tells a reader where to look and what not to copy", async () => {
     const note = await routingNoteFor({
-      project: "/nowhere/prive",
+      project: "/nowhere/atlas",
       sources: [{ kind: "dir", at: "_doc", about: "product docs" }],
     });
-    expect(note).toContain("/nowhere/prive/_doc");
+    expect(note).toContain(join("/nowhere/atlas", "_doc"));
     expect(note).toContain("product docs");
     expect(note).toContain("route to it");
   });

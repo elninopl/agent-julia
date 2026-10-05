@@ -49,14 +49,14 @@ describe("MCP tool round-trip", () => {
 
     await client.callTool({
       name: "ingest",
-      arguments: { page: "prive-game", content: "Quiz game for couples, marketed on Reddit." },
+      arguments: { page: "atlas-app", content: "Trail app for hikers, marketed on Reddit." },
     });
 
-    const hits = textOf(await client.callTool({ name: "search", arguments: { query: "couples reddit" } }));
-    expect(hits).toContain("prive-game");
+    const hits = textOf(await client.callTool({ name: "search", arguments: { query: "hikers reddit" } }));
+    expect(hits).toContain("atlas-app");
 
-    const page = textOf(await client.callTool({ name: "read", arguments: { page: "prive-game" } }));
-    expect(page).toContain("Quiz game for couples");
+    const page = textOf(await client.callTool({ name: "read", arguments: { page: "atlas-app" } }));
+    expect(page).toContain("Trail app for hikers");
 
     const core = textOf(await client.callTool({ name: "get_core", arguments: {} }));
     expect(core).toContain("Julia");

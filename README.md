@@ -46,7 +46,7 @@ You don't call tools or memorize commands. You talk to your agent by name, and i
 **Save something** *(→ `ingest`)*
 
 - "Remember that we dropped Redis — we're on Postgres LISTEN/NOTIFY now."
-- "Note for the Privé project: the weekly review moved to Mondays."
+- "Note for the Atlas project: the weekly review moved to Mondays."
 - The agent also tries to capture durable facts on its own — but treat that as a
   bonus, not a guarantee (see the note below). Saying "remember: …" is the
   reliable channel.
@@ -62,7 +62,7 @@ You don't call tools or memorize commands. You talk to your agent by name, and i
 **Recall** *(→ `search`, `read`)*
 
 - "What did we decide about auth?"
-- "What do you know about the Privé pricing model?"
+- "What do you know about the Atlas pricing model?"
 - "Did I say anything about onboarding last week?"
 
 **Steer the voice** *(→ `correct_voice`)*
@@ -138,7 +138,7 @@ Two layers work together, and both run locally.
 
 **Meaning (optional).** Turn on semantic search to find a note even when you phrase it differently, and across languages — a question in Polish can surface an English note. You choose how it runs:
 
-- **Local model** — a multilingual model (the `multilingual-e5` family, ~118 languages) runs in-process. Pages are embedded in parts, split on their own headings, so a long page is searchable to its end and not just to the model's first 512 tokens. No server, no API key, fully offline after a one-time model download. Pick a size in the wizard: small (~120 MB download, ~0.3 GB RAM), base (~280 MB, ~0.6 GB), or large (~560 MB, ~1.3 GB). The size is a one-time download cached on disk; the model also loads into RAM while search runs. The wizard reads your machine's RAM and CPU cores and suggests a tier. RAM is rarely the limit — even the largest model needs only ~1.3 GB — so the suggestion leans on cores, since a bigger model's main cost is slower CPU inference per query. The real trade-off is download size and speed against quality. Needs one extra package, `@huggingface/transformers`, which stays optional so the base install is tiny.
+- **Local model** — a multilingual model (the `multilingual-e5` family, ~118 languages) runs on your machine, in a separate process that starts when a search or a write needs it and exits after a minute without use. The memory the model takes goes back to the system then, instead of staying with every open Claude session. The first search after a quiet minute takes under a second longer while the model loads; the ones after it take milliseconds. Pages are embedded in parts, split on their own headings, so a long page is searchable to its end and not just to the model's first 512 tokens. No server, no API key, fully offline after a one-time model download. Pick a size in the wizard: small (~120 MB download, ~0.8 GB RAM while running), base (~280 MB, ~1.1 GB), or large (~560 MB, ~1.7 GB). The models run at 8-bit precision (`q8`): on the maintainer's store it ranked the same top page as full precision for 27 of 28 queries, at a third of the memory. Set `embedding.dtype` to `fp32` if you want full precision anyway. The wizard reads your machine's RAM and CPU cores and suggests a tier. RAM is rarely the limit, so the suggestion leans on cores, since a bigger model's main cost is slower CPU inference per query. Needs one extra package, `@huggingface/transformers`, which stays optional so the base install is tiny.
 - **Hosted API** — any OpenAI-compatible endpoint (OpenAI, or a local server like Ollama or LM Studio). Your key is read from an environment variable and never written to disk.
 - **None** — stay keyword-only. The default, and completely dependency-free.
 
@@ -177,7 +177,7 @@ Point the wizard at an existing markdown knowledge base and Agent Julia adopts i
 Most projects already document themselves, and that documentation should not become a copy inside your store: it is large, it changes daily, and a copy goes stale the same week. A page can say where the rest of what it is about actually lives, and Agent Julia routes there instead.
 
 ```yaml
-project: ~/Sites/prive
+project: ~/Sites/atlas
 sources:
   - kind: dir
     at: _doc
@@ -286,7 +286,7 @@ Settings live in `~/.config/agent-julia/config.json` and carry a `schemaVersion`
 | `gitRemote` | Optional git remote (e.g. a private GitHub repo) to back up / sync the store |
 | `gitAutoPush` | Push after every write, not just on maintenance (default off) |
 | `search` | `hybrid`, `fts`, or `semantic` |
-| `embedding` | Provider (`none`, `local`, `openai-compatible`), model, and dimensions |
+| `embedding` | Provider (`none`, `local`, `openai-compatible`), model, dimensions, and for a local model its precision (`dtype`, default `q8`) |
 | `contextBudget` | Token ceiling for the persona core. The memory instruction (~280 tokens) is added on top; `agent-julia doctor` reports both numbers |
 | `surfaces` | Which Claude apps to register |
 | `privacyHardOff` | Categories the agent must never store (keys, card numbers, third-party private data) |
@@ -342,6 +342,8 @@ git push --follow-tags
 ```
 
 A `vX.Y.Z` tag triggers the release workflow: it checks the tag against `package.json`, runs the tests, publishes to npm via Trusted Publishing (OIDC — no stored token, provenance attached automatically), and cuts a GitHub release from the matching CHANGELOG section.
+
+Some names must never appear in this repository. `npm run hooks` points git at `.githooks`, whose pre-commit, commit-msg and pre-push hooks run `scripts/check-names.mjs` over what is about to leave the machine: added lines, file paths, commit messages and branch names, ignoring case and accents. The names themselves stay out of the repo, in `git config --global --add agentjulia.forbiddenName <name>`, and in the `AJ_FORBIDDEN_NAMES` secret for CI and the release workflow, which check the whole tree. To check a PR description before posting it, pipe it to `node scripts/check-names.mjs --stdin`.
 
 ## Credits
 

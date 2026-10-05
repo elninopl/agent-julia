@@ -1,0 +1,3 @@
+#!/bin/sh
+# Refs to push arrive on stdin and are passed through.
+exec node "$(git rev-parse --show-toplevel)/scripts/check-names.mjs" --push

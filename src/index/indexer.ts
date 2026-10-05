@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { Config } from "../config/schema.js";
 import { StorePaths } from "../store/paths.js";
 import { listPageIds, readPage } from "../store/markdown.js";
+import { withStoreLock } from "../store/lock.js";
 import { log } from "../util/log.js";
 import {
   DB,
@@ -17,9 +18,9 @@ import { ftsDelete, ftsUpsert } from "./fts.js";
 import { SearchResult, search } from "./search.js";
 import {
   clearEmbeddings,
+  dropOtherModels,
   embedChunks,
-  embeddedIds,
-  embeddingsAreStale,
+  pagesWithoutVectors,
   semanticDelete,
   semanticStore,
 } from "./semantic.js";
@@ -41,6 +42,7 @@ export class Indexer {
   }
 
   close(): void {
+    this.provider.close?.();
     // Truncate the WAL back into the main db on clean shutdown so the -wal file
     // doesn't linger large and mmapped for the next readers. Best-effort.
     try {
@@ -120,29 +122,33 @@ export class Indexer {
     return ids.length;
   }
 
-  // Re-embed when stored vectors can't be trusted: the model changed, OR the
-  // provider is enabled but pages are unembedded (e.g. the store was built with
-  // provider "none" and the user just switched it on — sync() alone wouldn't fix
-  // it, since the page hashes are unchanged).
+  // Embed every indexed page that has no vectors from the active model: the
+  // whole store after a change of model or precision, otherwise the pages whose
+  // embed failed (or that were indexed while the provider was off — sync()
+  // alone would not catch those, the page hashes are unchanged).
+  //
+  // Page by page, replacing each page's old vectors as its new ones land, so
+  // nothing is wiped up front. And one process at a time: every session runs
+  // this at boot, and after an upgrade that changed the fingerprint, a dozen
+  // sessions reloading together each re-embedded the whole store in parallel,
+  // each with its own copy of the model. Whoever finds the lock taken skips;
+  // whatever the holder does not finish, the next boot picks up.
   async reembedIfStale(): Promise<boolean> {
     if (!this.provider.enabled) return false;
-    if (embeddingsAreStale(this.db, this.provider)) {
-      // Model changed: nothing stored can be trusted — wipe and redo everything.
-      log("embedding model changed — re-embedding all pages");
-      clearEmbeddings(this.db);
-      for (const id of await listPageIds(this.paths)) await this.indexPage(id);
-      return true;
-    }
-    // Same model, some pages unembedded (provider was off when they were indexed,
-    // or their embed failed). Fill in ONLY the gaps: wiping everything here would
-    // re-embed the whole store on every boot for as long as one page keeps
-    // failing — the full cost of the API, every session.
-    const have = new Set(embeddedIds(this.db));
-    const gaps = allIndexedIds(this.db).filter((id) => !have.has(id));
-    if (gaps.length === 0) return false;
-    log(`embeddings missing — embedding ${gaps.length} page(s)`);
-    for (const id of gaps) await this.indexPage(id);
-    return true;
+    if (pagesWithoutVectors(this.db, this.provider.id).length === 0) return false;
+    const ran = await withStoreLock(
+      this.paths.root,
+      async () => {
+        const missing = pagesWithoutVectors(this.db, this.provider.id);
+        if (missing.length === 0) return false;
+        log(`embedding ${missing.length} page(s) with ${this.provider.id}`);
+        for (const id of missing) await this.indexPage(id);
+        if (pagesWithoutVectors(this.db, this.provider.id).length === 0) dropOtherModels(this.db, this.provider.id);
+        return true;
+      },
+      { name: "embed", waitMs: 0 },
+    );
+    return ran ?? false;
   }
 
   search(query: string, limit: number): Promise<SearchResult[]> {

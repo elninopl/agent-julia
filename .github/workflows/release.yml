@@ -54,6 +54,13 @@ jobs:
       - run: npm run build
       - run: npm test
 
+      # The README, the changelog and dist go to npm. Names that must not be
+      # public live in a secret, never in the repo.
+      - name: No private project names in what gets published
+        env:
+          AJ_FORBIDDEN_NAMES: ${{ secrets.AJ_FORBIDDEN_NAMES }}
+        run: node scripts/check-names.mjs --tree
+
       # No token: npm exchanges a short-lived OIDC token with the registry. The
       # package's Trusted Publisher (repo + this workflow) must be configured on
       # npmjs first. Provenance is attached automatically on OIDC publish.

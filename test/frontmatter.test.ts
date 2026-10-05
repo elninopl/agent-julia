@@ -3,8 +3,8 @@ import { parseFrontmatter, stringifyFrontmatter } from "../src/store/frontmatter
 
 describe("front matter", () => {
   it("splits a document into its front matter and its body", () => {
-    const { data, content } = parseFrontmatter("---\ntitle: Privé\ntags:\n  - game\n---\n\nbody here\n");
-    expect(data).toEqual({ title: "Privé", tags: ["game"] });
+    const { data, content } = parseFrontmatter("---\ntitle: Café\ntags:\n  - game\n---\n\nbody here\n");
+    expect(data).toEqual({ title: "Café", tags: ["game"] });
     expect(content.trim()).toBe("body here");
   });
 
