@@ -17,7 +17,7 @@ import { PASTE_LAYOUT, configFingerprint, pasteBody, pasteHash } from "../person
 import { probeCoworkSession } from "../surfaces/cowork-probe.js";
 import { ABSORB_BATCH_LIMIT, codeMemoryRoot, codeMemoryStatus } from "../surfaces/code-memory.js";
 import { estimateTokens } from "../util/tokens.js";
-import { endMarker, hasManagedBlock, startMarker } from "../managed/block.js";
+import { hasManagedBlock, managedBlock } from "../managed/block.js";
 import { SHIPPED_SKILLS, shippedSkillsDir, skillsTargetDir } from "../skills/install.js";
 import {
   claudeCodeConfigPath,
@@ -309,7 +309,7 @@ export async function runDoctor(config: Config, t: DoctorTargets = defaultTarget
       detail: `core ${composed.tokens}/${config.contextBudget} tokens; injected block ${estimateTokens(core)} (core + memory instruction)`,
     });
   }
-  const block = `${startMarker(STARTUP_BLOCK_ID)}\n${core.trim()}\n${endMarker(STARTUP_BLOCK_ID)}`;
+  const block = managedBlock(STARTUP_BLOCK_ID, core);
   if (wantCode) {
     const content = existsSync(t.claudeCodeMemory) ? await readFile(t.claudeCodeMemory, "utf8") : "";
     if (!hasManagedBlock(content, STARTUP_BLOCK_ID)) {
@@ -569,7 +569,7 @@ export async function runDoctor(config: Config, t: DoctorTargets = defaultTarget
   // --- Exported persona files ---
   if (config.exports.length > 0) {
     const text = await exportText(config);
-    const exportBlock = `${startMarker(EXPORT_BLOCK_ID)}\n${text.trim()}\n${endMarker(EXPORT_BLOCK_ID)}`;
+    const exportBlock = managedBlock(EXPORT_BLOCK_ID, text);
     for (const p of config.exports) {
       if (!existsSync(p)) {
         checks.push({

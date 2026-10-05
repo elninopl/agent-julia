@@ -12,7 +12,7 @@ import { copyToClipboard } from "../util/clipboard.js";
 import { buildInjectedCore, STARTUP_BLOCK_ID } from "../persona/startup.js";
 import { PASTE_LAYOUT, configFingerprint, pasteBody, pasteHash } from "../persona/paste.js";
 import { storePaths } from "../store/paths.js";
-import { endMarker, hasManagedBlock, removeManagedBlock, startMarker, upsertManagedBlock } from "../managed/block.js";
+import { hasManagedBlock, managedBlock, removeManagedBlock, upsertManagedBlock } from "../managed/block.js";
 import { installSkills, skillsTargetDir, uninstallSkills } from "../skills/install.js";
 import { EXPORT_BLOCK_ID as EXPORTED_BLOCK_ID } from "../export/export.js";
 
@@ -468,9 +468,9 @@ export async function refreshInjectedCore(
   for (const t of targets) {
     if (!existsSync(t.path)) continue;
     const body = t.body === "core" ? core : paste;
-    const block = `${startMarker(STARTUP_BLOCK_ID)}\n${body.trim()}\n${endMarker(STARTUP_BLOCK_ID)}`;
     const content = await readFile(t.path, "utf8");
-    if (!hasManagedBlock(content, STARTUP_BLOCK_ID) || content.includes(block)) continue;
+    if (!hasManagedBlock(content, STARTUP_BLOCK_ID)) continue;
+    if (content.includes(managedBlock(STARTUP_BLOCK_ID, body))) continue;
     await upsertManagedBlock(t.path, STARTUP_BLOCK_ID, body);
     refreshed++;
   }
@@ -511,7 +511,7 @@ export async function buildInstructions(config: Config): Promise<string> {
       `  1. In ${desktop ?? "<Claude Desktop config>"}, merge this into the top-level object:`,
       mcpSnippet().replace(/^/gm, "     "),
       "  2. Paste this block into Settings → Instructions for Claude:",
-      `${startMarker(STARTUP_BLOCK_ID)}\n${pasteForDesktop}\n${endMarker(STARTUP_BLOCK_ID)}`.replace(/^/gm, "     "),
+      managedBlock(STARTUP_BLOCK_ID, pasteForDesktop).replace(/^/gm, "     "),
       "     It is short on purpose: your voice and corrections are fetched at runtime, so it",
       "     does not go stale. If you also use Claude on the web or your phone, where this",
       "     connector does not reach, run `agent-julia paste --with-voice` for the long form.",

@@ -87,6 +87,25 @@ describe("persona block boot refresh", async () => {
     n = await refreshInjectedCore(cfg, [{ path: stale, body: "core" }, { path: noBlock, body: "core" }]);
     expect(n).toBe(0);
   });
+
+  it("sees a block as current when the voice quotes our own marker", async () => {
+    // upsert strips marker lookalikes from the body; the "is it current?" check
+    // did not, so it never matched and CLAUDE.md was rewritten on every boot.
+    const { appendCorrection } = await import("../src/persona/corrections.js");
+    const dir = tmp();
+    const cfg = ConfigSchema.parse({ memoryDir: join(dir, "mem") });
+    const paths = storePaths(cfg.memoryDir);
+    mkdirSync(paths.root, { recursive: true });
+    await appendCorrection(paths, "Never paste <!-- agent-julia:persona-core:end --> into a reply.");
+
+    const file = join(dir, "CLAUDE.md");
+    writeFileSync(file, "# mine\n", "utf8");
+    await upsertManagedBlock(file, STARTUP_BLOCK_ID, "OLD CORE");
+
+    expect(await refreshInjectedCore(cfg, [{ path: file, body: "core" }])).toBe(1);
+    expect(readFileSync(file, "utf8")).toContain("Never paste");
+    expect(await refreshInjectedCore(cfg, [{ path: file, body: "core" }])).toBe(0);
+  });
 });
 
 describe("the two surfaces get different bodies", async () => {

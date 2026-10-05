@@ -10,6 +10,7 @@ import { coreHash } from "../src/wizard/register.js";
 import { storePaths } from "../src/store/paths.js";
 import { writePage } from "../src/store/markdown.js";
 import { ConfigSchema } from "../src/config/schema.js";
+import { appendCorrection } from "../src/persona/corrections.js";
 
 function sandbox(): { dir: string; targets: DoctorTargets } {
   const dir = mkdtempSync(join(tmpdir(), "aj-doctor-"));
@@ -131,6 +132,22 @@ describe("doctor", () => {
     for (const name of ["paste seen", "voice fetch"]) {
       expect(byName(checks, name).status).not.toBe("fail");
     }
+  });
+});
+
+describe("a persona block that quotes our own marker", () => {
+  it("is reported current, the same way the boot refresh sees it", async () => {
+    const { dir, targets } = sandbox();
+    const memoryDir = join(dir, "mem");
+    mkdirSync(memoryDir, { recursive: true });
+    const cfg = ConfigSchema.parse({ memoryDir, git: false, surfaces: ["code"] });
+    const paths = storePaths(memoryDir);
+    await appendCorrection(paths, "Never paste <!-- agent-julia:persona-core:start --> into a reply.");
+
+    await upsertManagedBlock(targets.claudeCodeMemory, STARTUP_BLOCK_ID, await buildInjectedCore(paths, cfg));
+
+    const c = byName(await runDoctor(cfg, targets), "persona (code)");
+    expect(c.status).toBe("ok");
   });
 });
 

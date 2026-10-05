@@ -8,7 +8,7 @@ import { Indexer } from "../index/indexer.js";
 import { StorePaths, pageId } from "../store/paths.js";
 import { parseFrontmatter, stringifyFrontmatter } from "../store/frontmatter.js";
 import { readPage, writeFileAtomic } from "../store/markdown.js";
-import { endMarker, removeManagedBlock, startMarker, upsertManagedBlock } from "../managed/block.js";
+import { managedBlock, removeManagedBlock, startMarker, upsertManagedBlock } from "../managed/block.js";
 import { ingest } from "../store/ingest.js";
 import {
   PageSource,
@@ -391,7 +391,7 @@ async function leavePointer(
 // once on a busy machine, and an unconditional write means a dozen rewrites of
 // a file the client is reading.
 async function upsertIfChanged(indexPath: string, body: string): Promise<boolean> {
-  const block = `${startMarker(CODE_MEMORY_BLOCK_ID)}\n${body.trim()}\n${endMarker(CODE_MEMORY_BLOCK_ID)}`;
+  const block = managedBlock(CODE_MEMORY_BLOCK_ID, body);
   const current = await readFile(indexPath, "utf8").catch(() => "");
   if (current.includes(block)) return false;
   await upsertManagedBlock(indexPath, CODE_MEMORY_BLOCK_ID, body);

@@ -5,7 +5,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import { Config } from "../config/schema.js";
 import { storePaths } from "../store/paths.js";
 import { composeCore } from "../persona/compose.js";
-import { endMarker, hasManagedBlock, removeManagedBlock, startMarker, upsertManagedBlock } from "../managed/block.js";
+import { hasManagedBlock, managedBlock, removeManagedBlock, upsertManagedBlock } from "../managed/block.js";
 
 // The persona block for tools OUTSIDE the Claude ecosystem (Codex, Gemini CLI,
 // anything reading an AGENTS.md-style file). It carries the persona only — the
@@ -55,7 +55,7 @@ export async function removeExport(config: Config, target: string): Promise<{ pa
 export async function refreshExports(config: Config): Promise<number> {
   if (config.exports.length === 0) return 0;
   const text = await exportText(config);
-  const block = `${startMarker(EXPORT_BLOCK_ID)}\n${text.trim()}\n${endMarker(EXPORT_BLOCK_ID)}`;
+  const block = managedBlock(EXPORT_BLOCK_ID, text);
   let refreshed = 0;
   for (const p of config.exports) {
     if (!existsSync(p)) continue;
