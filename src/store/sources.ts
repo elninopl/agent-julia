@@ -6,7 +6,7 @@ import { PageFrontmatter, listPageIds, readPage } from "./markdown.js";
 import { StorePaths } from "./paths.js";
 
 // A project usually documents itself, and that documentation is not — and
-// should not become — a copy inside this store. prive keeps 587 markdown files
+// should not become — a copy inside this store. atlas keeps 587 markdown files
 // under _doc/; acme keeps its own tree and serves the same knowledge through an
 // MCP server. Absorbing either would bury a split the user made on purpose and
 // go stale the same week.
@@ -14,7 +14,7 @@ import { StorePaths } from "./paths.js";
 // So a page can say where the rest of what it is about actually lives, and
 // agent-julia routes there instead of pretending to hold it:
 //
-//   project: ~/Sites/prive
+//   project: ~/Sites/atlas
 //   sources:
 //     - kind: dir
 //       at: _doc

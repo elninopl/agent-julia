@@ -117,7 +117,7 @@ export function decodeWorkingDir(slug: string): string | null {
 }
 
 // Where a project's absorbed facts land. Prefixed rather than named after the
-// project: a store commonly already has a curated page called `prive` or
+// project: a store commonly already has a curated page called `atlas` or
 // `agent-julia`, and appending machine-captured notes into it would bury the
 // page the user actually writes.
 export function pageForProject(project: CodeMemoryProject): string {

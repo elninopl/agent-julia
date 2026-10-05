@@ -177,7 +177,7 @@ Point the wizard at an existing markdown knowledge base and Agent Julia adopts i
 Most projects already document themselves, and that documentation should not become a copy inside your store: it is large, it changes daily, and a copy goes stale the same week. A page can say where the rest of what it is about actually lives, and Agent Julia routes there instead.
 
 ```yaml
-project: ~/Sites/prive
+project: ~/Sites/atlas
 sources:
   - kind: dir
     at: _doc
