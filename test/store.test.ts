@@ -292,10 +292,10 @@ describe("a save must not silently destroy the page it was meant to extend", () 
 
   it("appends under what is already there", async () => {
     const paths = store();
-    await writePage(paths, "prive", established, {});
-    const w = await writePage(paths, "prive", "Fact five: the weekly moved to Tuesdays.", { mode: "append" });
+    await writePage(paths, "atlas", established, {});
+    const w = await writePage(paths, "atlas", "Fact five: the weekly moved to Tuesdays.", { mode: "append" });
 
-    const page = await readPage(paths, "prive");
+    const page = await readPage(paths, "atlas");
     expect(page!.body).toContain("Fact one");
     expect(page!.body).toContain("Fact five");
     expect(w.linesRemoved).toBe(0);
@@ -304,46 +304,46 @@ describe("a save must not silently destroy the page it was meant to extend", () 
 
   it("refuses a replace that throws the page away, and says how to proceed", async () => {
     const paths = store();
-    await writePage(paths, "prive", established, {});
+    await writePage(paths, "atlas", established, {});
     await expect(
-      writePage(paths, "prive", "Fact five: the weekly moved to Tuesdays.", {}),
+      writePage(paths, "atlas", "Fact five: the weekly moved to Tuesdays.", {}),
     ).rejects.toThrow(/mode "append"|confirm: true/);
 
     // The page is untouched by the refusal.
-    expect((await readPage(paths, "prive"))!.body).toContain("Fact one");
+    expect((await readPage(paths, "atlas"))!.body).toContain("Fact one");
   });
 
   it("carries out the same write when it is confirmed", async () => {
     const paths = store();
-    await writePage(paths, "prive", established, {});
-    const w = await writePage(paths, "prive", "Deliberate rewrite.", { confirm: true });
-    expect((await readPage(paths, "prive"))!.body).toBe("Deliberate rewrite.");
+    await writePage(paths, "atlas", established, {});
+    const w = await writePage(paths, "atlas", "Deliberate rewrite.", { confirm: true });
+    expect((await readPage(paths, "atlas"))!.body).toBe("Deliberate rewrite.");
     expect(w.linesRemoved).toBeGreaterThan(0);
   });
 
   it("refuses an empty page", async () => {
     const paths = store();
-    await writePage(paths, "prive", established, {});
-    await expect(writePage(paths, "prive", "   ", {})).rejects.toThrow(/empty/i);
-    expect((await readPage(paths, "prive"))!.body).toContain("Fact one");
+    await writePage(paths, "atlas", established, {});
+    await expect(writePage(paths, "atlas", "   ", {})).rejects.toThrow(/empty/i);
+    expect((await readPage(paths, "atlas"))!.body).toContain("Fact one");
   });
 
   it("keeps front matter the writer never mentioned", async () => {
     const paths = store();
-    await writePage(paths, "prive", "---\ntitle: Privé\ntags: [game, couples]\nowner: martyna\n---\n\nbody one", {});
+    await writePage(paths, "atlas", "---\ntitle: Atlas\ntags: [app, hiking]\nowner: sam\n---\n\nbody one", {});
     // A read-modify-write cycle that only carries the body back.
-    await writePage(paths, "prive", "body one\n\nbody two", { confirm: true });
+    await writePage(paths, "atlas", "body one\n\nbody two", { confirm: true });
 
-    const page = await readPage(paths, "prive");
-    expect(page!.frontmatter.title).toBe("Privé");
-    expect((page!.frontmatter as Record<string, unknown>).tags).toEqual(["game", "couples"]);
-    expect((page!.frontmatter as Record<string, unknown>).owner).toBe("martyna");
+    const page = await readPage(paths, "atlas");
+    expect(page!.frontmatter.title).toBe("Atlas");
+    expect((page!.frontmatter as Record<string, unknown>).tags).toEqual(["app", "hiking"]);
+    expect((page!.frontmatter as Record<string, unknown>).owner).toBe("sam");
   });
 
   it("reports the size delta so a shrinking write is visible", async () => {
     const paths = store();
-    await writePage(paths, "prive", established, {});
-    const w = await writePage(paths, "prive", "Fact one: the weekly review is on Mondays.\n\nFact two: billing runs on Stripe.", { confirm: true });
+    await writePage(paths, "atlas", established, {});
+    const w = await writePage(paths, "atlas", "Fact one: the weekly review is on Mondays.\n\nFact two: billing runs on Stripe.", { confirm: true });
     expect(w.bytesBefore).toBeGreaterThan(w.bytesAfter);
     expect(w.linesRemoved).toBeGreaterThan(0);
   });
@@ -357,17 +357,17 @@ describe("undo", () => {
     await migrate(cfg);
     const indexer = Indexer.open(paths, cfg);
     try {
-      await ingest(paths, indexer, "prive", "Fact one.\n\nFact two.\n\nFact three.\n\nFact four.", { git: true });
-      await ingest(paths, indexer, "prive", "Only this line survives.", { git: true, confirm: true });
-      expect((await readPage(paths, "prive"))!.body).toBe("Only this line survives.");
+      await ingest(paths, indexer, "atlas", "Fact one.\n\nFact two.\n\nFact three.\n\nFact four.", { git: true });
+      await ingest(paths, indexer, "atlas", "Only this line survives.", { git: true, confirm: true });
+      expect((await readPage(paths, "atlas"))!.body).toBe("Only this line survives.");
 
       const commits = await listStoreCommits(dir, 5);
-      expect(commits[0]!.subject).toMatch(/Update memory: prive/);
-      expect(commits[0]!.files).toContain("pages/prive.md");
+      expect(commits[0]!.subject).toMatch(/Update memory: atlas/);
+      expect(commits[0]!.files).toContain("pages/atlas.md");
 
       const { ok } = await revertCommit(dir, commits[0]!.sha);
       expect(ok).toBe(true);
-      expect((await readPage(paths, "prive"))!.body).toContain("Fact four.");
+      expect((await readPage(paths, "atlas"))!.body).toContain("Fact four.");
     } finally {
       indexer.close();
     }
@@ -400,9 +400,9 @@ describe("a page the product can see, it can open", () => {
     const dir = mkdtempSync(join(tmpdir(), "aj-dupe-"));
     const paths = storePaths(dir);
     mkdirSync(paths.pagesDir, { recursive: true });
-    writeFileSync(join(paths.pagesDir, "Prive Game.md"), "---\ntitle: a\n---\n\na\n", "utf8");
-    writeFileSync(join(paths.pagesDir, "prive-game.md"), "---\ntitle: b\n---\n\nb\n", "utf8");
-    expect((await listPageIds(paths)).filter((i) => i === "prive-game").length).toBe(1);
+    writeFileSync(join(paths.pagesDir, "Atlas App.md"), "---\ntitle: a\n---\n\na\n", "utf8");
+    writeFileSync(join(paths.pagesDir, "atlas-app.md"), "---\ntitle: b\n---\n\nb\n", "utf8");
+    expect((await listPageIds(paths)).filter((i) => i === "atlas-app").length).toBe(1);
   });
 });
 
@@ -414,7 +414,7 @@ describe("a page with broken front matter is still a page", () => {
     const dir = mkdtempSync(join(tmpdir(), "aj-badfm-"));
     const paths = storePaths(dir);
     mkdirSync(paths.pagesDir, { recursive: true });
-    writeFileSync(join(paths.pagesDir, "slip.md"), "---\ntitle: Privé: the game\n---\n\nthe body survives\n", "utf8");
+    writeFileSync(join(paths.pagesDir, "slip.md"), "---\ntitle: Atlas: the app\n---\n\nthe body survives\n", "utf8");
 
     const page = await readPage(paths, "slip");
     expect(page).not.toBeNull();

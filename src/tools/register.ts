@@ -225,7 +225,7 @@ export function registerTools(server: McpServer, rt: Runtime): void {
       title: "Related pages",
       description:
         "Pages connected to one page through [[wiki-links]]: what it links to, and what links back to it. Use to walk the knowledge graph around a topic.",
-      inputSchema: { page: z.string().describe("Page id, e.g. 'prive-game'") },
+      inputSchema: { page: z.string().describe("Page id, e.g. 'atlas-app'") },
     },
     async ({ page }) => json(await relatedPages(paths, page)),
   );
@@ -240,7 +240,7 @@ export function registerTools(server: McpServer, rt: Runtime): void {
         "Use it to answer \"when did we decide that, and what did we think before\", or to check whether a fact is current. " +
         "Only available when the store is versioned with git.",
       inputSchema: {
-        page: z.string().describe("Page id, e.g. 'prive-game'"),
+        page: z.string().describe("Page id, e.g. 'atlas-app'"),
         limit: z.number().int().positive().max(30).optional().describe("How many changes (default 8)"),
       },
     },
@@ -267,7 +267,7 @@ export function registerTools(server: McpServer, rt: Runtime): void {
         "Use 'replace' only when you are rewriting a page whose current text you have just read. A replace that would destroy most of an existing page is refused; " +
         "the error tells you how to proceed deliberately. Content may include YAML frontmatter (title/status/tags); 'updated' is set automatically and existing frontmatter is preserved.",
       inputSchema: {
-        page: z.string().describe("Page id, kebab-case, e.g. 'prive-game'"),
+        page: z.string().describe("Page id, kebab-case, e.g. 'atlas-app'"),
         content: z.string().describe("Markdown body (optionally with frontmatter)"),
         mode: z
           .enum(["append", "replace"])
