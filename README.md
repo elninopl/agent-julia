@@ -35,6 +35,8 @@ npx agent-julia init
 
 Requires **Node.js 24+** (it uses the built-in `node:sqlite` — no native module to compile or rebuild). There's no separate install step: `npx` fetches agent-julia into its own cache and runs the wizard in one go, and the MCP server launches the same way (`npx -y agent-julia@latest serve`), so it stays current. Prefer it installed permanently? `npm i -g agent-julia`.
 
+Choosing the local model for search changes how the server is launched. npx runs from a cache that cannot load the optional model package, so the wizard registers an installed copy instead (`npm i -g agent-julia @huggingface/transformers`), after checking that it can load the model. Node is registered by a path that survives upgrades: on Homebrew that is `opt/node`, not the versioned Cellar directory the next `brew upgrade` deletes. If the registered program ever disappears, `agent-julia doctor` says so.
+
 The wizard starts with the name you will be calling it by, then pronouns, language, and voice; where your memory lives and whether to version it with git; search; and which Claude apps to register. It either writes a small persona block into each app's startup context — backed up first, inside a marked block, fully reversible — or prints the exact changes for you to make by hand (see [Manual setup](#manual-setup)).
 
 When you're done, restart your Claude apps so they pick up the new MCP server.
@@ -103,7 +105,7 @@ Two everyday frustrations it removes:
 - **Canonical store** — plain markdown in a git repo. Human-readable, portable, versioned, private. This is the source of truth, not a database.
 - **Derived index** — SQLite (FTS5 full-text + optional vector embeddings) built from the markdown, via Node's built-in `node:sqlite` (no native module to compile). It's disposable: delete it and it rebuilds itself from your files.
 - **Budgeted core** — a compact persona block is injected into Claude Code's `CLAUDE.md` and Claude Desktop's global instructions. It stays within a token budget you set, so it never crowds out the conversation. Each layer is budgeted separately, and the part that yields is ours: identity and the privacy rail come off the top, your voice and your corrections each get a share, and the shipped universal rules take what's left. `maintenance` and `doctor` both say when something didn't fit, rather than trimming in silence.
-- **One MCP server** — every surface talks to the same `agent-julia` server over stdio, so they share one memory and one persona.
+- **A server per session, one memory** — every Claude Code and Claude Desktop session starts its own `agent-julia` server over stdio, and all of them read and write the same store and index, so they share one memory and one persona. Writes from different sessions take turns under a lock, startup chores that one server can do for all of them (maintenance, refreshing installed files, re-embedding after a model change) are done by whichever starts first, and a server exits when its session does. The local embedding model runs in a separate process that exits after a minute without use, so an idle server holds about 40-50 MB.
 
 ## Skills
 
@@ -253,13 +255,13 @@ The persona core is also exposed as a resource (`agent-julia://core`) for client
 | --- | --- |
 | `agent-julia serve` | Start the MCP server (default; used by the Claude apps) |
 | `agent-julia init` | Run the setup wizard |
-| `agent-julia sync` | Re-apply registration, the persona block, and the shipped skills for the current config |
+| `agent-julia sync` | Re-apply registration, the persona block, the shipped skills and the Claude Code memory handling (`codeMemory`) for the current config. `--print` shows the exact changes instead of making them; `--absorb-all` also brings in directories holding more than 25 facts |
 | `agent-julia uninstall` | Remove the managed blocks, registration, and shipped skills (backups are kept) |
 | `agent-julia search <query>` | Search your memory from the terminal (same hybrid index the agent uses) |
 | `agent-julia read <page>` | Print one memory page |
 | `agent-julia export [target]` | Export the persona to another tool's instruction file (`codex`, `gemini`, or any path); `--list` / `--remove <target>` manage them |
 | `agent-julia maintenance` | Run automatic store maintenance from the terminal (reindex, flag stale/orphans, refresh catalog, commit) |
-| `agent-julia doctor [--fix]` | Check the whole installation: MCP registration, persona blocks (including Cowork paste drift), skills, store, index, and whether semantic search actually loads — with a suggested fix per finding. `--fix` applies the repairs that are safe to make unattended |
+| `agent-julia doctor [--fix]` | Check the whole installation: MCP registration and whether the registered program still exists, persona blocks (including Cowork paste drift), skills, store, index, and whether semantic search actually loads — with a suggested fix per finding. `--fix` applies the repairs that are safe to make unattended |
 | `agent-julia remote [url]` | Show or set a git remote to back up your memory |
 | `agent-julia push` | Push the memory store to its remote now |
 | `agent-julia pull` | Pull the memory store from its remote now (two-machine sync) |
@@ -289,6 +291,9 @@ Settings live in `~/.config/agent-julia/config.json` and carry a `schemaVersion`
 | `embedding` | Provider (`none`, `local`, `openai-compatible`), model, dimensions, and for a local model its precision (`dtype`, default `q8`) |
 | `contextBudget` | Token ceiling for the persona core. The memory instruction (~280 tokens) is added on top; `agent-julia doctor` reports both numbers |
 | `surfaces` | Which Claude apps to register |
+| `codeMemory` | What to do about Claude Code's own per-project memory: `pointer` (default), `absorb`, or `off` (see [Claude Code's own memory](#claude-codes-own-memory)) |
+| `exports` | Files outside Claude that carry an exported persona block, kept current on every start (managed with `agent-julia export`) |
+| `weeklyMaintenance` | How the weekly digest is meant to run: `cowork-task` (a scheduled Cowork task) or `own-routine` |
 | `privacyHardOff` | Categories the agent must never store (keys, card numbers, third-party private data) |
 
 </details>
@@ -310,6 +315,8 @@ What it adds:
 { "mcpServers": { "agent-julia": { "command": "npx", "args": ["-y", "agent-julia@latest", "serve"] } } }
 ```
 
+That is the entry for the default setup. With the local model, `command` is your Node binary and `args` is the installed copy (`<npm root -g>/agent-julia/dist/index.js` followed by `serve`); `agent-julia sync --print` prints the exact entry for your machine.
+
 Then append the persona block (printed by the command) to `~/.claude/CLAUDE.md`.
 
 **Claude Desktop** — add the same `mcpServers` entry to the Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS), and paste the short persona block into **Settings → Instructions for Claude**. That field lives inside the app and no program can write it, so it is the one manual step — which is exactly why what goes in it is only the part that never changes: the name, the pronouns, the reply language and the never-store list. Your voice and your corrections are not in it; the agent fetches those at the start of a conversation, so they are current without you pasting again. `agent-julia paste` prints the block and copies it.
@@ -323,11 +330,11 @@ The persona block is small on purpose — identity plus an instruction to use ag
 <details>
 <summary><strong>Maintenance &amp; upgrades</strong></summary>
 
-Housekeeping runs on its own. On every write, and again when the server starts, Agent Julia reindexes changed pages, picks up files you edited by hand, flags stale-dated notes and broken links, refreshes the catalog, recompacts the persona core, and commits. Nothing is deleted without you — stale items are flagged, not removed.
+Housekeeping runs on its own. On every write, and when a server starts after something changed on disk (one server at a time; the others skip it), Agent Julia reindexes changed pages, picks up files you edited by hand, flags stale-dated notes and broken links, refreshes the catalog, recompacts the persona core, and commits. Nothing is deleted without you — stale items are flagged, not removed.
 
-A heavier weekly pass — merging duplicates, retiring stale pages, fixing broken links — is owner's-judgment work, so it runs as a **digest**: ask your agent to "run the weekly digest" (or schedule a recurring Cowork task with that prompt), and it gathers the candidates — near-duplicate pages (by embedding similarity), long-untouched facts, orphan `[[links]]`, unlinked pages, oversized pages — and walks you through them one at a time. Nothing changes without your yes; approved retirements go to `archive/` (kept on disk and in git history, out of the index). `agent-julia maintenance` runs the automatic half from the terminal.
+A heavier weekly pass — merging duplicates, retiring stale pages, fixing broken links — is owner's-judgment work, so it runs as a **digest**: ask your agent to "run the weekly digest" (or schedule a recurring Cowork task with that prompt), and it gathers the candidates — near-duplicate pages (the ten pairs whose closest parts are most alike), long-untouched facts, orphan `[[links]]`, unlinked pages, oversized pages — and walks you through them one at a time. Nothing changes without your yes; approved retirements go to `archive/` (kept on disk and in git history, out of the index). `agent-julia maintenance` runs the automatic half from the terminal.
 
-Upgrades are backward-compatible, or they ship an automatic migration that runs on first launch — backed up, idempotent, and transparent. The config carries a `schemaVersion`; ordered migration steps bring older stores forward on startup. The derived search index is disposable and simply rebuilds itself when its shape changes. `@latest` picks up new versions automatically next session; pin an exact version (`agent-julia@<version>`) if you want it fixed. Either way, upgrades never lose data and never ask you to hand-edit files.
+Upgrades are backward-compatible, or they ship an automatic migration that runs on first launch — backed up, idempotent, and transparent. The config carries a `schemaVersion`; ordered migration steps bring older stores forward on startup. The derived search index is disposable and simply rebuilds itself when its shape changes. A server registered through npx (`@latest`) picks up a new version on its own at the next session; pin an exact version (`agent-julia@<version>`) if you want it fixed. An installed copy, which the local model needs, updates with `npm i -g agent-julia@latest`, and sessions already open keep the old version until they are restarted or reloaded with `/mcp`. When a release changes how vectors are made, the first server to start re-embeds the store once, in the background. Either way, upgrades never lose data and never ask you to hand-edit files.
 
 </details>
 

@@ -499,6 +499,10 @@ export async function buildInstructions(config: Config): Promise<string> {
   // stale the moment a correction is recorded.
   const pasteForDesktop = await pasteBody(config);
   const core = await buildInjectedCore(storePaths(config.memoryDir), config);
+  // The same launcher install() would register. The first candidate is not it
+  // when the local model is chosen: printed from an npx run, that was the npx
+  // entry, which can never load the model package.
+  const snippet = mcpSnippet(serverEntryFor(config.embedding.provider === "local"));
   const out: string[] = [];
   const wantCode = config.surfaces.includes("code");
   const wantDesktop = config.surfaces.includes("cowork") || config.surfaces.includes("dispatch");
@@ -507,7 +511,7 @@ export async function buildInstructions(config: Config): Promise<string> {
     out.push(
       "Claude Code",
       `  1. In ${claudeCodeConfigPath()}, merge this into the top-level object:`,
-      mcpSnippet().replace(/^/gm, "     "),
+      snippet.replace(/^/gm, "     "),
       `  2. Append this block to ${claudeCodeMemoryPath()}:`,
       core.replace(/^/gm, "     "),
       "",
@@ -518,7 +522,7 @@ export async function buildInstructions(config: Config): Promise<string> {
     out.push(
       "Claude Desktop",
       `  1. In ${desktop ?? "<Claude Desktop config>"}, merge this into the top-level object:`,
-      mcpSnippet().replace(/^/gm, "     "),
+      snippet.replace(/^/gm, "     "),
       "  2. Paste this block into Settings → Instructions for Claude:",
       managedBlock(STARTUP_BLOCK_ID, pasteForDesktop).replace(/^/gm, "     "),
       "     It is short on purpose: your voice and corrections are fetched at runtime, so it",
