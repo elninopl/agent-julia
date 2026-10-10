@@ -21,8 +21,6 @@ changes, which always ship an automatic, backup-protected data migration.
   read as the next fact and a section ended early. Absorbing now nests them
   under the fact, and pages absorbed earlier are repaired on the next sync.
 
-### Fixed
-
 - **`sync --print` could show a launcher that cannot load the local model.**
   The printed setup used the first way of starting the server it found, while
   `sync` itself checks that the launcher can load the model. Run through npx
