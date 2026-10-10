@@ -29,6 +29,13 @@ changes, which always ship an automatic, backup-protected data migration.
   with the local model chosen, the manual instructions gave the npx entry,
   the one case that cannot work. They now print what `sync` would register.
 
+### Security
+
+- The MCP SDK floor is now 1.30.2, past an advisory in its OAuth client, and
+  the lockfile picks up a fixed `proxy-addr`. Neither path is reachable from
+  agent-julia, which serves over stdio and never runs the SDK's OAuth client
+  or HTTP server; the change keeps installs off the affected versions.
+
 ## [0.1.43] - 2026-10-05
 
 > **One thing to do after upgrading.** Run `agent-julia sync` once. Until
