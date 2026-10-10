@@ -103,7 +103,9 @@ describe("latestStoreMtime", () => {
   });
 });
 
-describe("pullFromRemote — two-machine sync", () => {
+// Real clones, pushes and pulls. On Windows runners git alone has taken more
+// than the default 5 s for one of these, so they get room.
+describe("pullFromRemote — two-machine sync", { timeout: 30_000 }, () => {
   it("brings machine A's pushed memories onto machine B", async () => {
     const { pullFromRemote, setRemoteUrl, ensureGitRepo, pushToRemote } = await import("../src/store/git.js");
     const { writePage } = await import("../src/store/markdown.js");

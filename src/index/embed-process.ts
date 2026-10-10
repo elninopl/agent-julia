@@ -93,6 +93,8 @@ export class EmbedProcess {
       // The parent's stdout is the MCP channel. Nothing the model prints may reach it.
       stdio: ["ignore", "ignore", "inherit", "ipc"],
       execArgv: [...entry.execArgv, ...(this.opts.execArgv ?? [])],
+      // Explicit: the default is not the same object on every Node version.
+      env: process.env,
       serialization: "advanced",
     });
     child.on("message", (m: Reply) => {
