@@ -7,6 +7,13 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ## [Unreleased]
 
+## [0.1.44] - 2026-10-10
+
+> If you absorbed Claude Code's memory with 0.1.43, run `agent-julia sync`
+> once after upgrading: it repairs the absorbed pages and rewrites the
+> pointers left in Claude Code's memory directories to name the section to
+> read. A server that starts after a change does the same on its own.
+
 ### Fixed
 
 - **One `read` of a page absorbed from Claude Code could cost ~86,000
