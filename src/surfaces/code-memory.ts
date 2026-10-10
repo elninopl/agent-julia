@@ -12,6 +12,7 @@ import { getMeta, setMeta } from "../index/db.js";
 import { managedBlock, removeManagedBlock, startMarker, upsertManagedBlock } from "../managed/block.js";
 import { ingest } from "../store/ingest.js";
 import { withStoreLock } from "../store/lock.js";
+import { demoteHeadings } from "../store/sections.js";
 import {
   PageSource,
   ROUTING_RULE,
@@ -247,9 +248,25 @@ export async function adoptCodeMemory(
         }
       }
 
+      // Pages and pointers written by an earlier version: facts whose headings
+      // split them, and pointers that did not name the section to read.
+      const absorbedPage = await readPage(paths, pageForProject(project));
+      if (absorbedPage) {
+        const nested = nestAbsorbedFacts(absorbedPage.body);
+        if (nested !== absorbedPage.body) {
+          await ingest(paths, indexer, pageForProject(project), nested, {
+            mode: "replace",
+            confirm: true,
+            git: config.git,
+            autoPush: config.gitAutoPush,
+          });
+        }
+      }
+      await refreshPointers(project);
+
       // Per project, and after absorbing: a cumulative counter would have let
       // one project's page be announced in another project's index.
-      const page = (await readPage(paths, pageForProject(project))) ? pageForProject(project) : null;
+      const page = absorbedPage ? pageForProject(project) : null;
       const route = project.workingDir ? routes.get(await normalizeDir(project.workingDir)) : undefined;
       const detected = project.workingDir ? await detectSources(project.workingDir) : [];
       const body = pointerBody(config, {
@@ -426,7 +443,9 @@ async function absorbLocked(
       `_Captured by Claude Code in ${project.workingDir ?? project.slug} · ${basename(file)} · ${digest}_`,
       ...(description ? ["", `**${description}**`] : []),
       "",
-      body,
+      // The fact's own headings go under its "##", or the first of them would
+      // end its section and read as the next fact.
+      demoteHeadings(body, 3),
     ].join("\n");
 
     // Already inside the store lock, so ingest passes straight through it.
@@ -460,15 +479,69 @@ async function leavePointer(
   if ((await readFile(file, "utf8").catch(() => null)) !== absorbed) return false;
   const backup = `${file}.agent-julia-bak`;
   if (!existsSync(backup)) await writeFile(backup, absorbed, "utf8");
-  const body = [
+  await writeFileAtomic(file, `${stringifyFrontmatter(pointerText(page, name), data).trimEnd()}\n`);
+  return true;
+}
+
+// What a pointer says. The section is part of the call: an absorbed page holds
+// hundreds of facts, and reading it whole to find one was ~86,000 tokens.
+function pointerText(page: string, name: string): string {
+  return [
     `${ABSORBED_MARK} page=${page} -->`,
     "",
     `This fact now lives in agent-julia, on page \`${page}\` (section "${name}").`,
-    "Call agent-julia's `read` with that id, or `search`, for the current version.",
+    `Call agent-julia's \`read\` with page "${page}" and section "${name}", or \`search\`, for the current version.`,
     "Don't edit this file: write through `ingest` so every surface sees the change.",
   ].join("\n");
-  await writeFileAtomic(file, `${stringifyFrontmatter(body, data).trimEnd()}\n`);
-  return true;
+}
+
+// Bring pointers left by an earlier version up to the current wording, which
+// names the section to read. Only files carrying the absorbed marker, and only
+// when the text would change.
+async function refreshPointers(project: CodeMemoryProject): Promise<number> {
+  let changed = 0;
+  for (const entry of await readdir(project.dir).catch(() => [])) {
+    if (!entry.endsWith(".md") || entry === "MEMORY.md") continue;
+    const file = join(project.dir, entry);
+    const raw = await readFile(file, "utf8").catch(() => null);
+    if (raw === null || !raw.includes(ABSORBED_MARK)) continue;
+    let parsed: { data: Record<string, unknown>; content: string };
+    try {
+      parsed = parseFrontmatter(raw);
+    } catch {
+      continue;
+    }
+    const page = /agent-julia:absorbed page=(\S+?)\s*-->/.exec(parsed.content)?.[1];
+    const name = /\(section "([^"]*)"\)/.exec(parsed.content)?.[1];
+    if (!page || name === undefined) continue;
+    const next = `${stringifyFrontmatter(pointerText(page, name), parsed.data).trimEnd()}\n`;
+    if (next === raw) continue;
+    await writeFileAtomic(file, next);
+    changed++;
+  }
+  return changed;
+}
+
+// Facts absorbed before their headings were demoted kept their own "##"
+// headings, which split each such fact into several sections: its "## Decision"
+// read as the next fact. Demote them in place. A fact starts at a "##" heading
+// followed by its provenance line; a page already in shape comes back unchanged.
+export function nestAbsorbedFacts(body: string): string {
+  const lines = body.split("\n");
+  const provenance = (i: number): number => {
+    let j = i + 1;
+    while (j < lines.length && !lines[j]!.trim()) j++;
+    return lines[j]?.startsWith("_Captured by Claude Code in ") ? j : -1;
+  };
+  const starts = lines.flatMap((line, i) => (line.startsWith("## ") && provenance(i) >= 0 ? [i] : []));
+  if (starts.length === 0) return body;
+  const out = lines.slice(0, starts[0]);
+  starts.forEach((start, k) => {
+    const end = starts[k + 1] ?? lines.length;
+    const head = provenance(start);
+    out.push(...lines.slice(start, head + 1), ...demoteHeadings(lines.slice(head + 1, end).join("\n"), 3).split("\n"));
+  });
+  return out.join("\n");
 }
 
 // Rewrite the pointer block only when it would change. A dozen servers boot at

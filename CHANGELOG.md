@@ -9,6 +9,18 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ### Fixed
 
+- **One `read` of a page absorbed from Claude Code could cost ~86,000
+  tokens.** Absorbing puts every fact of a project on one page, and each
+  pointer left behind sent the agent to `read` that page whole for one fact.
+  `read` now takes `section` and returns just that part, and a page over
+  32 KB answers with its table of contents unless `full: true` asks for all
+  of it (which a rewrite with `replace` still needs). Pointers name the
+  section to read, and the ones written before are updated in place.
+- **Absorbed facts with headings of their own were split apart.** A fact's
+  own `##` headings sat level with the fact's heading, so its "Decision"
+  read as the next fact and a section ended early. Absorbing now nests them
+  under the fact, and pages absorbed earlier are repaired on the next sync.
+
 - **`sync --print` could show a launcher that cannot load the local model.**
   The printed setup used the first way of starting the server it found, while
   `sync` itself checks that the launcher can load the model. Run through npx

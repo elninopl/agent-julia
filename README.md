@@ -236,7 +236,7 @@ You drive Agent Julia by talking to it (see [Usage](#usage)); these are the unde
 | Tool | What it does |
 | --- | --- |
 | `search` | Find pages by keyword and meaning |
-| `read` | Read a page exactly as stored, front matter included |
+| `read` | Read a page exactly as stored, front matter included. A page over 32 KB answers with its table of contents; `section` reads one part, `full: true` the whole page |
 | `list` | List pages with title, status, and date (bounded; takes `limit` and `since`) |
 | `ingest` | Write a page: `append` a fact, or `replace` the whole thing (schema-enforced, guarded, git-committed) |
 | `correct_voice` | Record a voice correction (one rule per call, up to 1,200 characters; a longer one is refused, never cut) |
