@@ -13,6 +13,13 @@ import { PASTE_LAYOUT } from "../persona/paste.js";
 import { mergeSurfaces, readPasteMarker, readSurfaces, refreshInjectedCore } from "../wizard/register.js";
 import { runMaintenance } from "../maintenance/maintenance.js";
 import { routingNoteFor } from "../store/sources.js";
+import { extractSection, tableOfContents } from "../store/sections.js";
+
+// Longer than this, `read` answers with a table of contents unless asked for
+// the whole page. About 9,000 tokens: a long page of the user's own still fits,
+// a page absorbed from hundreds of Claude Code memory files does not.
+export const READ_WHOLE_MAX = 32_000;
+const MAX_TOC = 300;
 
 type TextResult = { content: Array<{ type: "text"; text: string }> };
 
@@ -209,18 +216,77 @@ export function registerTools(server: McpServer, rt: Runtime): void {
       title: "Read a memory page",
       description:
         "Read one page by id (e.g. 'elnino'), exactly as stored, front matter included. " +
-        "To edit a page, read it, change what you mean to change, and write the whole thing back with ingest mode 'replace'.",
-      inputSchema: { page: z.string().describe("Page id, e.g. 'elnino' or 'pages/elnino'") },
+        `A page over ${Math.round(READ_WHOLE_MAX / 1000)} KB answers with its table of contents instead: ` +
+        "pass `section` to read one part (a heading, e.g. the fact name a pointer gives), or `full: true` for all of it. " +
+        "To edit a page, read it whole (full: true if it is long), change what you mean to change, and write the whole " +
+        "thing back with ingest mode 'replace'.",
+      inputSchema: {
+        page: z.string().describe("Page id, e.g. 'elnino' or 'pages/elnino'"),
+        section: z
+          .string()
+          .optional()
+          .describe("Return only the section under this heading, e.g. a fact name from a pointer"),
+        full: z
+          .boolean()
+          .optional()
+          .describe("Return the whole page even when it is long; needed before rewriting a long page with ingest 'replace'"),
+      },
     },
-    async ({ page }) => {
+    async ({ page, section, full }) => {
       const raw = await readPageRaw(paths, page);
       if (raw === null) return text(`No page found: ${page}`);
       // A page about a project usually covers only the part its documentation
       // does not. Handing back the page without saying where the rest lives is
       // how an agent concludes the rest does not exist.
-      const full = await readPage(paths, page).catch(() => null);
-      const note = full ? await routingNoteFor(full.frontmatter) : null;
-      return text(note ? `${raw.trimEnd()}\n\n---\n\n${note}\n` : raw);
+      const parsed = await readPage(paths, page).catch(() => null);
+      const note = parsed ? await routingNoteFor(parsed.frontmatter) : null;
+      const withNote = (out: string) => (note ? `${out.trimEnd()}\n\n---\n\n${note}\n` : out);
+      const body = parsed?.body ?? raw;
+
+      if (section) {
+        const hit = extractSection(body, section);
+        if (hit) return text(withNote(`<!-- ${pageId(page)} › ${hit.heading} -->\n\n${hit.text}\n`));
+        const toc = tableOfContents(body);
+        return text(
+          `No section "${section}" on ${pageId(page)}.` +
+            (toc.length
+              ? ` Its sections:\n${toc
+                  .slice(0, MAX_TOC)
+                  .map((t) => `- ${t.heading}`)
+                  .join("\n")}${toc.length > MAX_TOC ? `\n- … and ${toc.length - MAX_TOC} more` : ""}`
+              : " It has no headings."),
+        );
+      }
+      if (full || raw.length <= READ_WHOLE_MAX) return text(withNote(raw));
+
+      // Too long to hand over whole: one read of an absorbed Claude Code memory
+      // page was ~86,000 tokens. The table of contents is what the reader needs
+      // to ask for the part it came for.
+      const toc = tableOfContents(body);
+      const size = `${Math.round(raw.length / 1000)} KB, about ${Math.round(raw.length / 3.6).toLocaleString("en")} tokens`;
+      const how =
+        'find a topic with `search`, or pass `full: true` for the whole page (needed before rewriting it with ' +
+        "ingest mode 'replace').";
+      if (toc.length === 0) {
+        return text(
+          withNote(
+            `${raw.slice(0, READ_WHOLE_MAX).trimEnd()}\n\n[The page continues: ${size} in all, with no headings ` +
+              `to pick a part by. ${how[0]!.toUpperCase()}${how.slice(1)}]\n`,
+          ),
+        );
+      }
+      const frontMatter = /^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/.exec(raw)?.[0]?.trimEnd() ?? "";
+      const listing =
+        toc
+          .slice(0, MAX_TOC)
+          .map((t) => `- ${t.heading} (${(t.chars / 1000).toFixed(1)} KB)`)
+          .join("\n") + (toc.length > MAX_TOC ? `\n- … and ${toc.length - MAX_TOC} more` : "");
+      return text(
+        withNote(
+          `${frontMatter ? `${frontMatter}\n\n` : ""}This page is ${size}, too long to return whole. ` +
+            `It has ${toc.length} section(s):\n${listing}\n\nRead one part with \`section: "<heading>"\`, ${how}\n`,
+        ),
+      );
     },
   );
 
