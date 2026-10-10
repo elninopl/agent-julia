@@ -42,7 +42,6 @@ async function until(cond: () => boolean, ms = 5_000): Promise<void> {
 describe("the local model runs in a child process", () => {
   let log: string;
   let proc: EmbedProcess | null = null;
-  const saved = { ...process.env };
 
   beforeEach(() => {
     log = join(mkdtempSync(join(tmpdir(), "aj-embed-")), "fake.log");
@@ -51,7 +50,11 @@ describe("the local model runs in a child process", () => {
   afterEach(() => {
     proc?.close();
     proc = null;
-    process.env = { ...saved };
+    // Key by key. Replacing process.env with a copy detaches it from the real
+    // environment, and on newer Node a child forked afterwards no longer saw
+    // what later tests set.
+    delete process.env.AJ_FAKE_TRANSFORMERS_LOG;
+    delete process.env.AJ_FAKE_TRANSFORMERS_FAIL;
   });
 
   const start = (idleMs = 60_000) =>

@@ -7,6 +7,14 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`sync --print` could show a launcher that cannot load the local model.**
+  The printed setup used the first way of starting the server it found, while
+  `sync` itself checks that the launcher can load the model. Run through npx
+  with the local model chosen, the manual instructions gave the npx entry,
+  the one case that cannot work. They now print what `sync` would register.
+
 ### Security
 
 - The MCP SDK floor is now 1.30.2, past an advisory in its OAuth client, and
