@@ -44,6 +44,10 @@ changes, which always ship an automatic, backup-protected data migration.
   transcript and saves what the session did not, with only search, read,
   ingest and correct_voice allowed. Only the hooks it wrote are ever
   changed; `CLAUDE_CONFIG_DIR` is honoured.
+- **Server nudge** (`capture.serverNudge`, off by default): a session that
+  has been reading for 20 minutes without saving anything gets one extra
+  line with its next read, asking whether something is worth keeping. For
+  the surfaces that run no hooks.
 - **Shared stores.** `stores` in the config mounts other agent-julia stores
   next to your own. Their pages are `name:page`; `search` and `list` cover
   all of them and rank them as one store; `read`, `history`, `related` and

@@ -1,4 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { SaveNudge, nudging } from "./nudge.js";
+import { captureSettings } from "../config/schema.js";
 import { z } from "zod";
 import { Runtime } from "../runtime.js";
 import {
@@ -112,10 +114,11 @@ async function migrationNotice(client: string): Promise<string> {
 export function registerTools(
   server: McpServer,
   rt: Runtime,
-  opts: { localSurfaces?: boolean; scope?: readonly string[] } = {},
+  opts: { localSurfaces?: boolean; scope?: readonly string[]; now?: () => number } = {},
 ): void {
   const localSurfaces = opts.localSurfaces ?? true;
   const { paths, indexer, config } = rt;
+  const registerTool = nudging(server, captureSettings(config).serverNudge ? new SaveNudge(opts.now) : null);
   const lastFetchRecord = new Map<string, { hash: string; at: number }>();
 
   // Stores mounted next to the primary one. With none, `locate` hands every
@@ -187,7 +190,7 @@ export function registerTools(
     if (committed && push && config.gitAutoPush) await pushToRemote(paths.root);
   };
 
-  server.registerTool(
+  registerTool(
     "retract_correction",
     {
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
@@ -215,7 +218,7 @@ export function registerTools(
     },
   );
 
-  server.registerTool(
+  registerTool(
     "get_core",
     {
       annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
@@ -272,7 +275,7 @@ export function registerTools(
     },
   );
 
-  server.registerTool(
+  registerTool(
     "list",
     {
       annotations: { readOnlyHint: true, openWorldHint: false },
@@ -307,7 +310,7 @@ export function registerTools(
     },
   );
 
-  server.registerTool(
+  registerTool(
     "read",
     {
       annotations: { readOnlyHint: true, openWorldHint: false },
@@ -390,7 +393,7 @@ export function registerTools(
     },
   );
 
-  server.registerTool(
+  registerTool(
     "search",
     {
       annotations: { readOnlyHint: true, openWorldHint: false },
@@ -420,7 +423,7 @@ export function registerTools(
     },
   );
 
-  server.registerTool(
+  registerTool(
     "related",
     {
       annotations: { readOnlyHint: true, openWorldHint: false },
@@ -461,7 +464,7 @@ export function registerTools(
     },
   );
 
-  server.registerTool(
+  registerTool(
     "history",
     {
       annotations: { readOnlyHint: true, openWorldHint: false },
@@ -488,7 +491,7 @@ export function registerTools(
     },
   );
 
-  server.registerTool(
+  registerTool(
     "ingest",
     {
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
@@ -556,7 +559,7 @@ export function registerTools(
     },
   );
 
-  server.registerTool(
+  registerTool(
     "correct_voice",
     {
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
@@ -590,7 +593,7 @@ export function registerTools(
     },
   );
 
-  server.registerTool(
+  registerTool(
     "archive",
     {
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
@@ -618,7 +621,7 @@ export function registerTools(
     },
   );
 
-  server.registerTool(
+  registerTool(
     "maintenance",
     {
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },

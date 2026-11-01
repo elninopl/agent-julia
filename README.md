@@ -141,6 +141,8 @@ agent-julia hooks install     # or: uninstall, status
 - The background pass runs `claude -p` on your Claude plan, with Sonnet. Anthropic has changed how `claude -p` usage counts against plans before and may again; set `extractOnCompact` to `false` to keep only the reminders.
 - It works the same on a machine connected to a server: the pass saves through the relay.
 
+Claude.ai, the mobile app and Claude Desktop run no hooks. For them, `"serverNudge": true` in `capture` has the server itself ask: when a session has kept reading for 20 minutes and saved nothing, the next `search`, `read` or `list` result carries one extra line asking whether something is worth keeping. Once per 20 minutes at most, and never inside the result itself, which stays as it was. Off by default.
+
 ## Beyond Claude
 
 The persona you built is not locked to Claude. `agent-julia export codex` writes it into `~/.codex/AGENTS.md`, `export gemini` into `~/.gemini/GEMINI.md`, and `export <path>` into any AGENTS.md-style instruction file — as a marked, removable block, backed up on first touch, and **kept refreshed by the server on every boot** (a voice correction you make in Claude reaches Codex on its next session). The export carries the persona itself — identity, voice, corrections, privacy rail — without the Claude-specific memory instructions; attach the same MCP server in the other tool if it supports MCP, and the memory follows too.
