@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { secretsDir, writeSecretFile } from "./tokens.js";
+import { readHidden } from "../util/hidden-input.js";
 
 const scrypt = promisify(scryptCb) as (
   password: string,
@@ -58,34 +59,6 @@ export async function checkOwnerPassword(password: string, file = ownerFile()): 
 // Ask for a password on the terminal without echoing it, or read the first
 // line of stdin when it is not a terminal (scripts, `echo … |`).
 export async function readPassword(prompt: string): Promise<string> {
-  const input = process.stdin;
-  if (!input.isTTY) {
-    const chunks: Buffer[] = [];
-    for await (const chunk of input) chunks.push(Buffer.from(chunk as Buffer));
-    return Buffer.concat(chunks).toString("utf8").split(/\r?\n/)[0] ?? "";
-  }
-  process.stderr.write(prompt);
-  input.setRawMode(true);
-  input.resume();
-  input.setEncoding("utf8");
-  return new Promise((resolve, reject) => {
-    let value = "";
-    const done = (err?: Error) => {
-      input.setRawMode(false);
-      input.pause();
-      input.off("data", onData);
-      process.stderr.write("\n");
-      if (err) reject(err);
-      else resolve(value);
-    };
-    const onData = (chunk: string) => {
-      for (const ch of chunk) {
-        if (ch === "\r" || ch === "\n") return done();
-        if (ch === "\u0003") return done(new Error("cancelled"));
-        if (ch === "\u007f" || ch === "\b") value = value.slice(0, -1);
-        else if (ch >= " ") value += ch;
-      }
-    };
-    input.on("data", onData);
-  });
+  if (process.stdin.isTTY) process.stderr.write(prompt);
+  return readHidden();
 }

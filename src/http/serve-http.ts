@@ -293,9 +293,15 @@ export async function listenHttp(
     sessionCount: () => sessions.size,
     close: async () => {
       clearInterval(sweep);
-      await new Promise<void>((resolve) => http.close(() => resolve()));
+      // Stop accepting first, then end the sessions: a client's open event
+      // stream holds its connection, and http.close() waits for every
+      // connection, so waiting on it before the sessions end never returns.
+      const closed = new Promise<void>((resolve) => http.close(() => resolve()));
       for (const id of [...sessions.keys()]) await closeSession(id);
-      http.closeAllConnections?.();
+      http.closeIdleConnections?.();
+      const grace = setTimeout(() => http.closeAllConnections?.(), 1_000);
+      await closed;
+      clearTimeout(grace);
     },
   };
 }

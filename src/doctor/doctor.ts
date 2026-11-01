@@ -655,3 +655,104 @@ export function formatChecks(checks: DoctorCheck[]): string {
         : `Everything looks healthy.${tail}`;
   return [...lines, "", summary].join("\n");
 }
+
+// Doctor for a machine that connects to an agent-julia server: there is no
+// local store to check, so it checks the way to the server instead, then the
+// same Claude-side wiring as a local install.
+export async function runRemoteDoctor(
+  config: Config,
+  t: DoctorTargets = defaultTargets(),
+  opts: { tokenFile?: string } = {},
+): Promise<DoctorCheck[]> {
+  const { resolveRemote, connectRemote, describeFailure, UpstreamLink, fetchCore } = await import("../remote/remote.js");
+  const { packageVersion } = await import("../server.js");
+  const checks: DoctorCheck[] = [];
+  const wantCode = config.surfaces.includes("code");
+  const wantDesktop = config.surfaces.includes("cowork") || config.surfaces.includes("dispatch");
+
+  const nodeMajor = Number(process.versions.node.split(".")[0]);
+  checks.push(
+    nodeMajor >= 24
+      ? { name: "node", status: "ok", detail: `v${process.versions.node}` }
+      : { name: "node", status: "fail", detail: `v${process.versions.node} — agent-julia needs Node 24+`, fix: "nvm install 24 && nvm use 24" },
+  );
+
+  const target = await resolveRemote(config, undefined, opts.tokenFile);
+  const health = new URL("/healthz", target.url);
+  let serverVersion: string | null = null;
+  try {
+    const res = await fetch(health, { signal: AbortSignal.timeout(8_000) });
+    const body = (await res.json()) as { version?: string };
+    serverVersion = body.version ?? null;
+    checks.push({ name: "server", status: "ok", detail: `${target.url.href} answers${serverVersion ? ` (agent-julia ${serverVersion})` : ""}` });
+  } catch (err) {
+    checks.push({
+      name: "server",
+      status: "fail",
+      detail: `${target.url.href} does not answer (${health.href}: ${(err as Error).message})`,
+      fix: "check that `agent-julia serve --http` runs there and that this machine can reach it",
+    });
+    return checks;
+  }
+
+  try {
+    const client = await connectRemote(target);
+    serverVersion = client.getServerVersion()?.version ?? serverVersion;
+    await client.close().catch(() => undefined);
+    checks.push({
+      name: "auth",
+      status: "ok",
+      detail: target.tokenSource ? `token from ${target.tokenSource} accepted` : "the server asks for no token",
+    });
+  } catch (err) {
+    checks.push({
+      name: "auth",
+      status: "fail",
+      detail: target.tokenSource ? describeFailure(target.url, err) : `no token found, and ${describeFailure(target.url, err)}`,
+      fix: "npx agent-julia init (connect to a server), or set the AGENT_JULIA_TOKEN variable",
+    });
+    return checks;
+  }
+
+  const local = await packageVersion();
+  const minor = (v: string) => v.split(".").slice(0, 2).join(".");
+  if (serverVersion && minor(serverVersion) !== minor(local)) {
+    checks.push({
+      name: "version",
+      status: "warn",
+      detail: `this machine runs agent-julia ${local}, the server ${serverVersion}`,
+      fix: "update the older side; tools and their arguments come from the server",
+    });
+  } else {
+    checks.push({ name: "version", status: "ok", detail: `${local}${serverVersion ? ` here, ${serverVersion} on the server` : ""}` });
+  }
+
+  if (wantCode) checks.push(await mcpCheck("mcp (code)", t.claudeCodeConfig));
+  if (wantDesktop && t.desktopConfig) checks.push(await mcpCheck("mcp (cowork)", t.desktopConfig));
+
+  if (wantCode) {
+    const link = new UpstreamLink(target);
+    try {
+      const core = await fetchCore(link);
+      const block = managedBlock(STARTUP_BLOCK_ID, injectedCoreFrom(core.text));
+      const content = existsSync(t.claudeCodeMemory) ? await readFile(t.claudeCodeMemory, "utf8") : "";
+      if (!hasManagedBlock(content, STARTUP_BLOCK_ID)) {
+        checks.push({ name: "persona (code)", status: "fail", detail: `no persona block in ${t.claudeCodeMemory}`, fix: "npx agent-julia sync" });
+      } else if (!content.includes(block)) {
+        checks.push({
+          name: "persona (code)",
+          status: "warn",
+          detail: "persona block differs from the server's core — it refreshes on the next session start",
+          fix: "npx agent-julia sync (to refresh now)",
+        });
+      } else {
+        checks.push({ name: "persona (code)", status: "ok", detail: "block matches the server's core" });
+      }
+    } catch (err) {
+      checks.push({ name: "persona (code)", status: "unknown", detail: `could not fetch the core: ${(err as Error).message}` });
+    } finally {
+      await link.close();
+    }
+  }
+  return checks;
+}

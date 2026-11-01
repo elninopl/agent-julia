@@ -2,7 +2,7 @@
 import { startServer } from "./server.js";
 import { runWizard } from "./wizard/wizard.js";
 import { buildInstructions, install, uninstall } from "./wizard/register.js";
-import { loadConfig, saveConfig } from "./config/config.js";
+import { configExists, loadConfig, saveConfig } from "./config/config.js";
 import { migrate } from "./migrations/runner.js";
 import { ensureGitRepo, getRemoteUrl, pushToRemote, setRemoteUrl, verifyRemote } from "./store/git.js";
 import { dirname } from "node:path";
@@ -16,6 +16,7 @@ const HELP = `agent-julia — one brain for your AI
 Usage:
   agent-julia serve      Start the MCP stdio server (default; used by Claude clients)
   agent-julia serve --http [--host h] [--port n]  Run as a long-lived HTTP server for many clients (see "Run as a server")
+  agent-julia serve --remote [url]  Relay to an agent-julia server instead of a local store (the default when the config has "remote")
   agent-julia server token add <name> [--stores a,b] | list | revoke <name>  Manage the server's bearer tokens
   agent-julia server set-owner  Set the password that approves OAuth connections (claude.ai)
   agent-julia server oauth list | revoke <client-id|all>  See or cut off the apps connected over OAuth
@@ -52,9 +53,28 @@ function assertNodeVersion(): void {
   }
 }
 
+// Commands that work on the local store. A machine that connects to a server
+// has none, and running them would quietly create an empty one.
+const LOCAL_STORE_COMMANDS = new Set([
+  "remote", "pull", "push", "search", "read", "export", "maintenance", "undo",
+  "reindex", "unarchive", "relocate", "migrate",
+]);
+
 async function main(): Promise<void> {
   assertNodeVersion();
   const cmd = process.argv[2] ?? "serve";
+
+  const withVoicePaste = cmd === "paste" && process.argv.includes("--with-voice");
+  if ((LOCAL_STORE_COMMANDS.has(cmd) || withVoicePaste) && configExists()) {
+    const cfg = await loadConfig();
+    if (cfg.remote) {
+      console.error(
+        `This machine connects to the agent-julia server at ${cfg.remote.url}, so it has no memory store of its own. ` +
+          `Run \`agent-julia ${cmd}\` on the server.`,
+      );
+      process.exit(1);
+    }
+  }
 
   switch (cmd) {
     case "serve": {
@@ -71,6 +91,15 @@ async function main(): Promise<void> {
           ...(port !== undefined ? { port: Number(port) } : {}),
           ...(host !== undefined ? { host } : {}),
         });
+        break;
+      }
+      const i = process.argv.indexOf("--remote");
+      const remoteUrl = i > 0 && process.argv[i + 1] && !process.argv[i + 1]!.startsWith("--") ? process.argv[i + 1] : undefined;
+      const cfg = configExists() ? await loadConfig() : null;
+      if (i > 0 || cfg?.remote) {
+        if (!cfg) throw new Error("serve --remote needs a config for the persona's name and surfaces; run agent-julia init first");
+        const { startRemoteProxy } = await import("./remote/remote.js");
+        await startRemoteProxy(cfg, remoteUrl);
         break;
       }
       await startServer();
@@ -148,6 +177,13 @@ async function main(): Promise<void> {
       break;
     case "sync": {
       const cfg = await loadConfig();
+      if (cfg.remote && !process.argv.includes("--print")) {
+        const { remoteInstallInputs } = await import("./remote/remote.js");
+        const { config: withId, core } = await remoteInstallInputs(cfg);
+        const steps = await install(withId, { core });
+        for (const s of steps) console.log(`[${s.status}] ${s.surface} — ${s.action}: ${s.detail}`);
+        break;
+      }
       if (process.argv.includes("--print")) {
         console.log(await buildInstructions(cfg));
       } else {
@@ -506,6 +542,22 @@ async function main(): Promise<void> {
     }
     case "doctor": {
       const cfg = await loadConfig();
+      if (cfg.remote) {
+        const { runRemoteDoctor, formatChecks } = await import("./doctor/doctor.js");
+        let checks = await runRemoteDoctor(cfg);
+        console.log(formatChecks(checks));
+        if (process.argv.includes("--fix") && checks.some((c) => c.name.startsWith("persona") || c.name.startsWith("mcp"))) {
+          console.log("\nApplying the repairs that are safe to make automatically:");
+          const { remoteInstallInputs } = await import("./remote/remote.js");
+          const { config: withId, core } = await remoteInstallInputs(cfg);
+          for (const s of await install(withId, { core })) console.log(`  [${s.status}] ${s.surface} — ${s.action}`);
+          checks = await runRemoteDoctor(cfg);
+          console.log("\nAfter:");
+          console.log(formatChecks(checks));
+        }
+        if (checks.some((c) => c.status === "fail")) process.exit(1);
+        break;
+      }
       const { runDoctor, formatChecks } = await import("./doctor/doctor.js");
       let checks = await runDoctor(cfg);
       console.log(formatChecks(checks));

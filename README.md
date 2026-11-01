@@ -169,6 +169,18 @@ Then in claude.ai: Settings → Connectors → Add custom connector, URL `https:
 - After ten wrong passwords within 15 minutes the consent page stops accepting any until the window passes.
 - Bearer tokens keep working next to OAuth, for the clients that are not Claude.
 
+**Another machine** connects to the server instead of keeping its own memory. Make a token for it on the server, then run `agent-julia init` on the other machine and choose "On an agent-julia server": it asks for the address and the token, checks both, and registers the server with that machine's Claude apps. The config it writes names the server:
+
+```json
+"remote": { "url": "https://julia.example.com/mcp", "tokenEnv": "AGENT_JULIA_TOKEN" }
+```
+
+- `agent-julia serve` on that machine is then a relay: stdio towards Claude, HTTP towards the server. Tools, the `agent-julia://core` resource and the instructions come from the server unchanged. No store, index or git runs there, and the commands that work on a store say to run them on the server.
+- At each session start it refreshes the persona block in `~/.claude/CLAUDE.md` and the shipped skills from the server's core, and again after `correct_voice`, as a local install does.
+- The token is read from the variable named in `tokenEnv`, else from `secrets/remote-token` next to the config, where the wizard keeps it (readable by you only). It is never written to the config.
+- When the server is down, a session still starts within seconds: it gets the tools it saw last, and each call answers with an error naming the server instead of hanging. The relay tries again every 30 seconds and picks up a restarted server by itself.
+- `agent-julia doctor` checks the way to the server: that it answers, that it takes the token, and whether its version matches this machine's. `serve --remote <url>` points one run at another server.
+
 ---
 
 ## Reference
@@ -318,6 +330,7 @@ The persona core is also exposed as a resource (`agent-julia://core`) for client
 | `agent-julia server set-owner` | Set the password that approves OAuth connections such as claude.ai |
 | `agent-julia server oauth list` | List the apps connected over OAuth (`revoke <client-id\|all>` cuts them off) |
 | `agent-julia serve --http` | Run one long-lived HTTP server for many sessions and machines (see [Run as a server](#run-as-a-server)) |
+| `agent-julia serve --remote [url]` | Relay to an agent-julia server instead of a local store; the default for `serve` when the config has `remote` |
 | `agent-julia init` | Run the setup wizard |
 | `agent-julia sync` | Re-apply registration, the persona block, the shipped skills and the Claude Code memory handling (`codeMemory`) for the current config. `--print` shows the exact changes instead of making them; `--absorb-all` also brings in directories holding more than 25 facts |
 | `agent-julia uninstall` | Remove the managed blocks, registration, and shipped skills (backups are kept) |
@@ -360,6 +373,7 @@ Settings live in `~/.config/agent-julia/config.json` and carry a `schemaVersion`
 | `weeklyMaintenance` | How the weekly digest is meant to run: `cowork-task` (a scheduled Cowork task) or `own-routine` |
 | `privacyHardOff` | Categories the agent must never store (keys, card numbers, third-party private data) |
 | `server` | Optional, read only by `serve --http`: `host`, `port`, `publicUrl`, `auth`, `maintenanceEveryMinutes` (see [Run as a server](#run-as-a-server)) |
+| `remote` | Optional. The agent-julia server this machine connects to instead of keeping a store: `url`, `tokenEnv` (default `AGENT_JULIA_TOKEN`). `memoryDir` is then unused (see [Run as a server](#run-as-a-server)) |
 | `stores` | Optional. Other agent-julia stores mounted next to yours: `name`, `dir`, `write` (default off), `git`, `gitRemote`, `gitAutoPush` (see [Shared stores](#shared-stores)) |
 | `personaDir` | Optional. Read `persona.md` and `voice-corrections.md` from another agent-julia store instead of `memoryDir`, and record corrections there. For a process whose memory is a shared store but whose voice is yours. Corrections are committed in that store's repo; its own server pushes them |
 

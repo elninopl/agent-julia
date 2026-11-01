@@ -543,7 +543,11 @@ export function registerTools(
           git: target.config.git,
           autoPush: target.config.gitAutoPush,
         });
-        return json(target.name ? { ok: true, ...res, id: label(target, res.id), store: target.name } : { ok: true, ...res });
+        // A client on another machine has no use for where the page sits on
+        // the server's disk, and no business knowing the layout.
+        const { path, ...rest } = res;
+        const out = localSurfaces ? { ...rest, path } : rest;
+        return json(target.name ? { ok: true, ...out, id: label(target, res.id), store: target.name } : { ok: true, ...out });
       } catch (err) {
         // A refusal is an answer, not a crash: the model needs to read it and
         // choose append or confirm, rather than see a dead tool.

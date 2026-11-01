@@ -66,6 +66,27 @@ export async function runWizard(): Promise<void> {
       }
     }
 
+    console.log("");
+    info("Where should your memory live?");
+    const where = await p.choice<"local" | "remote">([
+      {
+        value: "local",
+        label: "On this machine",
+        recommended: true,
+        desc: "A folder you own, as plain markdown under git. The usual setup, and all you need on one computer.",
+      },
+      {
+        value: "remote",
+        label: "On an agent-julia server",
+        desc: "Connect to one that already runs `agent-julia serve --http`, e.g. on your other computer. Nothing is stored here: persona and memory come from the server.",
+      },
+    ]);
+    if (where === "remote") {
+      const { runRemoteSetup } = await import("./remote-setup.js");
+      await runRemoteSetup(p);
+      return;
+    }
+
     // 1 — Name
     step(1, STEPS, "Name", "what your agent calls itself when it talks to you");
     const name = await p.text({ example: "Julia · Max · Ada — anything you like", def: "Julia" });

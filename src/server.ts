@@ -286,7 +286,7 @@ function recordBootWhenKnown(server: McpServer): void {
 // 954 MB and a WAL handle each, every one of them having rewritten the user's
 // CLAUDE.md and skills directory at boot. A reparented process (ppid changed,
 // usually to 1) is an orphan.
-function startParentWatchdog(onOrphaned: () => void): void {
+export function startParentWatchdog(onOrphaned: () => void): void {
   const parent = process.ppid;
   const timer = setInterval(() => {
     if (process.ppid !== parent) {
@@ -334,10 +334,29 @@ export async function createMcpServer(
     },
     async (uri) => {
       const core = await composeCore(rt.paths, rt.config);
-      return { contents: [{ uri: uri.href, mimeType: "text/markdown", text: core.text }] };
+      return {
+        contents: [
+          { uri: uri.href, mimeType: "text/markdown", text: core.text, _meta: { [IDENTITY_META]: identityOf(rt.config) } },
+        ],
+      };
     },
   );
   return server;
+}
+
+// The part of the config a remote client needs to stand in for this one on its
+// own machine: the persona's identity, for the pasted Desktop block and for
+// instructions while the server is away. Nothing about paths or stores.
+export const IDENTITY_META = "agent-julia/identity";
+export type Identity = Pick<Config, "name" | "gender" | "pronouns" | "language" | "privacyHardOff">;
+export function identityOf(config: Config): Identity {
+  return {
+    name: config.name,
+    gender: config.gender,
+    pronouns: config.pronouns,
+    language: config.language,
+    privacyHardOff: config.privacyHardOff,
+  };
 }
 
 // Boot the MCP stdio server. Runs migrations, opens the index, registers tools,

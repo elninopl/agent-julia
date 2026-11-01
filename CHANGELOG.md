@@ -28,6 +28,14 @@ changes, which always ship an automatic, backup-protected data migration.
   rotating refresh tokens kept hashed across restarts.
   `agent-julia server oauth list|revoke` shows and cuts off connected apps.
   Bearer tokens keep working next to it.
+- **Connect a machine to a server.** With `remote` in the config (or
+  `serve --remote <url>`), `agent-julia serve` relays to an agent-julia
+  server instead of opening a local store: tools, the core resource and
+  the instructions come from the server, the local persona block and skills
+  are refreshed from its core, and a server that is down costs a session
+  seconds, not a hang. `agent-julia init` asks first whether memory lives
+  on this machine or on a server; `doctor` checks reachability, the token
+  and the version on both sides.
 - **Shared stores.** `stores` in the config mounts other agent-julia stores
   next to your own. Their pages are `name:page`; `search` and `list` cover
   all of them and rank them as one store; `read`, `history`, `related` and
