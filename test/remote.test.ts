@@ -12,6 +12,7 @@ import { Indexer } from "../src/index/indexer.js";
 import { HttpHandle, ServerState, listenHttp } from "../src/http/serve-http.js";
 import { StaticTokenVerifier, addToken } from "../src/http/tokens.js";
 import {
+  RemoteError,
   RemoteProxy,
   UpstreamLink,
   createRemoteProxy,
@@ -180,6 +181,7 @@ describe("remote client", { timeout: 30_000 }, () => {
     expect(res.isError).toBe(true);
     expect(textOf(res)).toContain(url);
     expect(textOf(res)).toMatch(/cannot reach/);
+    expect(textOf(res)).toContain("Nothing was done.");
     expect(Date.now() - started).toBeLessThan(12_000);
   });
 
@@ -203,11 +205,38 @@ describe("remote client", { timeout: 30_000 }, () => {
     await client.callTool({ name: "ingest", arguments: { page: "one", content: "First page." } });
 
     await up.stop();
+    // A restart takes a moment, in which this side sees its kept-alive
+    // connections closed. Both ends share one process here, so wait for it.
+    await new Promise((r) => setTimeout(r, 200));
     await up.start();
 
     const res = await client.callTool({ name: "ingest", arguments: { page: "two", content: "Second page." } });
     expect(res.isError, textOf(res)).toBeFalsy();
     expect(existsSync(join(up.dir, "pages", "two.md"))).toBe(true);
+  });
+
+  it("sends a read again after a broken connection, and never a write", async () => {
+    const up = await upstream();
+    const me = here(up.url, up.token);
+    const link = new UpstreamLink(await resolveRemote(me.config, undefined, me.tokenFile));
+    cleanup.push(() => link.close());
+    const reset = () => Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNRESET" } });
+    let calls = 0;
+    const flaky = async (c: Client) => {
+      calls++;
+      if (calls === 1) throw reset();
+      return (await c.listTools()).tools.length;
+    };
+
+    expect(await link.use(flaky, { repeatable: true })).toBeGreaterThan(0);
+    expect(calls).toBe(2);
+
+    calls = 0;
+    const err = (await link.use(flaky).catch((e: unknown) => e)) as RemoteError;
+    expect(calls).toBe(1);
+    expect(err).toBeInstanceOf(RemoteError);
+    expect(err.mayHaveRun).toBe(true);
+    expect(err.message).toMatch(/ECONNRESET/);
   });
 
   it("says when the token is refused", async () => {

@@ -87,8 +87,17 @@ export async function saveRemoteToken(token: string, file = remoteTokenFile()): 
 }
 
 // A failure to reach the server, worded for the person reading the tool
-// result. Distinct from an error the server itself returned.
-export class RemoteError extends Error {}
+// result. Distinct from an error the server itself returned. `mayHaveRun`:
+// the request may have reached the server before the failure, so a write
+// may have gone through.
+export class RemoteError extends Error {
+  constructor(
+    message: string,
+    readonly mayHaveRun = false,
+  ) {
+    super(message);
+  }
+}
 
 function networkCode(err: unknown): string | undefined {
   const cause = (err as { cause?: { code?: string; errors?: Array<{ code?: string }> } })?.cause;
@@ -141,6 +150,30 @@ export async function connectRemote(target: RemoteTarget, timeoutMs = CONNECT_TI
 function safeToRetry(err: unknown): boolean {
   if (err instanceof StreamableHTTPError) return err.code === 404;
   return networkCode(err) === "ECONNREFUSED";
+}
+
+// Failures that happen before a request can leave this machine.
+const NOT_SENT = new Set([
+  "ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN", "EHOSTUNREACH", "ENETUNREACH", "EHOSTDOWN", "UND_ERR_CONNECT_TIMEOUT",
+]);
+
+// The request may have reached the server and run there: the connection
+// broke after it was sent (or on a kept-alive connection the server had
+// already closed, which looks the same from here), no answer came in time,
+// or the server failed while answering.
+function mayHaveRun(err: unknown): boolean {
+  if (err instanceof McpError) return err.code === ErrorCode.RequestTimeout || err.code === ErrorCode.ConnectionClosed;
+  if (err instanceof StreamableHTTPError) return err.code === 500 || err.code === 504;
+  const code = networkCode(err);
+  return code !== undefined && !NOT_SENT.has(code);
+}
+
+// Worth one more try on a fresh connection when the call is safe to repeat:
+// the connection broke. Not a timeout, which would only double the wait.
+function brokenConnection(err: unknown): boolean {
+  if (err instanceof McpError) return err.code === ErrorCode.ConnectionClosed;
+  const code = networkCode(err);
+  return code !== undefined && !NOT_SENT.has(code);
 }
 
 function linkBroken(err: unknown): boolean {
@@ -198,25 +231,28 @@ export class UpstreamLink {
     await client?.close().catch(() => undefined);
   }
 
-  async use<T>(fn: (client: Client) => Promise<T>): Promise<T> {
+  // `repeatable`: the call reads, or doing it twice equals doing it once, so
+  // it may be sent again after a connection broke mid-way.
+  async use<T>(fn: (client: Client) => Promise<T>, opts: { repeatable?: boolean } = {}): Promise<T> {
     const client = await this.get();
     try {
       return await fn(client);
     } catch (err) {
       // An error the server returned on purpose belongs to the caller as is.
       if (err instanceof McpError && err.code !== ErrorCode.RequestTimeout && err.code !== ErrorCode.ConnectionClosed) throw err;
-      if (!safeToRetry(err)) {
-        if (linkBroken(err)) await this.drop();
-        throw new RemoteError(describeFailure(this.target.url, err));
+      if (!safeToRetry(err) && !(opts.repeatable && brokenConnection(err))) {
+        if (linkBroken(err) || brokenConnection(err)) await this.drop();
+        throw new RemoteError(describeFailure(this.target.url, err), mayHaveRun(err));
       }
       await this.drop();
       const again = await this.get(true);
       try {
         return await fn(again);
       } catch (retryErr) {
-        if (retryErr instanceof McpError && retryErr.code !== ErrorCode.RequestTimeout) throw retryErr;
-        if (linkBroken(retryErr)) await this.drop();
-        throw new RemoteError(describeFailure(this.target.url, retryErr));
+        if (retryErr instanceof McpError && retryErr.code !== ErrorCode.RequestTimeout && retryErr.code !== ErrorCode.ConnectionClosed) throw retryErr;
+        if (linkBroken(retryErr) || brokenConnection(retryErr)) await this.drop();
+        // A first attempt that may have run still may have.
+        throw new RemoteError(describeFailure(this.target.url, retryErr), mayHaveRun(err) || mayHaveRun(retryErr));
       }
     }
   }
@@ -232,7 +268,7 @@ export interface CoreSnapshot {
 }
 
 export async function fetchCore(link: UpstreamLink): Promise<CoreSnapshot> {
-  const res = await link.use((c) => c.readResource({ uri: CORE_URI }, { timeout: LIST_TIMEOUT_MS }));
+  const res = await link.use((c) => c.readResource({ uri: CORE_URI }, { timeout: LIST_TIMEOUT_MS }), { repeatable: true });
   const content = res.contents[0];
   const text = content && "text" in content ? String(content.text) : "";
   if (!text.trim()) throw new RemoteError(`the agent-julia server at ${link.target.url.href} returned an empty persona core`);
@@ -347,7 +383,10 @@ export async function createRemoteProxy(config: Config, opts: RemoteProxyOptions
 
   server.setRequestHandler(ListToolsRequestSchema, async () => {
     try {
-      const { tools, client } = await link.use(async (c) => ({ tools: (await c.listTools(undefined, { timeout: LIST_TIMEOUT_MS })).tools, client: c }));
+      const { tools, client } = await link.use(
+        async (c) => ({ tools: (await c.listTools(undefined, { timeout: LIST_TIMEOUT_MS })).tools, client: c }),
+        { repeatable: true },
+      );
       void remember(client, tools);
       servedTools = JSON.stringify(tools);
       return { tools };
@@ -396,7 +435,11 @@ export async function createRemoteProxy(config: Config, opts: RemoteProxyOptions
 
   server.setRequestHandler(CallToolRequestSchema, async (req): Promise<CallToolResult> => {
     try {
-      const result = (await link.use((c) => c.callTool(req.params, undefined, { timeout: CALL_TIMEOUT_MS }))) as CallToolResult;
+      // What the server says of its own tool: reads and repeatable writes
+      // may be sent again after a broken connection, other writes may not.
+      const hints = lastTools?.find((t) => t.name === req.params.name)?.annotations;
+      const repeatable = hints?.readOnlyHint === true || hints?.idempotentHint === true;
+      const result = (await link.use((c) => c.callTool(req.params, undefined, { timeout: CALL_TIMEOUT_MS }), { repeatable })) as CallToolResult;
       if (VOICE_TOOLS.has(req.params.name) && !result.isError) {
         // Same as the local server: a correction reaches the next session's
         // persona block without waiting for a reboot.
@@ -405,27 +448,31 @@ export async function createRemoteProxy(config: Config, opts: RemoteProxyOptions
       return result;
     } catch (err) {
       if (err instanceof McpError) throw err;
-      return { content: [{ type: "text", text: `${(err as Error).message}. Nothing was done.` }], isError: true };
+      const outcome =
+        err instanceof RemoteError && err.mayHaveRun
+          ? "It may have gone through all the same: check with read or search before trying it again."
+          : "Nothing was done.";
+      return { content: [{ type: "text", text: `${(err as Error).message}. ${outcome}` }], isError: true };
     }
   });
 
   server.setRequestHandler(ListResourcesRequestSchema, async (req) => {
     try {
-      return await link.use((c) => c.listResources(req.params, { timeout: LIST_TIMEOUT_MS }));
+      return await link.use((c) => c.listResources(req.params, { timeout: LIST_TIMEOUT_MS }), { repeatable: true });
     } catch {
       return { resources: [] };
     }
   });
   server.setRequestHandler(ListResourceTemplatesRequestSchema, async (req) => {
     try {
-      return await link.use((c) => c.listResourceTemplates(req.params, { timeout: LIST_TIMEOUT_MS }));
+      return await link.use((c) => c.listResourceTemplates(req.params, { timeout: LIST_TIMEOUT_MS }), { repeatable: true });
     } catch {
       return { resourceTemplates: [] };
     }
   });
   server.setRequestHandler(ReadResourceRequestSchema, async (req) => {
     try {
-      return await link.use((c) => c.readResource(req.params, { timeout: LIST_TIMEOUT_MS }));
+      return await link.use((c) => c.readResource(req.params, { timeout: LIST_TIMEOUT_MS }), { repeatable: true });
     } catch (err) {
       if (err instanceof McpError) throw err;
       throw new McpError(ErrorCode.InternalError, (err as Error).message);
