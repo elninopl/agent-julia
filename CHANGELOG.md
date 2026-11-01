@@ -60,6 +60,13 @@ changes, which always ship an automatic, backup-protected data migration.
   memory. Corrections are written and committed there. Without the field
   nothing changes.
 
+### Fixed
+
+- **A session killed mid-write held up the others for a minute.** Its store
+  lock stayed behind until it went stale, and every write in the meantime
+  waited and then failed. A lock left by a process on this machine that is
+  no longer running is now taken over at once.
+
 ## [0.1.44] - 2026-10-10
 
 > If you absorbed Claude Code's memory with 0.1.43, run `agent-julia sync`

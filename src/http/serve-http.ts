@@ -212,6 +212,11 @@ export async function listenHttp(
         lastSeen: Date.now(),
         transport: new StreamableHTTPServerTransport({
           sessionIdGenerator: () => randomUUID(),
+          // Plain JSON answers, not an event stream per request. Nothing here
+          // streams, and a server that dies mid-answer then fails the client's
+          // request at once: a cut event stream left it waiting for its own
+          // timeout. Proxies that buffer event streams stop mattering too.
+          enableJsonResponse: true,
           onsessioninitialized: (sid) => {
             sessions.set(sid, fresh);
           },
