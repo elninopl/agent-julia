@@ -3,7 +3,7 @@ import { configBackups, configPath, loadConfig } from "./config/config.js";
 import { migrate } from "./migrations/runner.js";
 import { existsSync } from "node:fs";
 import { Indexer } from "./index/indexer.js";
-import { StorePaths, storePaths } from "./store/paths.js";
+import { StorePaths, primaryPaths } from "./store/paths.js";
 import { ensureGitRepo, gitAvailable } from "./store/git.js";
 import { log, warn } from "./util/log.js";
 
@@ -33,6 +33,13 @@ export async function buildRuntime(): Promise<Runtime> {
     );
   }
 
+  if (config.personaDir && !existsSync(config.personaDir)) {
+    warn(
+      `personaDir does not exist: ${config.personaDir}. The persona falls back to the preset and ` +
+        "voice corrections cannot be saved until it does.",
+    );
+  }
+
   // Bring an older store up to the current schema before opening it.
   const migrated = await migrate(config);
   config = migrated.config;
@@ -47,7 +54,7 @@ export async function buildRuntime(): Promise<Runtime> {
   }
   if (config.git) await ensureGitRepo(config.memoryDir);
 
-  const paths = storePaths(config.memoryDir);
+  const paths = primaryPaths(config);
   // Opening the index loads no model. Re-embedding after a model change is a
   // startup task the server runs once the client is connected: done here, it
   // held the handshake for as long as the whole store took to embed.

@@ -136,9 +136,9 @@ async function main(): Promise<void> {
         break;
       }
       const cfg = await loadConfig();
-      const { storePaths } = await import("./store/paths.js");
+      const { primaryPaths } = await import("./store/paths.js");
       const { Indexer } = await import("./index/indexer.js");
-      const idx = Indexer.open(storePaths(cfg.memoryDir), cfg);
+      const idx = Indexer.open(primaryPaths(cfg), cfg);
       try {
         await idx.sync();
         const hits = await idx.search(q, 10);
@@ -161,9 +161,9 @@ async function main(): Promise<void> {
         break;
       }
       const cfg = await loadConfig();
-      const { storePaths } = await import("./store/paths.js");
+      const { primaryPaths } = await import("./store/paths.js");
       const { readPage } = await import("./store/markdown.js");
-      const found = await readPage(storePaths(cfg.memoryDir), page);
+      const found = await readPage(primaryPaths(cfg), page);
       console.log(found ? `# ${found.frontmatter.title ?? found.id}\n\n${found.body}` : `No page found: ${page}`);
       break;
     }
@@ -199,12 +199,12 @@ async function main(): Promise<void> {
     }
     case "maintenance": {
       const cfg = await loadConfig();
-      const { storePaths } = await import("./store/paths.js");
+      const { primaryPaths } = await import("./store/paths.js");
       const { Indexer } = await import("./index/indexer.js");
       const { runMaintenance } = await import("./maintenance/maintenance.js");
-      const idx = Indexer.open(storePaths(cfg.memoryDir), cfg);
+      const idx = Indexer.open(primaryPaths(cfg), cfg);
       try {
-        const r = await runMaintenance(storePaths(cfg.memoryDir), idx, cfg, "auto");
+        const r = await runMaintenance(primaryPaths(cfg), idx, cfg, "auto");
         console.log(
           `Maintenance done: +${r.indexAdded}/~${r.indexUpdated}/-${r.indexRemoved} indexed, ` +
             `${r.staleFlagged.length} stale-flagged, ${r.orphanLinks.length} orphan link(s), ` +
@@ -255,9 +255,9 @@ async function main(): Promise<void> {
         process.exitCode = 1;
         break;
       }
-      const { storePaths } = await import("./store/paths.js");
+      const { primaryPaths } = await import("./store/paths.js");
       const { Indexer } = await import("./index/indexer.js");
-      const idx = Indexer.open(storePaths(cfg.memoryDir), cfg);
+      const idx = Indexer.open(primaryPaths(cfg), cfg);
       try {
         const synced = await idx.sync();
         console.log(
@@ -271,9 +271,9 @@ async function main(): Promise<void> {
     }
     case "reindex": {
       const cfg = await loadConfig();
-      const { storePaths } = await import("./store/paths.js");
+      const { primaryPaths } = await import("./store/paths.js");
       const { Indexer } = await import("./index/indexer.js");
-      const idx = Indexer.open(storePaths(cfg.memoryDir), cfg);
+      const idx = Indexer.open(primaryPaths(cfg), cfg);
       try {
         const n = await idx.rebuild();
         console.log(`Rebuilt the index from ${n} page(s) of markdown.`);
@@ -285,9 +285,9 @@ async function main(): Promise<void> {
     case "unarchive": {
       const page = process.argv[3];
       const cfg = await loadConfig();
-      const { storePaths } = await import("./store/paths.js");
+      const { primaryPaths } = await import("./store/paths.js");
       const { listArchivedIds, unarchivePage } = await import("./store/markdown.js");
-      const paths = storePaths(cfg.memoryDir);
+      const paths = primaryPaths(cfg);
       if (!page) {
         const ids = await listArchivedIds(paths);
         console.log(ids.length ? `Archived pages:\n  ${ids.join("\n  ")}` : "Nothing is archived.");
@@ -357,14 +357,14 @@ async function main(): Promise<void> {
       const { pasteBody, pasteWithVoice, pasteHash, configFingerprint, PASTE_LAYOUT } = await import(
         "./persona/paste.js"
       );
-      const { storePaths } = await import("./store/paths.js");
+      const { primaryPaths } = await import("./store/paths.js");
       const { managedBlock } = await import("./managed/block.js");
       const { STARTUP_BLOCK_ID } = await import("./persona/startup.js");
       const { writePasteMarker } = await import("./wizard/register.js");
       const { copyToClipboard } = await import("./util/clipboard.js");
       const { hostname } = await import("node:os");
 
-      const body = withVoice ? await pasteWithVoice(storePaths(cfg.memoryDir), cfg) : await pasteBody(cfg);
+      const body = withVoice ? await pasteWithVoice(primaryPaths(cfg), cfg) : await pasteBody(cfg);
       const block = managedBlock(STARTUP_BLOCK_ID, body);
       const copied = await copyToClipboard(block);
 
@@ -406,9 +406,9 @@ async function main(): Promise<void> {
       console.log(formatChecks(checks));
       if (process.argv.includes("--fix")) {
         console.log("\nApplying the repairs that are safe to make automatically:");
-        const { storePaths } = await import("./store/paths.js");
+        const { primaryPaths } = await import("./store/paths.js");
         const { Indexer } = await import("./index/indexer.js");
-        const paths = storePaths(cfg.memoryDir);
+        const paths = primaryPaths(cfg);
         if (checks.some((c) => c.name === "index" && c.status !== "ok")) {
           const { rmSync } = await import("node:fs");
           rmSync(paths.dbPath, { force: true });
@@ -463,10 +463,10 @@ main().catch((err) => {
 // server does the same thing on boot.
 async function adoptCodeMemoryNow(cfg: Config, force = false): Promise<AdoptionReport> {
   const { adoptCodeMemory, codeMemoryRoot } = await import("./surfaces/code-memory.js");
-  const { storePaths } = await import("./store/paths.js");
+  const { primaryPaths } = await import("./store/paths.js");
   const { Indexer } = await import("./index/indexer.js");
   const { makeEmbeddingProvider } = await import("./index/embeddings.js");
-  const paths = storePaths(cfg.memoryDir);
+  const paths = primaryPaths(cfg);
   const idx = Indexer.open(paths, cfg, await makeEmbeddingProvider(cfg.embedding));
   try {
     return await adoptCodeMemory(paths, idx, cfg, codeMemoryRoot(), force);

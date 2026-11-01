@@ -5,7 +5,7 @@ import { archivePage, listPages, readPage, readPageRaw, relatedPages, resolvePag
 import { pageId } from "../store/paths.js";
 import { ingest } from "../store/ingest.js";
 import { refreshIndexMd } from "../store/catalog.js";
-import { commitAll, pageHistory, pushToRemote } from "../store/git.js";
+import { commitAll, isGitRepo, pageHistory, pushToRemote } from "../store/git.js";
 import { MAX_CORRECTION_CHARS, appendCorrection, retractCorrection } from "../persona/corrections.js";
 import { loadCoreInputs, renderCore } from "../persona/compose.js";
 import { coreHashOf, memoryInstruction } from "../persona/startup.js";
@@ -98,6 +98,19 @@ export function registerTools(server: McpServer, rt: Runtime): void {
   const { paths, indexer, config } = rt;
   const lastFetchRecord = new Map<string, { hash: string; at: number }>();
 
+  // Corrections live with the persona: the store itself, unless personaDir
+  // points at another store. That one belongs to another server, so it is
+  // committed only when it is already a repo, and its own server pushes it.
+  const commitPersona = async (message: string, push: boolean): Promise<void> => {
+    if (!config.git) return;
+    if (paths.personaRoot !== paths.root) {
+      if (isGitRepo(paths.personaRoot)) await commitAll(paths.personaRoot, message);
+      return;
+    }
+    const committed = await commitAll(paths.root, message);
+    if (committed && push && config.gitAutoPush) await pushToRemote(paths.root);
+  };
+
   server.registerTool(
     "retract_correction",
     {
@@ -120,7 +133,7 @@ export function registerTools(server: McpServer, rt: Runtime): void {
             res.candidates.map((c) => `- ${c}`).join("\n"),
         );
       }
-      if (config.git) await commitAll(paths.root, `Retract voice correction`);
+      await commitPersona("Retract voice correction", false);
       return text(`Withdrawn, from the next turn on:\n${res.retracted}`);
     },
   );
@@ -422,10 +435,7 @@ export function registerTools(server: McpServer, rt: Runtime): void {
             "correct_voice once per rule. Keep each one complete; do not shorten a rule to make it fit.",
         );
       }
-      if (config.git) {
-        const committed = await commitAll(paths.root, "Update memory: voice correction");
-        if (committed && config.gitAutoPush) await pushToRemote(paths.root);
-      }
+      await commitPersona("Update memory: voice correction", true);
       // Make the Claude Code block current now rather than two sessions later.
       await refreshInjectedCore(config).catch(() => undefined);
       return text(

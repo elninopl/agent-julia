@@ -295,6 +295,7 @@ Settings live in `~/.config/agent-julia/config.json` and carry a `schemaVersion`
 | `exports` | Files outside Claude that carry an exported persona block, kept current on every start (managed with `agent-julia export`) |
 | `weeklyMaintenance` | How the weekly digest is meant to run: `cowork-task` (a scheduled Cowork task) or `own-routine` |
 | `privacyHardOff` | Categories the agent must never store (keys, card numbers, third-party private data) |
+| `personaDir` | Optional. Read `persona.md` and `voice-corrections.md` from another agent-julia store instead of `memoryDir`, and record corrections there. For a process whose memory is a shared store but whose voice is yours. Corrections are committed in that store's repo; its own server pushes them |
 
 </details>
 

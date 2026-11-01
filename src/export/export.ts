@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { Config } from "../config/schema.js";
-import { storePaths } from "../store/paths.js";
+import { primaryPaths } from "../store/paths.js";
 import { composeCore } from "../persona/compose.js";
 import { hasManagedBlock, managedBlock, removeManagedBlock, upsertManagedBlock } from "../managed/block.js";
 
@@ -32,7 +32,7 @@ export function knownAliases(): string[] {
 
 // Compose the exportable persona text (no memory instruction — see above).
 export async function exportText(config: Config): Promise<string> {
-  const core = await composeCore(storePaths(config.memoryDir), config);
+  const core = await composeCore(primaryPaths(config), config);
   return core.text;
 }
 

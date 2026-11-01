@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { readFile, readdir } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { Config } from "../config/schema.js";
-import { storePaths } from "../store/paths.js";
+import { primaryPaths } from "../store/paths.js";
 import { listPageIds, readPage } from "../store/markdown.js";
 import { checkLocalEmbeddingsAvailable, LOCAL_EMBEDDINGS_PACKAGE, makeEmbeddingProvider } from "../index/embeddings.js";
 import { ftsTokenizerFor, openDb } from "../index/db.js";
@@ -117,7 +117,7 @@ async function mcpCheck(name: string, configPath: string): Promise<DoctorCheck> 
 // finding says which command does.
 export async function runDoctor(config: Config, t: DoctorTargets = defaultTargets()): Promise<DoctorCheck[]> {
   const checks: DoctorCheck[] = [];
-  const paths = storePaths(config.memoryDir);
+  const paths = primaryPaths(config);
   const wantCode = config.surfaces.includes("code");
   const wantDesktop = config.surfaces.includes("cowork") || config.surfaces.includes("dispatch");
 

@@ -12,7 +12,7 @@ import {
 import { configExists, configPath, saveConfig } from "../config/config.js";
 import { migrate } from "../migrations/runner.js";
 import { Indexer } from "../index/indexer.js";
-import { storePaths } from "../store/paths.js";
+import { primaryPaths } from "../store/paths.js";
 import { listPageIds } from "../store/markdown.js";
 import { ensureGitRepo, setRemoteUrl, verifyRemote } from "../store/git.js";
 import { allPresets, presetSample, styleLabel } from "../persona/presets.js";
@@ -351,7 +351,7 @@ export async function runWizard(): Promise<void> {
     }
 
     // Adopt an existing markdown knowledge base if one is already there.
-    const paths = storePaths(config.memoryDir);
+    const paths = primaryPaths(config);
     const existing = await listPageIds(paths);
     if (existing.length > 0) {
       ok(`Adopted your existing knowledge base — ${c.bold(String(existing.length))} page(s).`);

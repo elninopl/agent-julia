@@ -11,7 +11,7 @@ import { log, warn } from "../util/log.js";
 import { copyToClipboard } from "../util/clipboard.js";
 import { buildInjectedCore, STARTUP_BLOCK_ID } from "../persona/startup.js";
 import { PASTE_LAYOUT, configFingerprint, pasteBody, pasteHash } from "../persona/paste.js";
-import { storePaths } from "../store/paths.js";
+import { primaryPaths } from "../store/paths.js";
 import {
   hasManagedBlock,
   managedBlock,
@@ -347,7 +347,7 @@ export async function install(config: Config): Promise<InstallStep[]> {
   // registering a launcher that cannot load the model is how a fully configured
   // and fully indexed semantic search ends up never running.
   const entry = serverEntryFor(config.embedding.provider === "local");
-  const core = await buildInjectedCore(storePaths(config.memoryDir), config);
+  const core = await buildInjectedCore(primaryPaths(config), config);
   const wantCode = config.surfaces.includes("code");
   const wantDesktop = config.surfaces.includes("cowork") || config.surfaces.includes("dispatch");
 
@@ -471,7 +471,7 @@ export async function refreshInjectedCore(
     { path: coworkMirrorPath(), body: "paste" },
   ],
 ): Promise<number> {
-  const core = await buildInjectedCore(storePaths(config.memoryDir), config);
+  const core = await buildInjectedCore(primaryPaths(config), config);
   const paste = await pasteBody(config);
   let refreshed = 0;
   for (const t of targets) {
@@ -498,7 +498,7 @@ export async function buildInstructions(config: Config): Promise<string> {
   // Desktop the same short block install() does — not the full core, which goes
   // stale the moment a correction is recorded.
   const pasteForDesktop = await pasteBody(config);
-  const core = await buildInjectedCore(storePaths(config.memoryDir), config);
+  const core = await buildInjectedCore(primaryPaths(config), config);
   // The same launcher install() would register. The first candidate is not it
   // when the local model is chosen: printed from an npx run, that was the npx
   // entry, which can never load the model package.

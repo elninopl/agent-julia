@@ -7,6 +7,13 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ## [Unreleased]
 
+### Added
+
+- **`personaDir`** in the config: the voice (`persona.md`,
+  `voice-corrections.md`) can come from another agent-julia store than the
+  memory. Corrections are written and committed there. Without the field
+  nothing changes.
+
 ## [0.1.44] - 2026-10-10
 
 > If you absorbed Claude Code's memory with 0.1.43, run `agent-julia sync`
