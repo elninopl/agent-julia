@@ -548,8 +548,7 @@ export function registerTools(
         });
         // A client on another machine has no use for where the page sits on
         // the server's disk, and no business knowing the layout.
-        const { path, ...rest } = res;
-        const out = localSurfaces ? { ...rest, path } : rest;
+        const out = localSurfaces ? res : (({ path: _path, ...rest }) => rest)(res);
         return json(target.name ? { ok: true, ...out, id: label(target, res.id), store: target.name } : { ok: true, ...out });
       } catch (err) {
         // A refusal is an answer, not a crash: the model needs to read it and
