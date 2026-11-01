@@ -1,4 +1,5 @@
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { createServer as createHttpServer, request as httpRequest } from "node:http";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -237,6 +238,31 @@ describe("remote client", { timeout: 30_000 }, () => {
     expect(err).toBeInstanceOf(RemoteError);
     expect(err.mayHaveRun).toBe(true);
     expect(err.message).toMatch(/ECONNRESET/);
+  });
+
+  it("opens no stream for messages the server never sends", async () => {
+    const up = await upstream();
+    const target = new URL(up.url);
+    const methods: string[] = [];
+    // Holds a GET the way Cloudflare does: no headers until a first byte.
+    const proxy = createHttpServer((req, res) => {
+      methods.push(req.method ?? "");
+      if (req.method === "GET") return;
+      const fwd = httpRequest(target, { method: req.method, headers: { ...req.headers, host: target.host } }, (r) => {
+        res.writeHead(r.statusCode ?? 502, r.headers);
+        r.pipe(res);
+      });
+      req.pipe(fwd);
+    });
+    const port = await freePort();
+    await new Promise<void>((r) => proxy.listen(port, "127.0.0.1", r));
+    cleanup.push(() => new Promise<void>((r) => proxy.close(() => r())));
+    proxy.on("connection", (s) => cleanup.push(() => void s.destroy()));
+
+    const me = here(`http://127.0.0.1:${port}/mcp`, up.token);
+    const client = await attach(await createRemoteProxy(me.config, me.opts));
+    expect(textOf(await client.callTool({ name: "search", arguments: { query: "x" } }))).not.toMatch(/did not answer/);
+    expect(methods).not.toContain("GET");
   });
 
   it("says when the token is refused", async () => {

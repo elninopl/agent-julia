@@ -121,9 +121,19 @@ export function describeFailure(url: URL, err: unknown): string {
   return `${where}: ${(err as Error)?.message ?? String(err)}`;
 }
 
+// Once connected, the SDK opens a GET stream for messages the server sends
+// unprompted. The agent-julia server sends none, and a proxy may hold that
+// response until its first byte arrives (Cloudflare does). Node 26's fetch
+// over HTTP/2 then queues every later request behind the held stream, so each
+// call times out. The stream is answered here the way a server without one
+// answers it: 405.
+const withoutServerStream: typeof fetch = (input, init) =>
+  (init?.method ?? "GET").toUpperCase() === "GET" ? Promise.resolve(new Response(null, { status: 405 })) : fetch(input, init);
+
 export async function connectRemote(target: RemoteTarget, timeoutMs = CONNECT_TIMEOUT_MS): Promise<Client> {
   const client = new Client({ name: "agent-julia-remote", version: await packageVersion() });
   const transport = new StreamableHTTPClientTransport(target.url, {
+    fetch: withoutServerStream,
     requestInit: target.token ? { headers: { authorization: `Bearer ${target.token}` } } : {},
     reconnectionOptions: { maxReconnectionDelay: 30_000, initialReconnectionDelay: 1_000, reconnectionDelayGrowFactor: 2, maxRetries: 2 },
   });

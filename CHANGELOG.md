@@ -37,6 +37,9 @@ changes, which always ship an automatic, backup-protected data migration.
   seconds, not a hang. `agent-julia init` asks first whether memory lives
   on this machine or on a server; `doctor` checks reachability, the token
   and the version on both sides.
+  The relay opens no stream for messages the server never sends, so it
+  works behind a proxy that holds such a stream, as a Cloudflare tunnel
+  does.
 - **Capture hooks** for Claude Code, opt-in with `agent-julia hooks
   install|uninstall|status`. On each prompt: a reminder to call
   `correct_voice` when the message reads like a voice correction, and to
