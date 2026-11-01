@@ -64,7 +64,9 @@ export const STORE_NAME_RE = /^[a-z][a-z0-9-]{1,31}$/;
 export const ExtraStoreSchema = z.object({
   name: z
     .string()
-    .regex(STORE_NAME_RE, "store name: 2-32 characters, lowercase letters, digits and dashes, starting with a letter"),
+    .regex(STORE_NAME_RE, "store name: 2-32 characters, lowercase letters, digits and dashes, starting with a letter")
+    // Token scopes call the primary store "primary".
+    .refine((n) => n !== "primary", 'store name "primary" is reserved for your own store'),
   dir: z.string().min(1),
   write: z.boolean().default(false),
   git: z.boolean().default(true),

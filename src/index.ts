@@ -16,6 +16,7 @@ const HELP = `agent-julia — one brain for your AI
 Usage:
   agent-julia serve      Start the MCP stdio server (default; used by Claude clients)
   agent-julia serve --http [--host h] [--port n]  Run as a long-lived HTTP server for many clients (see "Run as a server")
+  agent-julia server token add <name> [--stores a,b] | list | revoke <name>  Manage the server's bearer tokens
   agent-julia init       Run the interactive setup wizard
   agent-julia sync       Re-apply MCP registration + persona core + shipped skills (--print shows the steps; --absorb-all also brings in a large Claude Code memory)
   agent-julia uninstall  Remove the managed persona blocks, MCP registration, and shipped skills
@@ -71,6 +72,41 @@ async function main(): Promise<void> {
         break;
       }
       await startServer();
+      break;
+    }
+    case "server": {
+      const [sub, verb, arg] = process.argv.slice(3);
+      if (sub !== "token" || !["add", "list", "revoke"].includes(verb ?? "")) {
+        console.log("Usage: agent-julia server token add <name> [--stores primary,team] | list | revoke <name>");
+        break;
+      }
+      const { addToken, readTokens, revokeToken, tokensFile, PRIMARY_SCOPE } = await import("./http/tokens.js");
+      if (verb === "list") {
+        const tokens = await readTokens();
+        if (tokens.length === 0) console.log(`No tokens (${tokensFile()}).`);
+        for (const t of tokens) {
+          console.log(`${t.name}  ${t.stores ? `stores: ${t.stores.join(", ")}` : "all stores"}  created ${t.createdAt.slice(0, 10)}`);
+        }
+        break;
+      }
+      if (!arg) throw new Error(`agent-julia server token ${verb} needs a name`);
+      if (verb === "revoke") {
+        console.log((await revokeToken(arg)) ? `Revoked "${arg}".` : `No token named "${arg}".`);
+        break;
+      }
+      const i = process.argv.indexOf("--stores");
+      const stores = i > 0 ? (process.argv[i + 1] ?? "").split(",").map((x) => x.trim()).filter(Boolean) : undefined;
+      if (stores) {
+        const cfg = await loadConfig();
+        const known = new Set([PRIMARY_SCOPE, ...(cfg.stores ?? []).map((x) => x.name)]);
+        const unknown = stores.filter((x) => !known.has(x));
+        if (unknown.length > 0) {
+          throw new Error(`unknown store(s): ${unknown.join(", ")}. Known: ${[...known].join(", ")}`);
+        }
+      }
+      const { token } = await addToken(arg, stores);
+      console.log(`Token "${arg}"${stores ? ` for ${stores.join(", ")}` : ""}. Shown once, store it now:\n\n${token}\n`);
+      console.log(`Clients send it as: Authorization: Bearer <token>. Kept hashed in ${tokensFile()}.`);
       break;
     }
     case "init":

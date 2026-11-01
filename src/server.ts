@@ -301,7 +301,13 @@ function startParentWatchdog(onOrphaned: () => void): void {
 // One MCP server over the shared runtime: the stdio server has one, an HTTP
 // server one per session. `localSurfaces: false` (the HTTP server) keeps the
 // tools away from files that belong to a local Claude install.
-export async function createMcpServer(rt: Runtime, opts: { localSurfaces?: boolean } = {}): Promise<McpServer> {
+export async function createMcpServer(
+  rt: Runtime,
+  opts: { localSurfaces?: boolean; scope?: readonly string[] } = {},
+): Promise<McpServer> {
+  // A scoped session hears only about the stores it can reach.
+  const scope = opts.scope;
+  const shown = scope ? { ...rt.config, stores: (rt.config.stores ?? []).filter((s) => scope.includes(s.name)) } : rt.config;
   const server = new McpServer(
     { name: "agent-julia", version: await packageVersion() },
     {
@@ -309,11 +315,11 @@ export async function createMcpServer(rt: Runtime, opts: { localSurfaces?: boole
       // action. It carries the stable layer — identity, language, the privacy
       // rail, and the order to fetch the rest — because the volatile half is
       // too large for it and would double up with Claude Code's block.
-      instructions: serverInstructions(rt.config),
+      instructions: serverInstructions(shown),
     },
   );
 
-  registerTools(server, rt, { localSurfaces: opts.localSurfaces ?? true });
+  registerTools(server, rt, { localSurfaces: opts.localSurfaces ?? true, ...(scope ? { scope } : {}) });
 
   server.registerResource(
     "persona-core",

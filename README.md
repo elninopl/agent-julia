@@ -140,6 +140,17 @@ By default every Claude session starts its own Agent Julia over stdio, on the ma
 - It binds loopback by default and refuses to start without authentication on any other address, or with a `publicUrl` set. Requests must carry a Host the server answers to, and with `auth: "none"` a request that came through a proxy is refused.
 - `--host` and `--port` override the config for one run. Each persona is its own process with its own config (`AGENT_JULIA_CONFIG`).
 
+**Tokens** (`"auth": "bearer"`) are for machine clients: a remote proxy, a monitor, a bot.
+
+```sh
+agent-julia server token add laptop            # prints the token once
+agent-julia server token add group --stores team   # this one reaches only the store "team"
+agent-julia server token list
+agent-julia server token revoke laptop
+```
+
+Clients send `Authorization: Bearer <token>`. Tokens are kept as SHA-256 hashes in `secrets/tokens.json` next to the config, readable by its owner only, and a running server picks up an added or revoked token without a restart. A token with `--stores` sees only those stores (`primary` is your own): the others are absent from `search`, `list` and `read`, it writes only with `store`, and it cannot change the voice. A session belongs to the token that opened it. Without a token, `/healthz` answers only whether the server is up and its version.
+
 ---
 
 ## Reference
@@ -285,6 +296,7 @@ The persona core is also exposed as a resource (`agent-julia://core`) for client
 | Command | |
 | --- | --- |
 | `agent-julia serve` | Start the MCP server (default; used by the Claude apps) |
+| `agent-julia server token add <name> [--stores a,b]` | Make a bearer token for the HTTP server (`list`, `revoke <name>` too) |
 | `agent-julia serve --http` | Run one long-lived HTTP server for many sessions and machines (see [Run as a server](#run-as-a-server)) |
 | `agent-julia init` | Run the setup wizard |
 | `agent-julia sync` | Re-apply registration, the persona block, the shipped skills and the Claude Code memory handling (`codeMemory`) for the current config. `--print` shows the exact changes instead of making them; `--absorb-all` also brings in directories holding more than 25 facts |

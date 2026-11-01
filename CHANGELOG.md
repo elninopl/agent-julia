@@ -17,6 +17,10 @@ changes, which always ship an automatic, backup-protected data migration.
   for monitoring. It maintains the stores on a timer, never writes the
   local Claude files, binds loopback by default and refuses to start
   unauthenticated anywhere else. The stdio server is unchanged.
+- **Bearer tokens** for the HTTP server (`auth: "bearer"`), managed with
+  `agent-julia server token add|list|revoke`. Stored hashed, reloaded on
+  change, optionally limited to some stores; a session stays with the token
+  that opened it.
 - **Shared stores.** `stores` in the config mounts other agent-julia stores
   next to your own. Their pages are `name:page`; `search` and `list` cover
   all of them and rank them as one store; `read`, `history`, `related` and

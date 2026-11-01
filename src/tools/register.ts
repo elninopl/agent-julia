@@ -106,7 +106,14 @@ async function migrationNotice(client: string): Promise<string> {
 // Wire the MCP tool surface onto an McpServer instance.
 // `localSurfaces: false` is the HTTP server: it serves clients on other
 // machines, so nothing here may write the Claude files of the machine it runs on.
-export function registerTools(server: McpServer, rt: Runtime, opts: { localSurfaces?: boolean } = {}): void {
+//
+// `scope` limits a session to some stores (a bearer token's scope), naming the
+// primary "primary". Stores outside it behave as if they did not exist.
+export function registerTools(
+  server: McpServer,
+  rt: Runtime,
+  opts: { localSurfaces?: boolean; scope?: readonly string[] } = {},
+): void {
   const localSurfaces = opts.localSurfaces ?? true;
   const { paths, indexer, config } = rt;
   const lastFetchRecord = new Map<string, { hash: string; at: number }>();
@@ -114,18 +121,25 @@ export function registerTools(server: McpServer, rt: Runtime, opts: { localSurfa
   // Stores mounted next to the primary one. With none, `locate` hands every
   // reference to the primary unchanged and `label` returns ids as they are, so
   // each tool below runs exactly as it did before stores existed.
-  const extras = rt.stores ?? [];
-  const multi = extras.length > 0;
+  const scope = opts.scope ? new Set(opts.scope) : null;
+  const visible = (s: MountedStore): boolean => !scope || scope.has(s.name ?? "primary");
   const primary: MountedStore = { name: null, paths, indexer, config, write: true };
-  const everyStore = [primary, ...extras];
+  const ownMemory = visible(primary);
+  const extras = (rt.stores ?? []).filter(visible);
+  const multi = extras.length > 0 || !ownMemory;
+  const everyStore = ownMemory ? [primary, ...extras] : extras;
   const names: ReadonlySet<string> = new Set(extras.map((s) => s.name!));
+  // A bare id names a page of the primary; a prefix one of a mounted store's.
+  // Outside the scope, neither exists.
   const locate = (ref: string): { store: MountedStore; page: string } => {
     if (!multi) return { store: primary, page: ref };
     const { store, page } = splitStoreRef(ref, names);
     return { store: store ? extras.find((s) => s.name === store)! : primary, page };
   };
+  const reachable = (store: MountedStore): boolean => store !== primary || ownMemory;
   const label = (store: MountedStore, id: string): string => qualify(store.name, id);
   const storeList = extras.map((s) => `${s.name}${s.write ? "" : " (read-only)"}`).join(", ");
+  const notHere = (ref: string) => text(`No page found: ${ref}`);
 
   // Where a write lands. The user's own memory unless a shared store is named in
   // `store`: a page id carrying a store prefix is not enough on its own, so a
@@ -148,6 +162,12 @@ export function registerTools(server: McpServer, rt: Runtime, opts: { localSurfa
         `"${ref}" is a page of the shared store "${at.store.name}"; writing there shares it with everyone who has ` +
           `access to that store. Pass store: "${at.store.name}" if the user asked for that, or use a bare page id ` +
           "to write to their own memory. Nothing was written.",
+      );
+    }
+    if (!reachable(store)) {
+      throw new Error(
+        `This connection cannot write to the user's own memory. Shared stores it can reach: ${storeList || "none"}; ` +
+          "pass store to write to one of them. Nothing was written.",
       );
     }
     if (!store.write) throw new Error(`Store "${store.name}" is read-only here. Nothing was written.`);
@@ -181,6 +201,7 @@ export function registerTools(server: McpServer, rt: Runtime, opts: { localSurfa
       },
     },
     async ({ match }) => {
+      if (!ownMemory) return text("This connection cannot change the user's voice.");
       const res = await retractCorrection(paths, match);
       if (res.status === "none") return text(`No correction matches "${match}".`);
       if (res.status === "ambiguous") {
@@ -311,6 +332,7 @@ export function registerTools(server: McpServer, rt: Runtime, opts: { localSurfa
     },
     async ({ page: ref, section, full }) => {
       const { store, page } = locate(ref);
+      if (!reachable(store)) return notHere(ref);
       const raw = await readPageRaw(store.paths, page);
       if (raw === null) return text(`No page found: ${ref}`);
       // A page about a project usually covers only the part its documentation
@@ -413,6 +435,7 @@ export function registerTools(server: McpServer, rt: Runtime, opts: { localSurfa
       // stays in its own. The primary has no prefix, so nothing outside it can
       // link into it.
       const { store, page } = locate(ref);
+      if (!reachable(store)) return notHere(ref);
       const id = pageId(page);
       const self = await readPage(store.paths, id);
       const links = self
@@ -454,6 +477,7 @@ export function registerTools(server: McpServer, rt: Runtime, opts: { localSurfa
     },
     async ({ page: ref, limit }) => {
       const { store, page } = locate(ref);
+      if (!reachable(store)) return notHere(ref);
       if (!store.config.git) return text("This store is not versioned, so there is no history to show.");
       const path = await resolvePagePath(store.paths, page);
       if (!path) return text(`No page found: ${ref}`);
@@ -475,11 +499,14 @@ export function registerTools(server: McpServer, rt: Runtime, opts: { localSurfa
         "'replace' (the default, for backwards compatibility) makes your content the ENTIRE page: everything already there is gone. " +
         "Use 'replace' only when you are rewriting a page whose current text you have just read. A replace that would destroy most of an existing page is refused; " +
         "the error tells you how to proceed deliberately. Content may include YAML frontmatter (title/status/tags); 'updated' is set automatically and existing frontmatter is preserved." +
-        (multi
-          ? ` Writes go to the user's own memory. Shared stores are mounted too (${storeList}): pass \`store\` to write there, ` +
-            "and only when the user asks for something to be shared, because everyone with access to that store reads it. " +
-            "The never-store list applies to every store."
-          : ""),
+        (!ownMemory
+          ? ` This connection writes only to shared stores (${storeList}): pass \`store\`. Everyone with access to a store reads ` +
+            "what is written there. The never-store list applies to every store."
+          : multi
+            ? ` Writes go to the user's own memory. Shared stores are mounted too (${storeList}): pass \`store\` to write there, ` +
+              "and only when the user asks for something to be shared, because everyone with access to that store reads it. " +
+              "The never-store list applies to every store."
+            : ""),
       inputSchema: {
         page: z.string().describe("Page id, kebab-case, e.g. 'atlas-app'"),
         content: z.string().describe("Markdown body (optionally with frontmatter)"),
@@ -537,6 +564,7 @@ export function registerTools(server: McpServer, rt: Runtime, opts: { localSurfa
       inputSchema: { note: z.string().describe("The correction, in the user's words") },
     },
     async ({ note }) => {
+      if (!ownMemory) return text("Nothing saved: this connection cannot change the user's voice.");
       const res = await appendCorrection(paths, note);
       if (res.status === "empty") return text("Nothing saved: the correction was empty.");
       if (res.status === "too-long") {
@@ -569,6 +597,7 @@ export function registerTools(server: McpServer, rt: Runtime, opts: { localSurfa
     },
     async ({ page: ref }) => {
       const { store, page } = locate(ref);
+      if (!reachable(store)) return notHere(ref);
       if (!store.write) return text(`Store "${store.name}" is read-only here; ${ref} was not archived.`);
       const moved = await archivePage(store.paths, page);
       if (!moved) return text(`No page found: ${ref}`);
@@ -597,6 +626,17 @@ export function registerTools(server: McpServer, rt: Runtime, opts: { localSurfa
       },
     },
     async ({ mode }) => {
+      if (!ownMemory) {
+        const stores: Record<string, unknown> = {};
+        for (const s of extras) {
+          try {
+            stores[s.name!] = await runMaintenance(s.paths, s.indexer, s.config, mode ?? "auto");
+          } catch (err) {
+            stores[s.name!] = { error: (err as Error).message };
+          }
+        }
+        return json({ stores });
+      }
       const report = await runMaintenance(paths, indexer, config, mode ?? "auto");
       if (!multi) return json(report);
       // Each mounted store on its own; one failing does not hide the others.

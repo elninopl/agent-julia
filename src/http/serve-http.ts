@@ -6,6 +6,9 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { hostHeaderValidation } from "@modelcontextprotocol/sdk/server/middleware/hostHeaderValidation.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
+import { requireBearerAuth } from "@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js";
+import type { OAuthTokenVerifier } from "@modelcontextprotocol/sdk/server/auth/provider.js";
+import { StaticTokenVerifier, readTokens } from "./tokens.js";
 import { ServerConfig, serverSettings } from "../config/schema.js";
 import { Runtime, buildRuntime } from "../runtime.js";
 import { StoreMaintenance, createMcpServer, packageVersion, primaryStore, pullAndMaintain } from "../server.js";
@@ -41,7 +44,8 @@ export function refuseSettings(s: ServerConfig): string | null {
     }
     return null;
   }
-  return `server.auth "${s.auth}" is not available in this version yet; use "none" on loopback`;
+  if (s.auth === "bearer") return null;
+  return `server.auth "${s.auth}" is not available in this version yet; use "bearer" or "none"`;
 }
 
 // What the HTTP server knows about its own housekeeping, for /healthz.
@@ -55,6 +59,9 @@ interface Session {
   transport: StreamableHTTPServerTransport;
   server: McpServer;
   lastSeen: number;
+  // Who opened it. Every later request must come from the same client: a
+  // session opened with a full token must not be usable with a narrow one.
+  clientId: string | null;
 }
 
 export interface HttpHandle {
@@ -89,15 +96,22 @@ function localOnly(req: Request, res: Response, next: NextFunction): void {
   next();
 }
 
-export async function listenHttp(rt: Runtime, settings: ServerConfig, state = new ServerState()): Promise<HttpHandle> {
+export async function listenHttp(
+  rt: Runtime,
+  settings: ServerConfig,
+  state = new ServerState(),
+  deps: { verifier?: OAuthTokenVerifier } = {},
+): Promise<HttpHandle> {
   const refusal = refuseSettings(settings);
   if (refusal) throw new Error(refusal);
+  const verifier = settings.auth === "none" ? null : (deps.verifier ?? new StaticTokenVerifier());
 
   const app = express();
   app.disable("x-powered-by");
   app.use(hostHeaderValidation(allowedHosts(settings)));
   if (settings.auth === "none") app.use(localOnly);
   app.use(express.json({ limit: BODY_LIMIT }));
+  if (verifier) app.use("/mcp", requireBearerAuth({ verifier }));
 
   const sessions = new Map<string, Session>();
 
@@ -113,13 +127,17 @@ export async function listenHttp(rt: Runtime, settings: ServerConfig, state = ne
   // one embedding process, and the store lock to order their writes.
   app.post("/mcp", async (req: Request, res: Response) => {
     const id = req.header("mcp-session-id");
+    const clientId = req.auth?.clientId ?? null;
     let session = id ? sessions.get(id) : undefined;
+    if (session && session.clientId !== clientId) session = undefined;
     if (!session) {
       if (id) return rpcError(res, 404, "Session not found");
       if (!isInitializeRequest(req.body)) return rpcError(res, 400, "Bad Request: no session; send initialize first");
-      const server = await createMcpServer(rt, { localSurfaces: false });
+      const scope = req.auth?.extra?.stores as string[] | undefined;
+      const server = await createMcpServer(rt, { localSurfaces: false, ...(scope ? { scope } : {}) });
       const fresh: Session = {
         server,
+        clientId,
         lastSeen: Date.now(),
         transport: new StreamableHTTPServerTransport({
           sessionIdGenerator: () => randomUUID(),
@@ -140,7 +158,8 @@ export async function listenHttp(rt: Runtime, settings: ServerConfig, state = ne
 
   const existing = async (req: Request, res: Response) => {
     const id = req.header("mcp-session-id");
-    const session = id ? sessions.get(id) : undefined;
+    const found = id ? sessions.get(id) : undefined;
+    const session = found && found.clientId === (req.auth?.clientId ?? null) ? found : undefined;
     if (!session) return rpcError(res, id ? 404 : 400, id ? "Session not found" : "Bad Request: no session id");
     session.lastSeen = Date.now();
     await session.transport.handleRequest(req, res);
@@ -148,7 +167,17 @@ export async function listenHttp(rt: Runtime, settings: ServerConfig, state = ne
   app.get("/mcp", existing);
   app.delete("/mcp", existing);
 
-  app.get("/healthz", async (_req: Request, res: Response) => {
+  // Open to anyone: whether the server is up, and which version. The rest
+  // (store names, write times, push state) needs a valid token.
+  app.get("/healthz", async (req: Request, res: Response) => {
+    if (verifier) {
+      const bearer = /^Bearer (.+)$/i.exec(req.headers.authorization ?? "")?.[1];
+      const ok = bearer ? await verifier.verifyAccessToken(bearer).then(() => true, () => false) : false;
+      if (!ok) {
+        res.status(200).json({ ok: true, version: await packageVersion() });
+        return;
+      }
+    }
     const stores = await Promise.all(
       [primaryStore(rt), ...(rt.stores ?? [])].map(async (s) => {
         const mtime = await latestStoreMtime(s.paths).catch(() => 0);
@@ -226,6 +255,15 @@ export async function startHttpServer(overrides: { host?: string; port?: number 
   const rt = await buildRuntime();
   const settings: ServerConfig = { ...serverSettings(rt.config), ...overrides };
   const state = new ServerState();
+  if (settings.auth === "bearer") {
+    const tokens = await readTokens().catch(() => []);
+    if (tokens.length === 0) {
+      warn("server.auth is \"bearer\" and no token exists yet, so nobody can connect. Add one: agent-julia server token add <name>");
+    }
+    if (!isLoopbackHost(settings.host) && !settings.publicUrl) {
+      warn(`listening on ${settings.host} without a publicUrl: tokens travel in clear text unless a TLS proxy is in front`);
+    }
+  }
   const handle = await listenHttp(rt, settings, state);
   log(
     `agent-julia serving "${rt.config.name}" over HTTP at ${handle.url}/mcp — memory: ${rt.config.memoryDir}` +
