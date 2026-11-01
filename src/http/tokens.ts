@@ -95,7 +95,12 @@ export async function revokeToken(nameOrId: string, file = tokensFile()): Promis
 export class StaticTokenVerifier implements OAuthTokenVerifier {
   private cache: { mtimeMs: number; tokens: TokenRecord[] } | null = null;
 
-  constructor(private readonly file = tokensFile()) {}
+  // `resource`: the URL these tokens are good for. Set when the server also
+  // speaks OAuth, whose middleware checks every token against its resource.
+  constructor(
+    private readonly file = tokensFile(),
+    private readonly resource?: URL,
+  ) {}
 
   private async current(): Promise<TokenRecord[]> {
     const mtimeMs = await stat(this.file).then((s) => s.mtimeMs, () => -1);
@@ -127,6 +132,7 @@ export class StaticTokenVerifier implements OAuthTokenVerifier {
       // These tokens do not expire; the middleware wants a time all the same.
       expiresAt: Math.floor(Date.now() / 1000) + 3600,
       extra: { name: record.name, ...(record.stores ? { stores: record.stores } : {}) },
+      ...(this.resource ? { resource: this.resource } : {}),
     };
   }
 }

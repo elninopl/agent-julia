@@ -21,6 +21,13 @@ changes, which always ship an automatic, backup-protected data migration.
   `agent-julia server token add|list|revoke`. Stored hashed, reloaded on
   change, optionally limited to some stores; a session stays with the token
   that opened it.
+- **Claude.ai and mobile as a custom connector.** With `auth: "oauth"` and
+  a `publicUrl`, the HTTP server is its own OAuth authorization server:
+  dynamic client registration, PKCE, a consent page guarded by an owner
+  password (`agent-julia server set-owner`), hourly access tokens and
+  rotating refresh tokens kept hashed across restarts.
+  `agent-julia server oauth list|revoke` shows and cuts off connected apps.
+  Bearer tokens keep working next to it.
 - **Shared stores.** `stores` in the config mounts other agent-julia stores
   next to your own. Their pages are `name:page`; `search` and `list` cover
   all of them and rank them as one store; `read`, `history`, `related` and

@@ -17,6 +17,8 @@ Usage:
   agent-julia serve      Start the MCP stdio server (default; used by Claude clients)
   agent-julia serve --http [--host h] [--port n]  Run as a long-lived HTTP server for many clients (see "Run as a server")
   agent-julia server token add <name> [--stores a,b] | list | revoke <name>  Manage the server's bearer tokens
+  agent-julia server set-owner  Set the password that approves OAuth connections (claude.ai)
+  agent-julia server oauth list | revoke <client-id|all>  See or cut off the apps connected over OAuth
   agent-julia init       Run the interactive setup wizard
   agent-julia sync       Re-apply MCP registration + persona core + shipped skills (--print shows the steps; --absorb-all also brings in a large Claude Code memory)
   agent-julia uninstall  Remove the managed persona blocks, MCP registration, and shipped skills
@@ -76,8 +78,39 @@ async function main(): Promise<void> {
     }
     case "server": {
       const [sub, verb, arg] = process.argv.slice(3);
+      if (sub === "set-owner") {
+        const { readPassword, setOwnerPassword, ownerFile, ownerIsSet } = await import("./http/owner.js");
+        const replacing = ownerIsSet();
+        const first = await readPassword("Owner password (12+ characters): ");
+        if (process.stdin.isTTY && (await readPassword("Again: ")) !== first) throw new Error("the passwords differ");
+        await setOwnerPassword(first);
+        console.log(`Owner password ${replacing ? "changed" : "set"} (kept hashed in ${ownerFile()}).`);
+        if (replacing) console.log("Apps already connected stay connected. To cut them off: agent-julia server oauth revoke all");
+        break;
+      }
+      if (sub === "oauth" && (verb === "list" || verb === "revoke")) {
+        const { listOAuthClients, revokeOAuthClients, oauthFile } = await import("./http/oauth.js");
+        if (verb === "list") {
+          const clients = listOAuthClients();
+          if (clients.length === 0) console.log(`No OAuth clients (${oauthFile()}).`);
+          for (const c of clients) {
+            console.log(
+              `${c.id}  ${c.name}  registered ${c.registeredAt.slice(0, 10)}  ` +
+                (c.lastUsedAt ? `last used ${c.lastUsedAt.slice(0, 10)}, ${c.grants} active grant(s)` : "never used"),
+            );
+          }
+          break;
+        }
+        if (!arg) throw new Error("agent-julia server oauth revoke needs a client id (see `server oauth list`) or all");
+        const n = await revokeOAuthClients(arg);
+        console.log(n > 0 ? `Revoked ${n} client(s); they have to be approved again.` : `No client matches "${arg}".`);
+        break;
+      }
       if (sub !== "token" || !["add", "list", "revoke"].includes(verb ?? "")) {
-        console.log("Usage: agent-julia server token add <name> [--stores primary,team] | list | revoke <name>");
+        console.log(
+          "Usage:\n  agent-julia server token add <name> [--stores primary,team] | list | revoke <name>\n" +
+            "  agent-julia server set-owner\n  agent-julia server oauth list | revoke <client-id|all>",
+        );
         break;
       }
       const { addToken, readTokens, revokeToken, tokensFile, PRIMARY_SCOPE } = await import("./http/tokens.js");

@@ -8,7 +8,11 @@ import { hostHeaderValidation } from "@modelcontextprotocol/sdk/server/middlewar
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { requireBearerAuth } from "@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js";
 import type { OAuthTokenVerifier } from "@modelcontextprotocol/sdk/server/auth/provider.js";
+import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
+import { getOAuthProtectedResourceMetadataUrl, mcpAuthRouter } from "@modelcontextprotocol/sdk/server/auth/router.js";
 import { StaticTokenVerifier, readTokens } from "./tokens.js";
+import { OwnerOAuthProvider } from "./oauth.js";
+import { ownerIsSet } from "./owner.js";
 import { ServerConfig, serverSettings } from "../config/schema.js";
 import { Runtime, buildRuntime } from "../runtime.js";
 import { StoreMaintenance, createMcpServer, packageVersion, primaryStore, pullAndMaintain } from "../server.js";
@@ -45,7 +49,35 @@ export function refuseSettings(s: ServerConfig): string | null {
     return null;
   }
   if (s.auth === "bearer") return null;
-  return `server.auth "${s.auth}" is not available in this version yet; use "bearer" or "none"`;
+  if (!s.publicUrl) {
+    return `server.auth is "oauth" and server.publicUrl is not set: OAuth clients need the address they reach the server at`;
+  }
+  const url = new URL(s.publicUrl);
+  if (url.protocol !== "https:" && !isLoopbackHost(url.hostname)) {
+    return `server.publicUrl must be https for OAuth (got ${s.publicUrl})`;
+  }
+  if (url.pathname !== "/" || url.search || url.hash) {
+    return `server.publicUrl must be an origin with no path for OAuth, e.g. https://julia.example.com (got ${s.publicUrl})`;
+  }
+  return null;
+}
+
+// Where /mcp is reached from outside, without a trailing slash.
+export function publicOrigin(s: ServerConfig): string | null {
+  return s.publicUrl ? new URL(s.publicUrl).origin : null;
+}
+
+// Static tokens and OAuth tokens on one server. The prefix says which kind a
+// token is, so a token is checked against one store only.
+class EitherVerifier implements OAuthTokenVerifier {
+  constructor(
+    private readonly tokens: OAuthTokenVerifier,
+    private readonly oauth: OAuthTokenVerifier,
+  ) {}
+
+  verifyAccessToken(token: string): Promise<AuthInfo> {
+    return token.startsWith("aj_") ? this.tokens.verifyAccessToken(token) : this.oauth.verifyAccessToken(token);
+  }
 }
 
 // What the HTTP server knows about its own housekeeping, for /healthz.
@@ -100,18 +132,57 @@ export async function listenHttp(
   rt: Runtime,
   settings: ServerConfig,
   state = new ServerState(),
-  deps: { verifier?: OAuthTokenVerifier } = {},
+  deps: { verifier?: OAuthTokenVerifier; oauth?: OwnerOAuthProvider } = {},
 ): Promise<HttpHandle> {
   const refusal = refuseSettings(settings);
   if (refusal) throw new Error(refusal);
-  const verifier = settings.auth === "none" ? null : (deps.verifier ?? new StaticTokenVerifier());
 
   const app = express();
   app.disable("x-powered-by");
   app.use(hostHeaderValidation(allowedHosts(settings)));
   if (settings.auth === "none") app.use(localOnly);
+
+  let verifier: OAuthTokenVerifier | null = null;
+  let resourceMetadataUrl: string | undefined;
+  let expectedResource: URL | undefined;
+  if (settings.auth === "oauth") {
+    const origin = publicOrigin(settings)!;
+    const resource = new URL(`${origin}/mcp`);
+    const provider =
+      deps.oauth ?? new OwnerOAuthProvider({ resource, displayName: `${rt.config.name} (agent-julia)` });
+    // Behind a reverse proxy on this machine, the client address and scheme
+    // come from its headers. Rate limits count per client, not per proxy.
+    app.set("trust proxy", "loopback");
+    app.use(
+      mcpAuthRouter({
+        provider,
+        issuerUrl: new URL(origin),
+        resourceServerUrl: resource,
+        resourceName: `${rt.config.name} (agent-julia)`,
+        // Claude.ai keeps its registration for good: a client secret that
+        // expired would log it out with no way back but removing the connector.
+        clientRegistrationOptions: { clientSecretExpirySeconds: 0 },
+      }),
+    );
+    app.post("/oauth/consent", express.urlencoded({ extended: false, limit: "16kb" }), provider.consentHandler());
+    verifier = new EitherVerifier(deps.verifier ?? new StaticTokenVerifier(undefined, resource), provider);
+    resourceMetadataUrl = getOAuthProtectedResourceMetadataUrl(resource);
+    expectedResource = resource;
+  } else if (settings.auth === "bearer") {
+    verifier = deps.verifier ?? new StaticTokenVerifier();
+  }
+
   app.use(express.json({ limit: BODY_LIMIT }));
-  if (verifier) app.use("/mcp", requireBearerAuth({ verifier }));
+  if (verifier) {
+    app.use(
+      "/mcp",
+      requireBearerAuth({
+        verifier,
+        ...(resourceMetadataUrl ? { resourceMetadataUrl } : {}),
+        ...(expectedResource ? { expectedResource } : {}),
+      }),
+    );
+  }
 
   const sessions = new Map<string, Session>();
 
@@ -264,9 +335,15 @@ export async function startHttpServer(overrides: { host?: string; port?: number 
       warn(`listening on ${settings.host} without a publicUrl: tokens travel in clear text unless a TLS proxy is in front`);
     }
   }
+  if (settings.auth === "oauth" && !ownerIsSet()) {
+    warn("server.auth is \"oauth\" and no owner password is set, so no connection can be approved. Set one: agent-julia server set-owner");
+  }
   const handle = await listenHttp(rt, settings, state);
+  const reach = publicOrigin(settings);
   log(
-    `agent-julia serving "${rt.config.name}" over HTTP at ${handle.url}/mcp — memory: ${rt.config.memoryDir}` +
+    `agent-julia serving "${rt.config.name}" over HTTP at ${handle.url}/mcp` +
+      (reach ? ` (public: ${reach}/mcp)` : "") +
+      ` — memory: ${rt.config.memoryDir}` +
       (rt.stores?.length ? `, stores: ${rt.stores.map((s) => s.name).join(", ")}` : ""),
   );
 

@@ -151,6 +151,24 @@ agent-julia server token revoke laptop
 
 Clients send `Authorization: Bearer <token>`. Tokens are kept as SHA-256 hashes in `secrets/tokens.json` next to the config, readable by its owner only, and a running server picks up an added or revoked token without a restart. A token with `--stores` sees only those stores (`primary` is your own): the others are absent from `search`, `list` and `read`, it writes only with `store`, and it cannot change the voice. A session belongs to the token that opened it. Without a token, `/healthz` answers only whether the server is up and its version.
 
+**Claude.ai and the Claude mobile app** (`"auth": "oauth"`) connect as a custom connector, over OAuth. Claude.ai reaches the server from Anthropic's cloud, so it has to be reachable from the internet over HTTPS: put a reverse proxy or tunnel on the same machine in front of it (Caddy, nginx, `cloudflared`) and give its address as `publicUrl`.
+
+```json
+"server": { "auth": "oauth", "publicUrl": "https://julia.example.com" }
+```
+
+```sh
+agent-julia server set-owner     # the password that approves a connection
+agent-julia serve --http
+```
+
+Then in claude.ai: Settings → Connectors → Add custom connector, URL `https://julia.example.com/mcp`. Claude registers itself and opens the server's consent page, which names the app asking and where it will be sent back; type the owner password and allow. A connector added on the web is in the mobile app too. On a Team or Enterprise plan every member who connects goes through the same page, so they all need the owner password: this mode is for a server one person uses.
+
+- Access tokens last an hour and are refreshed without asking; a refresh token is replaced on every use and lapses after 90 days without one. Tokens are kept as hashes in `secrets/oauth.json`, readable by its owner only, so a restart logs nobody out.
+- `agent-julia server oauth list` shows the connected apps; `server oauth revoke <client-id>` (or `all`) cuts one off at once, running server included. Changing the owner password does not disconnect anyone by itself.
+- After ten wrong passwords within 15 minutes the consent page stops accepting any until the window passes.
+- Bearer tokens keep working next to OAuth, for the clients that are not Claude.
+
 ---
 
 ## Reference
@@ -297,6 +315,8 @@ The persona core is also exposed as a resource (`agent-julia://core`) for client
 | --- | --- |
 | `agent-julia serve` | Start the MCP server (default; used by the Claude apps) |
 | `agent-julia server token add <name> [--stores a,b]` | Make a bearer token for the HTTP server (`list`, `revoke <name>` too) |
+| `agent-julia server set-owner` | Set the password that approves OAuth connections such as claude.ai |
+| `agent-julia server oauth list` | List the apps connected over OAuth (`revoke <client-id\|all>` cuts them off) |
 | `agent-julia serve --http` | Run one long-lived HTTP server for many sessions and machines (see [Run as a server](#run-as-a-server)) |
 | `agent-julia init` | Run the setup wizard |
 | `agent-julia sync` | Re-apply registration, the persona block, the shipped skills and the Claude Code memory handling (`codeMemory`) for the current config. `--print` shows the exact changes instead of making them; `--absorb-all` also brings in directories holding more than 25 facts |
