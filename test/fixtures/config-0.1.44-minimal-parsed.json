@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "name": "Julia",
+  "gender": "f",
+  "pronouns": "she/her",
+  "language": "en",
+  "stylePreset": "sharp-cofounder",
+  "memoryDir": "/home/ada/memory",
+  "git": true,
+  "gitAutoPush": false,
+  "search": "hybrid",
+  "embedding": {
+    "provider": "none",
+    "apiKeyEnv": "AGENT_JULIA_EMBED_API_KEY"
+  },
+  "contextBudget": 1200,
+  "surfaces": [
+    "code",
+    "cowork"
+  ],
+  "exports": [],
+  "weeklyMaintenance": "cowork-task",
+  "codeMemory": "pointer",
+  "privacyHardOff": [
+    "passwords, API keys, tokens, access secrets",
+    "card numbers, bank account numbers, IBANs, exact financial amounts",
+    "third-party private data without consent"
+  ]
+}
