@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { appendFileSync, existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -159,6 +159,13 @@ describe("capture hooks", () => {
     expect(call.guard).toBe("1");
     expect(call.args).toEqual(expect.arrayContaining(["-p", "--strict-mcp-config", "--mcp-config", "--allowedTools", "--settings"]));
     expect(call.args.join(" ")).toContain("mcp__agent-julia__ingest");
+    // No built-in tools, and nothing outside the allowed list may run.
+    expect(call.args[call.args.indexOf("--tools") + 1]).toBe("");
+    expect(call.args[call.args.indexOf("--permission-mode") + 1]).toBe("dontAsk");
+    if (process.platform !== "win32") {
+      expect(statSync(join(t.dir, "extract")).mode & 0o777).toBe(0o700);
+      expect(statSync(join(t.dir, "extract", "s-2.json")).mode & 0o777).toBe(0o600);
+    }
     expect(call.input).toContain("USER: We decided to launch Atlas in March");
     expect(call.input).toContain("ASSISTANT: Noted.");
     expect(call.input).not.toContain("SECRET TOOL OUTPUT");

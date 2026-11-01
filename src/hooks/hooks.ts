@@ -45,9 +45,13 @@ interface InstallRecord {
 
 function findClaude(): string[] {
   try {
-    const out = execFileSync(process.platform === "win32" ? "where" : "which", ["claude"], { encoding: "utf8" });
-    const first = out.split(/\r?\n/).find((l) => l.trim());
-    if (first) return [first.trim()];
+    const win = process.platform === "win32";
+    const out = execFileSync(win ? "where" : "which", ["claude"], { encoding: "utf8" });
+    const lines = out.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    // An npm install on Windows lists a shell script with no extension first,
+    // which cmd cannot run; the .cmd or .exe next to it can.
+    const pick = win ? lines.find((l) => /\.(exe|cmd)$/i.test(l)) : lines[0];
+    if (pick) return [pick];
   } catch {
     // not on PATH here; the hook's own PATH may still have it
   }

@@ -16,7 +16,7 @@ export interface HookConstants {
   model: string;
 }
 
-export const HOOK_SCRIPT_VERSION = 1;
+export const HOOK_SCRIPT_VERSION = 2;
 export const HOOK_SCRIPT_NAME = "agent-julia-hook.mjs";
 
 export function hookScript(c: HookConstants): string {
@@ -44,10 +44,14 @@ if (process.env.AGENT_JULIA_HOOK_CHILD === "1") process.exit(0);
 
 const mode = process.argv[2];
 
+// Session text passes through these files: readable by the user alone.
+const PRIVATE = { mode: 0o600 };
+const mkdirPrivate = (dir) => mkdirSync(dir, { recursive: true, mode: 0o700 });
+
 function log(line) {
   try {
     if (existsSync(C.logFile) && statSync(C.logFile).size > 1024 * 1024) renameSync(C.logFile, C.logFile + ".1");
-    appendFileSync(C.logFile, new Date().toISOString() + " " + line + "\n");
+    appendFileSync(C.logFile, new Date().toISOString() + " " + line + "\n", PRIVATE);
   } catch {}
 }
 
@@ -97,7 +101,7 @@ async function onPrompt() {
     lines.push("agent-julia: this message may correct how you write or speak. If it does, call correct_voice with the rule before you reply, then confirm it is saved.");
   }
   const dir = join(C.stateDir, "sessions");
-  mkdirSync(dir, { recursive: true });
+  mkdirPrivate(dir);
   const file = join(dir, safeId(input.session_id) + ".json");
   const s = readJson(file, { turns: 0, nudgedAt: 0 });
   s.turns += 1;
@@ -105,7 +109,7 @@ async function onPrompt() {
     lines.push("agent-julia: " + (s.turns - s.nudgedAt) + " turns since the last reminder. If this session produced a durable fact, decision or preference that is not saved yet, ingest it now and say so in one line.");
     s.nudgedAt = s.turns;
   }
-  writeFileSync(file, JSON.stringify(s));
+  writeFileSync(file, JSON.stringify(s), PRIVATE);
   prune(dir, 14);
   if (lines.length) {
     process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: lines.join("\n") } }));
@@ -157,31 +161,34 @@ async function onExtract() {
   const file = input.transcript_path;
   if (!file || !existsSync(file)) return;
   const dir = join(C.stateDir, "extract");
-  mkdirSync(dir, { recursive: true });
+  mkdirPrivate(dir);
   const mark = join(dir, safeId(input.session_id) + ".json");
   const done = readJson(mark, { offset: 0 });
   const { text, end } = digest(file, done.offset);
-  writeFileSync(mark, JSON.stringify({ offset: end, at: new Date().toISOString() }));
+  writeFileSync(mark, JSON.stringify({ offset: end, at: new Date().toISOString() }), PRIVATE);
   prune(dir, 30);
   if (text.length < 400) return;
   const MAX = 80000;
   const body = text.length > MAX ? text.slice(text.length - MAX) : text;
   const job = join(dir, safeId(input.session_id) + "-" + Date.now() + ".job");
-  writeFileSync(job, INSTRUCTION + body);
+  writeFileSync(job, INSTRUCTION + body, PRIVATE);
   const child = spawn(process.execPath, [process.argv[1], "run", job], { detached: true, stdio: "ignore", windowsHide: true });
   child.unref();
   log("extract queued: session " + safeId(input.session_id) + " (" + (input.hook_event_name || "?") + "), " + body.length + " chars");
 }
 
-// Detached from the session: runs claude over one job, time-boxed.
+// Detached from the session: runs claude over one job, time-boxed. The
+// session text can carry anything pasted into it, so the child gets no
+// built-in tools at all and may call nothing but the four memory tools.
 function onRun(job) {
   const [cmd, ...pre] = C.claudeCommand;
-  const args = [...pre, "-p", "--model", C.model, "--strict-mcp-config", "--mcp-config", C.mcpConfigFile,
+  const args = [...pre, "-p", "--model", C.model, "--tools", "", "--permission-mode", "dontAsk",
+    "--strict-mcp-config", "--mcp-config", C.mcpConfigFile,
     "--allowedTools", "mcp__agent-julia__search,mcp__agent-julia__read,mcp__agent-julia__ingest,mcp__agent-julia__correct_voice",
     "--disallowedTools", "mcp__agent-julia__archive,mcp__agent-julia__retract_correction,mcp__agent-julia__maintenance",
     "--settings", C.childSettingsFile];
   const win = process.platform === "win32";
-  const quoted = win ? args.map((a) => (/[\s"]/.test(a) ? '"' + a.replace(/"/g, '\\"') + '"' : a)) : args;
+  const quoted = win ? args.map((a) => (a === "" || /[\s"]/.test(a) ? '"' + a.replace(/"/g, '\\"') + '"' : a)) : args;
   const child = spawn(win && !/\.exe$/i.test(cmd) ? '"' + cmd + '"' : cmd, quoted, {
     cwd: C.stateDir,
     env: { ...process.env, AGENT_JULIA_HOOK_CHILD: "1" },
