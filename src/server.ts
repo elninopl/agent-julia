@@ -14,6 +14,7 @@ import { waitForIdle, withStoreLock } from "./store/lock.js";
 import { installSkills, skillsTargetDir } from "./skills/install.js";
 import { refreshInjectedCore } from "./wizard/register.js";
 import { refreshExports } from "./export/export.js";
+import { refreshHookScript } from "./hooks/hooks.js";
 import { log, warn } from "./util/log.js";
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -156,6 +157,7 @@ async function runStartupTasks(rt: Runtime): Promise<void> {
         // bring in whatever was written there instead of here. Skipped when
         // neither the store nor those directories changed since the last run.
         code: await adoptCodeMemoryIfChanged(rt.paths, rt.indexer, rt.config),
+        hooks: await refreshHookScript(rt.config).catch(() => false),
       }),
       { name: "refresh" },
     );

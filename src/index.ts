@@ -20,6 +20,7 @@ Usage:
   agent-julia server token add <name> [--stores a,b] | list | revoke <name>  Manage the server's bearer tokens
   agent-julia server set-owner  Set the password that approves OAuth connections (claude.ai)
   agent-julia server oauth list | revoke <client-id|all>  See or cut off the apps connected over OAuth
+  agent-julia hooks install | uninstall | status  Claude Code hooks that remind the agent to save, and save what a session left out
   agent-julia init       Run the interactive setup wizard
   agent-julia sync       Re-apply MCP registration + persona core + shipped skills (--print shows the steps; --absorb-all also brings in a large Claude Code memory)
   agent-julia uninstall  Remove the managed persona blocks, MCP registration, and shipped skills
@@ -169,6 +170,33 @@ async function main(): Promise<void> {
       const { token } = await addToken(arg, stores);
       console.log(`Token "${arg}"${stores ? ` for ${stores.join(", ")}` : ""}. Shown once, store it now:\n\n${token}\n`);
       console.log(`Clients send it as: Authorization: Bearer <token>. Kept hashed in ${tokensFile()}.`);
+      break;
+    }
+    case "hooks": {
+      const verb = process.argv[3];
+      const cfg = await loadConfig();
+      const { installHooks, uninstallHooks, hookStatus } = await import("./hooks/hooks.js");
+      if (verb === "install") {
+        const res = await installHooks(cfg);
+        console.log(`Hooks ${res.settingsChanged ? "written to" : "already in"} ${res.settingsFile}: ${res.events.join(", ")}.`);
+        console.log("Every prompt: a reminder to call correct_voice when you correct the voice, and to ingest every " +
+          `${res.config.capture?.nudgeEveryTurns ?? 10} turns.`);
+        if (res.events.includes("PreCompact")) {
+          console.log("Before a compaction and at the end of a session, a background `claude -p` reads what was said and saves " +
+            "what the session did not. It runs on your Claude plan; set capture.extractOnCompact to false to turn it off.");
+        }
+        console.log("Restart Claude Code sessions to pick them up.");
+      } else if (verb === "uninstall") {
+        const res = await uninstallHooks(cfg);
+        console.log(res.settingsChanged ? `Removed agent-julia hooks from ${res.settingsFile}.` : `No agent-julia hooks in ${res.settingsFile}.`);
+      } else if (verb === "status") {
+        const st = await hookStatus(cfg);
+        console.log(`capture.hooks: ${st.enabled ? "on" : "off"}`);
+        console.log(`settings: ${st.settingsFile} — ${st.events.length ? st.events.join(", ") : "no agent-julia hooks"}`);
+        console.log(`script: ${st.script}${st.claude ? ` · claude: ${st.claude}` : ""}`);
+      } else {
+        console.log("Usage: agent-julia hooks install | uninstall | status");
+      }
       break;
     }
     case "init":

@@ -122,6 +122,25 @@ agent-julia ships one skill, installed into `~/.claude/skills/` (which both Clau
 
 The skill starts only when you ask for it (or accept a one-line offer). Your own skill under the same name is never overwritten: installs and uninstalls only touch copies carrying the `author: agent-julia` marker.
 
+## Capture hooks
+
+The agent saves what it is told to save and, on a good day, what it notices. Both slip in a long session. `agent-julia hooks install` adds three Claude Code hooks that catch what slips, without touching any hook of yours:
+
+- **On every prompt** (`UserPromptSubmit`): when your message reads like a correction of the voice ("don't say", "nie pisz", "sounds off", "zamiast"), a one-line reminder to call `correct_voice` before replying. Every `nudgeEveryTurns` turns (10 by default), a one-line reminder to `ingest` what the session decided.
+- **Before a compaction and at the end of a session** (`PreCompact`, `SessionEnd`): a background `claude -p` reads what was said since the last pass, searches the memory, and saves the durable facts and voice corrections the session left out. It can only search, read, `ingest` and `correct_voice`, runs with hooks off, gives up after five minutes, and never holds up your session. What it did goes to `hooks.log` next to the config.
+
+```sh
+agent-julia hooks install     # or: uninstall, status
+```
+
+```json
+"capture": { "hooks": true, "nudgeEveryTurns": 10, "extractOnCompact": true }
+```
+
+- The hooks go into `settings.json` of the Claude Code account in use (`$CLAUDE_CONFIG_DIR`, else `~/.claude`), with a one-time backup. They run a small script next to the config with Node directly, so a prompt costs one Node start and no package download; the server keeps the script current with each update.
+- The background pass runs `claude -p` on your Claude plan, with Sonnet. Anthropic has changed how `claude -p` usage counts against plans before and may again; set `extractOnCompact` to `false` to keep only the reminders.
+- It works the same on a machine connected to a server: the pass saves through the relay.
+
 ## Beyond Claude
 
 The persona you built is not locked to Claude. `agent-julia export codex` writes it into `~/.codex/AGENTS.md`, `export gemini` into `~/.gemini/GEMINI.md`, and `export <path>` into any AGENTS.md-style instruction file — as a marked, removable block, backed up on first touch, and **kept refreshed by the server on every boot** (a voice correction you make in Claude reaches Codex on its next session). The export carries the persona itself — identity, voice, corrections, privacy rail — without the Claude-specific memory instructions; attach the same MCP server in the other tool if it supports MCP, and the memory follows too.
@@ -332,6 +351,7 @@ The persona core is also exposed as a resource (`agent-julia://core`) for client
 | `agent-julia serve --http` | Run one long-lived HTTP server for many sessions and machines (see [Run as a server](#run-as-a-server)) |
 | `agent-julia serve --remote [url]` | Relay to an agent-julia server instead of a local store; the default for `serve` when the config has `remote` |
 | `agent-julia init` | Run the setup wizard |
+| `agent-julia hooks install` | Add the [capture hooks](#capture-hooks) to Claude Code (`uninstall`, `status` too) |
 | `agent-julia sync` | Re-apply registration, the persona block, the shipped skills and the Claude Code memory handling (`codeMemory`) for the current config. `--print` shows the exact changes instead of making them; `--absorb-all` also brings in directories holding more than 25 facts |
 | `agent-julia uninstall` | Remove the managed blocks, registration, and shipped skills (backups are kept) |
 | `agent-julia search <query>` | Search your memory from the terminal (same hybrid index the agent uses) |
@@ -375,6 +395,7 @@ Settings live in `~/.config/agent-julia/config.json` and carry a `schemaVersion`
 | `server` | Optional, read only by `serve --http`: `host`, `port`, `publicUrl`, `auth`, `maintenanceEveryMinutes` (see [Run as a server](#run-as-a-server)) |
 | `remote` | Optional. The agent-julia server this machine connects to instead of keeping a store: `url`, `tokenEnv` (default `AGENT_JULIA_TOKEN`). `memoryDir` is then unused (see [Run as a server](#run-as-a-server)) |
 | `stores` | Optional. Other agent-julia stores mounted next to yours: `name`, `dir`, `write` (default off), `git`, `gitRemote`, `gitAutoPush` (see [Shared stores](#shared-stores)) |
+| `capture` | Optional: `hooks` (set by `hooks install`), `nudgeEveryTurns` (10), `extractOnCompact` (true), `serverNudge` (false) (see [Capture hooks](#capture-hooks)) |
 | `personaDir` | Optional. Read `persona.md` and `voice-corrections.md` from another agent-julia store instead of `memoryDir`, and record corrections there. For a process whose memory is a shared store but whose voice is yours. Corrections are committed in that store's repo; its own server pushes them |
 
 </details>

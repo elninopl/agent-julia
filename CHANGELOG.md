@@ -36,6 +36,14 @@ changes, which always ship an automatic, backup-protected data migration.
   seconds, not a hang. `agent-julia init` asks first whether memory lives
   on this machine or on a server; `doctor` checks reachability, the token
   and the version on both sides.
+- **Capture hooks** for Claude Code, opt-in with `agent-julia hooks
+  install|uninstall|status`. On each prompt: a reminder to call
+  `correct_voice` when the message reads like a voice correction, and to
+  `ingest` every `nudgeEveryTurns` turns. Before a compaction and at the
+  end of a session: a background `claude -p` reads the new part of the
+  transcript and saves what the session did not, with only search, read,
+  ingest and correct_voice allowed. Only the hooks it wrote are ever
+  changed; `CLAUDE_CONFIG_DIR` is honoured.
 - **Shared stores.** `stores` in the config mounts other agent-julia stores
   next to your own. Their pages are `name:page`; `search` and `list` cover
   all of them and rank them as one store; `read`, `history`, `related` and

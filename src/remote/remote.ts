@@ -23,6 +23,7 @@ import { IDENTITY_META, Identity, packageVersion, startParentWatchdog } from "..
 import { injectedCoreFrom, serverInstructions } from "../persona/startup.js";
 import { RefreshTarget, claudeCodeMemoryPath, coworkMirrorPath, refreshInjectedCore } from "../wizard/register.js";
 import { installSkills, skillsTargetDir } from "../skills/install.js";
+import { refreshHookScript } from "../hooks/hooks.js";
 import { withStoreLock } from "../store/lock.js";
 import { log, warn } from "../util/log.js";
 
@@ -377,6 +378,7 @@ export async function createRemoteProxy(config: Config, opts: RemoteProxyOptions
       opts.lockRoot ?? dirname(configPath()),
       async () => {
         const steps = o.skills && skillsDir ? await installSkills(skillsDir) : [];
+        if (o.skills) await refreshHookScript(config).catch(() => false);
         const cores = await refreshInjectedCore(cfg, targets, injectedCoreFrom(core.text));
         return { steps, cores };
       },
