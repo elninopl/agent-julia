@@ -1,7 +1,17 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { Runtime } from "../runtime.js";
-import { archivePage, listPages, readPage, readPageRaw, relatedPages, resolvePagePath } from "../store/markdown.js";
+import {
+  archivePage,
+  listPageIds,
+  listPages,
+  readPage,
+  readPageRaw,
+  relatedPages,
+  resolvePagePath,
+} from "../store/markdown.js";
+import { MountedStore, extractLinkRefs, linkTarget, qualify, splitStoreRef } from "../store/stores.js";
+import { searchStores } from "../index/multi-search.js";
 import { pageId } from "../store/paths.js";
 import { ingest } from "../store/ingest.js";
 import { refreshIndexMd } from "../store/catalog.js";
@@ -97,6 +107,49 @@ async function migrationNotice(client: string): Promise<string> {
 export function registerTools(server: McpServer, rt: Runtime): void {
   const { paths, indexer, config } = rt;
   const lastFetchRecord = new Map<string, { hash: string; at: number }>();
+
+  // Stores mounted next to the primary one. With none, `locate` hands every
+  // reference to the primary unchanged and `label` returns ids as they are, so
+  // each tool below runs exactly as it did before stores existed.
+  const extras = rt.stores ?? [];
+  const multi = extras.length > 0;
+  const primary: MountedStore = { name: null, paths, indexer, config, write: true };
+  const everyStore = [primary, ...extras];
+  const names: ReadonlySet<string> = new Set(extras.map((s) => s.name!));
+  const locate = (ref: string): { store: MountedStore; page: string } => {
+    if (!multi) return { store: primary, page: ref };
+    const { store, page } = splitStoreRef(ref, names);
+    return { store: store ? extras.find((s) => s.name === store)! : primary, page };
+  };
+  const label = (store: MountedStore, id: string): string => qualify(store.name, id);
+  const storeList = extras.map((s) => `${s.name}${s.write ? "" : " (read-only)"}`).join(", ");
+
+  // Where a write lands. The user's own memory unless a shared store is named in
+  // `store`: a page id carrying a store prefix is not enough on its own, so a
+  // model that found a shared page cannot write private facts into it by
+  // copying its id.
+  const pickWriteTarget = (ref: string, named: string | undefined): { store: MountedStore; page: string } => {
+    if (!multi) return { store: primary, page: ref };
+    const at = locate(ref);
+    const wanted = named?.trim().toLowerCase();
+    let store = primary;
+    if (wanted) {
+      const found = extras.find((s) => s.name === wanted);
+      if (!found) throw new Error(`No store named "${named}". Mounted: ${storeList}. Nothing was written.`);
+      if (at.store !== primary && at.store !== found) {
+        throw new Error(`"${ref}" belongs to store "${at.store.name}", not "${wanted}". Nothing was written.`);
+      }
+      store = found;
+    } else if (at.store !== primary) {
+      throw new Error(
+        `"${ref}" is a page of the shared store "${at.store.name}"; writing there shares it with everyone who has ` +
+          `access to that store. Pass store: "${at.store.name}" if the user asked for that, or use a bare page id ` +
+          "to write to their own memory. Nothing was written.",
+      );
+    }
+    if (!store.write) throw new Error(`Store "${store.name}" is read-only here. Nothing was written.`);
+    return { store, page: at.page };
+  };
 
   // Corrections live with the persona: the store itself, unless personaDir
   // points at another store. That one belongs to another server, so it is
@@ -209,7 +262,15 @@ export function registerTools(server: McpServer, rt: Runtime): void {
       },
     },
     async ({ limit, since }) => {
-      const all = await listPages(paths);
+      const all = multi
+        ? (
+            await Promise.all(
+              everyStore.map(async (s) =>
+                (await listPages(s.paths)).map((p) => (s.name ? { ...p, id: label(s, p.id), store: s.name } : p)),
+              ),
+            )
+          ).flat()
+        : await listPages(paths);
       const filtered = since ? all.filter((p) => (p.updated ?? "") >= since) : all;
       const sorted = [...filtered].sort((a, b) => (b.updated ?? "").localeCompare(a.updated ?? ""));
       const shown = sorted.slice(0, limit ?? 50);
@@ -245,23 +306,24 @@ export function registerTools(server: McpServer, rt: Runtime): void {
           .describe("Return the whole page even when it is long; needed before rewriting a long page with ingest 'replace'"),
       },
     },
-    async ({ page, section, full }) => {
-      const raw = await readPageRaw(paths, page);
-      if (raw === null) return text(`No page found: ${page}`);
+    async ({ page: ref, section, full }) => {
+      const { store, page } = locate(ref);
+      const raw = await readPageRaw(store.paths, page);
+      if (raw === null) return text(`No page found: ${ref}`);
       // A page about a project usually covers only the part its documentation
       // does not. Handing back the page without saying where the rest lives is
       // how an agent concludes the rest does not exist.
-      const parsed = await readPage(paths, page).catch(() => null);
+      const parsed = await readPage(store.paths, page).catch(() => null);
       const note = parsed ? await routingNoteFor(parsed.frontmatter) : null;
       const withNote = (out: string) => (note ? `${out.trimEnd()}\n\n---\n\n${note}\n` : out);
       const body = parsed?.body ?? raw;
 
       if (section) {
         const hit = extractSection(body, section);
-        if (hit) return text(withNote(`<!-- ${pageId(page)} › ${hit.heading} -->\n\n${hit.text}\n`));
+        if (hit) return text(withNote(`<!-- ${label(store, pageId(page))} › ${hit.heading} -->\n\n${hit.text}\n`));
         const toc = tableOfContents(body);
         return text(
-          `No section "${section}" on ${pageId(page)}.` +
+          `No section "${section}" on ${label(store, pageId(page))}.` +
             (toc.length
               ? ` Its sections:\n${toc
                   .slice(0, MAX_TOC)
@@ -316,14 +378,15 @@ export function registerTools(server: McpServer, rt: Runtime): void {
       },
     },
     async ({ query, limit }) => {
-      const hits = await indexer.search(query, limit ?? 8);
+      const hits = multi ? await searchStores(everyStore, query, limit ?? 8) : await indexer.search(query, limit ?? 8);
       // Routing travels with the hit: the moment a project's page ranks for a
       // question, the reader learns that part of the answer is in that
       // project's own documentation and how to reach it.
       return json(
         await Promise.all(
           hits.map(async (hit) => {
-            const page = await readPage(paths, hit.id).catch(() => null);
+            const at = locate(hit.id);
+            const page = await readPage(at.store.paths, at.page).catch(() => null);
             const note = page ? await routingNoteFor(page.frontmatter) : null;
             return note ? { ...hit, elsewhere: note } : hit;
           }),
@@ -341,7 +404,35 @@ export function registerTools(server: McpServer, rt: Runtime): void {
         "Pages connected to one page through [[wiki-links]]: what it links to, and what links back to it. Use to walk the knowledge graph around a topic.",
       inputSchema: { page: z.string().describe("Page id, e.g. 'atlas-app'") },
     },
-    async ({ page }) => json(await relatedPages(paths, page)),
+    async ({ page: ref }) => {
+      if (!multi) return json(await relatedPages(paths, ref));
+      // Across stores: a prefixed link crosses into a mounted store, a bare one
+      // stays in its own. The primary has no prefix, so nothing outside it can
+      // link into it.
+      const { store, page } = locate(ref);
+      const id = pageId(page);
+      const self = await readPage(store.paths, id);
+      const links = self
+        ? [...new Set(extractLinkRefs(self.body).map((r) => {
+            const t = linkTarget(r, store.name, names);
+            return qualify(t.store, t.id);
+          }))]
+        : [];
+      const backlinks: string[] = [];
+      for (const s of everyStore) {
+        for (const other of await listPageIds(s.paths)) {
+          if (s === store && other === id) continue;
+          const p = await readPage(s.paths, other);
+          if (!p) continue;
+          const pointsHere = extractLinkRefs(p.body).some((r) => {
+            const t = linkTarget(r, s.name, names);
+            return t.store === store.name && t.id === id;
+          });
+          if (pointsHere) backlinks.push(label(s, other));
+        }
+      }
+      return json({ links, backlinks });
+    },
   );
 
   server.registerTool(
@@ -358,14 +449,15 @@ export function registerTools(server: McpServer, rt: Runtime): void {
         limit: z.number().int().positive().max(30).optional().describe("How many changes (default 8)"),
       },
     },
-    async ({ page, limit }) => {
-      if (!config.git) return text("This store is not versioned, so there is no history to show.");
-      const path = await resolvePagePath(paths, page);
-      if (!path) return text(`No page found: ${page}`);
-      const rel = path.replace(`${paths.root}/`, "");
-      const changes = await pageHistory(paths.root, rel, limit ?? 8);
-      if (changes.length === 0) return text(`No recorded changes for ${page}.`);
-      return text(JSON.stringify({ page: pageId(page), changes }));
+    async ({ page: ref, limit }) => {
+      const { store, page } = locate(ref);
+      if (!store.config.git) return text("This store is not versioned, so there is no history to show.");
+      const path = await resolvePagePath(store.paths, page);
+      if (!path) return text(`No page found: ${ref}`);
+      const rel = path.replace(`${store.paths.root}/`, "");
+      const changes = await pageHistory(store.paths.root, rel, limit ?? 8);
+      if (changes.length === 0) return text(`No recorded changes for ${ref}.`);
+      return text(JSON.stringify({ page: label(store, pageId(page)), changes }));
     },
   );
 
@@ -379,7 +471,12 @@ export function registerTools(server: McpServer, rt: Runtime): void {
         "MODE MATTERS. 'append' adds your content under what the page already holds — this is what saving a new fact about an existing topic means. " +
         "'replace' (the default, for backwards compatibility) makes your content the ENTIRE page: everything already there is gone. " +
         "Use 'replace' only when you are rewriting a page whose current text you have just read. A replace that would destroy most of an existing page is refused; " +
-        "the error tells you how to proceed deliberately. Content may include YAML frontmatter (title/status/tags); 'updated' is set automatically and existing frontmatter is preserved.",
+        "the error tells you how to proceed deliberately. Content may include YAML frontmatter (title/status/tags); 'updated' is set automatically and existing frontmatter is preserved." +
+        (multi
+          ? ` Writes go to the user's own memory. Shared stores are mounted too (${storeList}): pass \`store\` to write there, ` +
+            "and only when the user asks for something to be shared, because everyone with access to that store reads it. " +
+            "The never-store list applies to every store."
+          : ""),
       inputSchema: {
         page: z.string().describe("Page id, kebab-case, e.g. 'atlas-app'"),
         content: z.string().describe("Markdown body (optionally with frontmatter)"),
@@ -393,19 +490,30 @@ export function registerTools(server: McpServer, rt: Runtime): void {
           .describe("Set true to carry out a replace that the destructive-write guard refused"),
         title: z.string().optional().describe("Page title if not in frontmatter"),
         status: z.string().optional().describe("Status header, e.g. 'active' (default)"),
+        // Only offered when there is somewhere else to write.
+        ...(multi
+          ? {
+              store: z
+                .string()
+                .optional()
+                .describe(`A shared store to write to instead of the user's own memory: ${storeList}. Only when the user asks`),
+            }
+          : {}),
       },
     },
-    async ({ page, content, mode, confirm, title, status }) => {
+    async (args) => {
+      const { page: ref, content, mode, confirm, title, status } = args;
       try {
-        const res = await ingest(paths, indexer, page, content, {
+        const { store: target, page } = pickWriteTarget(ref, (args as { store?: string }).store);
+        const res = await ingest(target.paths, target.indexer, page, content, {
           title,
           status,
           mode,
           confirm,
-          git: config.git,
-          autoPush: config.gitAutoPush,
+          git: target.config.git,
+          autoPush: target.config.gitAutoPush,
         });
-        return json({ ok: true, ...res });
+        return json(target.name ? { ok: true, ...res, id: label(target, res.id), store: target.name } : { ok: true, ...res });
       } catch (err) {
         // A refusal is an answer, not a crash: the model needs to read it and
         // choose append or confirm, rather than see a dead tool.
@@ -456,18 +564,20 @@ export function registerTools(server: McpServer, rt: Runtime): void {
         "Retire a page from the active knowledge base into archive/ (kept on disk and in git history, removed from the index and catalog). Use for pages the user confirmed are obsolete — e.g. from the weekly digest. Ask before archiving; never bulk-archive.",
       inputSchema: { page: z.string().describe("Page id, e.g. 'old-project'") },
     },
-    async ({ page }) => {
-      const moved = await archivePage(paths, page);
-      if (!moved) return text(`No page found: ${page}`);
-      indexer.removePage(pageId(page));
-      await refreshIndexMd(paths);
-      if (config.git) {
-        const committed = await commitAll(paths.root, `Archive memory page: ${page}`);
-        if (committed && config.gitAutoPush) await pushToRemote(paths.root);
+    async ({ page: ref }) => {
+      const { store, page } = locate(ref);
+      if (!store.write) return text(`Store "${store.name}" is read-only here; ${ref} was not archived.`);
+      const moved = await archivePage(store.paths, page);
+      if (!moved) return text(`No page found: ${ref}`);
+      store.indexer.removePage(pageId(page));
+      await refreshIndexMd(store.paths);
+      if (store.config.git) {
+        const committed = await commitAll(store.paths.root, `Archive memory page: ${page}`);
+        if (committed && store.config.gitAutoPush) await pushToRemote(store.paths.root);
       }
       return text(
-        `Archived: ${page} → ${moved.replace(paths.root + "/", "")} (removed from the index and catalog). ` +
-          `Read it back with read("archive/${pageId(page)}").`,
+        `Archived: ${ref} → ${moved.replace(store.paths.root + "/", "")} (removed from the index and catalog). ` +
+          `Read it back with read("${label(store, `archive/${pageId(page)}`)}").`,
       );
     },
   );
@@ -483,6 +593,19 @@ export function registerTools(server: McpServer, rt: Runtime): void {
         mode: z.enum(["auto", "interactive"]).optional().describe("default: auto"),
       },
     },
-    async ({ mode }) => json(await runMaintenance(paths, indexer, config, mode ?? "auto")),
+    async ({ mode }) => {
+      const report = await runMaintenance(paths, indexer, config, mode ?? "auto");
+      if (!multi) return json(report);
+      // Each mounted store on its own; one failing does not hide the others.
+      const stores: Record<string, unknown> = {};
+      for (const s of extras) {
+        try {
+          stores[s.name!] = await runMaintenance(s.paths, s.indexer, s.config, mode ?? "auto");
+        } catch (err) {
+          stores[s.name!] = { error: (err as Error).message };
+        }
+      }
+      return json({ ...report, stores });
+    },
   );
 }

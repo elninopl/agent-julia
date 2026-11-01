@@ -162,6 +162,8 @@ async function runStartupTasks(rt: Runtime): Promise<void> {
     warn("startup maintenance failed (continuing):", (err as Error).message);
   }
 
+  await maintainExtraStores(rt);
+
   // Refresh what init/sync installed: the shipped skills, and the persona block
   // in files that already carry it. Installs register the server as floating
   // @latest, so boot-time refresh is what propagates updated skills, voice, and
@@ -212,10 +214,38 @@ async function runStartupTasks(rt: Runtime): Promise<void> {
   // Last, because it can take a while: vectors for pages that lack them under
   // the active model. Not gated on the store watermark above, since a change of
   // model or precision changes no page. A no-op on almost every boot.
-  try {
-    await rt.indexer.reembedIfStale();
-  } catch (err) {
-    warn("startup re-embed failed (continuing):", (err as Error).message);
+  for (const store of [{ name: null, indexer: rt.indexer }, ...(rt.stores ?? [])]) {
+    try {
+      await store.indexer.reembedIfStale();
+    } catch (err) {
+      warn(`startup re-embed${store.name ? ` of store "${store.name}"` : ""} failed (continuing):`, (err as Error).message);
+    }
+  }
+}
+
+// Pull and maintain each mounted store the way the primary is maintained above.
+// One store failing is logged and the next one still runs.
+export async function maintainExtraStores(rt: Runtime): Promise<void> {
+  for (const store of rt.stores ?? []) {
+    try {
+      if (store.config.git && store.config.gitRemote) {
+        log(`git pull (${store.name}): ${await pullFromRemote(store.paths.root)}`);
+      }
+      const latest = await latestStoreMtime(store.paths);
+      const stored = Number(getMeta(store.indexer.db, MAINT_MTIME_KEY) ?? 0);
+      if (latest <= stored) continue;
+      const report = await withStoreLock(
+        store.paths.root,
+        () => runMaintenance(store.paths, store.indexer, store.config, "auto"),
+        { name: "maintenance", waitMs: 0 },
+      );
+      if (report) {
+        setMeta(store.indexer.db, MAINT_MTIME_KEY, String(latest));
+        log(`maintenance (${store.name}): +${report.indexAdded}/~${report.indexUpdated}/-${report.indexRemoved} indexed`);
+      }
+    } catch (err) {
+      warn(`maintenance of store "${store.name}" failed (continuing):`, (err as Error).message);
+    }
   }
 }
 
@@ -289,6 +319,9 @@ export async function startServer(): Promise<void> {
       } finally {
         clearTimeout(deadline);
         try {
+          // Mounted stores first: they borrow the primary's embedding process,
+          // which closing the primary's index stops.
+          for (const store of rt.stores ?? []) store.indexer.close();
           // Also stops the embedding process, if one is running.
           rt.indexer.close();
         } catch {

@@ -220,6 +220,25 @@ async function main(): Promise<void> {
               `Raise contextBudget in the config, or shorten persona.md / voice-corrections.md.`,
           );
         }
+        const { extraStores } = await import("./config/schema.js");
+        if (extraStores(cfg).length > 0) {
+          const { mountExtraStores } = await import("./store/stores.js");
+          const { gitAvailable } = await import("./store/git.js");
+          const stores = await mountExtraStores(cfg, { paths: primaryPaths(cfg), indexer: idx }, await gitAvailable());
+          for (const s of stores) {
+            try {
+              const sr = await runMaintenance(s.paths, s.indexer, s.config, "auto");
+              console.log(
+                `Store ${s.name}: +${sr.indexAdded}/~${sr.indexUpdated}/-${sr.indexRemoved} indexed, ` +
+                  `${sr.orphanLinks.length} orphan link(s)${sr.committed ? ", committed" : ""}${sr.pushed ? ", pushed" : ""}.`,
+              );
+            } catch (err) {
+              console.log(`Store ${s.name}: maintenance failed (${(err as Error).message}).`);
+            } finally {
+              s.indexer.close();
+            }
+          }
+        }
         console.log("For the interactive digest (merge/retire proposals), ask your agent to run the weekly digest.");
       } finally {
         idx.close();

@@ -174,6 +174,23 @@ Pages carry light frontmatter — title, status, last-updated date, and an auto-
 
 Point the wizard at an existing markdown knowledge base and Agent Julia adopts it: your pages are indexed and a hand-written `index.md` is left alone — Agent Julia only manages a clearly marked block inside it.
 
+### Shared stores
+
+A store can be mounted next to your own, for memory that belongs to more than one person (a team, a household, a project two people run). It is an ordinary Agent Julia store in its own directory, with its own index, git history and remote, and it can be served on its own as well.
+
+```json
+"stores": [
+  { "name": "team", "dir": "~/team-memory", "write": true,
+    "gitRemote": "git@github.com:acme/team-memory.git", "gitAutoPush": true }
+]
+```
+
+- Its pages are addressed as `team:page`; your own keep their bare ids. `[[team:pricing]]` links into it, a bare `[[link]]` stays inside the store it is written in.
+- `search` and `list` cover every mounted store, and each hit says which one it came from. Search ranks them as if they were one store: on a test that split a real 282-page store in two, the merged results matched the unsplit store's top hit in 98-99% of queries.
+- Writing goes to your own memory unless `ingest` is given `store: "team"`, and the agent is told to do that only when you ask. A shared page id alone does not count, so an agent cannot spill a private fact into a shared page by copying its id. A store without `"write": true` is read-only.
+- Your persona, voice corrections, catalog and the blocks in Claude's files stay with your own store; a shared store's `persona.md` is never read.
+- Maintenance runs per store on startup and in `agent-julia maintenance`; one store failing does not stop the others. A store with a `gitRemote` is pulled first.
+
 ### When a project documents itself
 
 Most projects already document themselves, and that documentation should not become a copy inside your store: it is large, it changes daily, and a copy goes stale the same week. A page can say where the rest of what it is about actually lives, and Agent Julia routes there instead.
@@ -295,6 +312,7 @@ Settings live in `~/.config/agent-julia/config.json` and carry a `schemaVersion`
 | `exports` | Files outside Claude that carry an exported persona block, kept current on every start (managed with `agent-julia export`) |
 | `weeklyMaintenance` | How the weekly digest is meant to run: `cowork-task` (a scheduled Cowork task) or `own-routine` |
 | `privacyHardOff` | Categories the agent must never store (keys, card numbers, third-party private data) |
+| `stores` | Optional. Other agent-julia stores mounted next to yours: `name`, `dir`, `write` (default off), `git`, `gitRemote`, `gitAutoPush` (see [Shared stores](#shared-stores)) |
 | `personaDir` | Optional. Read `persona.md` and `voice-corrections.md` from another agent-julia store instead of `memoryDir`, and record corrections there. For a process whose memory is a shared store but whose voice is yours. Corrections are committed in that store's repo; its own server pushes them |
 
 </details>

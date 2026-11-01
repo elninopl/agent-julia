@@ -9,6 +9,13 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ### Added
 
+- **Shared stores.** `stores` in the config mounts other agent-julia stores
+  next to your own. Their pages are `name:page`; `search` and `list` cover
+  all of them and rank them as one store; `read`, `history`, `related` and
+  `archive` take the prefixed id; `ingest` writes to a shared store only
+  when given `store`, and never to a read-only one. Each store keeps its own
+  index, lock, git history and remote. Without `stores`, the tools, their
+  arguments and their output are the same as before.
 - **`personaDir`** in the config: the voice (`persona.md`,
   `voice-corrections.md`) can come from another agent-julia store than the
   memory. Corrections are written and committed there. Without the field

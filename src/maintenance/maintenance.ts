@@ -1,4 +1,4 @@
-import { Config } from "../config/schema.js";
+import { Config, extraStores } from "../config/schema.js";
 import { Indexer } from "../index/indexer.js";
 import { StorePaths } from "../store/paths.js";
 import { extractLinks, listPageIds, listPages, readPage } from "../store/markdown.js";
@@ -44,6 +44,9 @@ export async function runMaintenance(
   const synced = await indexer.sync();
 
   const ids = new Set(await listPageIds(paths));
+  // Links into a mounted store are checked by nobody here: they are not this
+  // store's to resolve, and flagging them would call every one of them broken.
+  const foreign = new Set(extraStores(config).map((s) => s.name));
   const orphanLinks: Array<{ from: string; to: string }> = [];
   const staleFlagged: Array<{ id: string; updated: string }> = [];
   const cutoff = Date.now() - STALE_AFTER_DAYS * 24 * 3600 * 1000;
@@ -51,14 +54,14 @@ export async function runMaintenance(
   for (const id of ids) {
     const page = await readPage(paths, id);
     if (!page) continue;
-    for (const link of extractLinks(page.body)) {
+    for (const link of extractLinks(page.body, foreign)) {
       if (!ids.has(link)) orphanLinks.push({ from: id, to: link });
     }
     const updated = page.frontmatter.updated;
     if (updated && Date.parse(updated) < cutoff) staleFlagged.push({ id, updated });
   }
 
-  const proposals = mode === "interactive" ? await buildProposals(paths, indexer) : null;
+  const proposals = mode === "interactive" ? await buildProposals(paths, indexer, foreign) : null;
 
   await refreshIndexMd(paths);
   const core = await composeCore(paths, config);

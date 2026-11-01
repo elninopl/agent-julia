@@ -1,4 +1,4 @@
-import { Config } from "../config/schema.js";
+import { Config, extraStores } from "../config/schema.js";
 import { StorePaths } from "../store/paths.js";
 import { createHash } from "node:crypto";
 import { warn } from "../util/log.js";
@@ -96,7 +96,8 @@ export function serverInstructions(config: Config): string {
     "Memory: `search` / `read` before answering anything that depends on what you know about this " +
     "user, their projects or past decisions. `ingest` durable facts, decisions and preferences as " +
     "they surface, and say in one short line what you saved. Call `correct_voice` the moment the " +
-    "user corrects how you write or speak, before you reply, not after.";
+    "user corrects how you write or speak, before you reply, not after." +
+    sharedStoresLine(config);
 
   // Paragraph order is the degradation order: a client that truncates loses
   // memory guidance, never the identity or the privacy rail.
@@ -152,6 +153,17 @@ export function serverInstructions(config: Config): string {
       `with ${dropped} privacy entry(ies) summarised. Shorten privacyHardOff.`,
   );
   return clipped;
+}
+
+// One sentence on the stores mounted next to the user's own, or nothing.
+function sharedStoresLine(config: Config): string {
+  const stores = extraStores(config);
+  if (stores.length === 0) return "";
+  const list = stores.map((s) => `${clip(s.name, 32)}${s.write ? "" : " (read-only)"}`).join(", ");
+  return (
+    ` Shared stores are mounted too: ${list}. Their pages are addressed as \`name:page\` and \`search\` ` +
+    "covers them. Write to a shared store only when the user asks for it: everyone with access reads it."
+  );
 }
 
 // Stable id for the managed block across all surfaces.

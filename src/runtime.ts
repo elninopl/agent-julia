@@ -6,6 +6,8 @@ import { Indexer } from "./index/indexer.js";
 import { StorePaths, primaryPaths } from "./store/paths.js";
 import { ensureGitRepo, gitAvailable } from "./store/git.js";
 import { log, warn } from "./util/log.js";
+import { MountedStore, mountExtraStores } from "./store/stores.js";
+import { extraStores } from "./config/schema.js";
 
 // Shared runtime: config + store paths + the derived index handle. Built once on
 // startup, after migrations have brought the store up to the current schema.
@@ -13,6 +15,9 @@ export interface Runtime {
   config: Config;
   paths: StorePaths;
   indexer: Indexer;
+  // Stores mounted next to the primary one. Absent or empty: the primary is
+  // the only store and every tool behaves as it always has.
+  stores?: MountedStore[];
 }
 
 export async function buildRuntime(): Promise<Runtime> {
@@ -45,7 +50,8 @@ export async function buildRuntime(): Promise<Runtime> {
   config = migrated.config;
   if (migrated.ranAny) log("migrations applied on startup");
 
-  if (config.git && !(await gitAvailable())) {
+  const gitOk = config.git || extraStores(config).some((s) => s.git) ? await gitAvailable() : false;
+  if (config.git && !gitOk) {
     warn(
       "git is not on PATH — history is off for this session. Your memory is still written as plain " +
         "markdown; install git (on macOS: xcode-select --install) to get versioning back.",
@@ -60,5 +66,6 @@ export async function buildRuntime(): Promise<Runtime> {
   // held the handshake for as long as the whole store took to embed.
   const indexer = Indexer.open(paths, config);
 
-  return { config, paths, indexer };
+  const stores = await mountExtraStores(config, { paths, indexer }, gitOk);
+  return stores.length > 0 ? { config, paths, indexer, stores } : { config, paths, indexer };
 }
