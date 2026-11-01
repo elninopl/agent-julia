@@ -39,7 +39,9 @@ const hashOf = (token: string): string => createHash("sha256").update(token).dig
 
 export async function writeSecretFile(path: string, content: string): Promise<void> {
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-  const tmp = `${path}.${process.pid}.tmp`;
+  // pid alone is not unique: one process saves the OAuth state from
+  // concurrent requests.
+  const tmp = `${path}.${process.pid}.${randomUUID().slice(0, 8)}.tmp`;
   try {
     await writeFile(tmp, content, { encoding: "utf8", mode: 0o600 });
     await rename(tmp, path);

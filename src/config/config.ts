@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { copyFile, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
@@ -80,7 +81,7 @@ export async function saveConfig(cfg: Config): Promise<string> {
   const toWrite = withAbsoluteDirs(cfg);
   // Temp file plus rename: a crash or a full disk leaves the previous config
   // intact rather than a truncated one that fails to parse on the next start.
-  const tmp = `${path}.${process.pid}.tmp`;
+  const tmp = `${path}.${process.pid}.${randomUUID().slice(0, 8)}.tmp`;
   try {
     await writeFile(tmp, JSON.stringify(toWrite, null, 2) + "\n", "utf8");
     await rename(tmp, path);

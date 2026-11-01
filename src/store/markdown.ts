@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, readdir, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
@@ -379,7 +380,8 @@ function stripCoreKeys(fm: PageFrontmatter): PageFrontmatter {
 // leaves a half-written page where a whole one used to be — in the store that is
 // the product's only copy of what it knows.
 export async function writeFileAtomic(path: string, content: string): Promise<void> {
-  const tmp = `${path}.${process.pid}.tmp`;
+  // pid alone is not unique: a server writes for many sessions at once.
+  const tmp = `${path}.${process.pid}.${randomUUID().slice(0, 8)}.tmp`;
   try {
     await writeFile(tmp, content, "utf8");
     await rename(tmp, path);

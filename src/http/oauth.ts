@@ -1,5 +1,5 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { copyFileSync, existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { Request, RequestHandler, Response } from "express";
 import type { AuthorizationParams, OAuthServerProvider } from "@modelcontextprotocol/sdk/server/auth/provider.js";
@@ -33,7 +33,10 @@ const MAX_PENDING = 100;
 // dynamic registration makes a new client on every fresh connection.
 const UNUSED_CLIENT_MS = 24 * 60 * 60 * 1000;
 // Wrong owner passwords, across all requests, before consent stops answering.
+// A stranger can use them up and hold off a new connection for the window;
+// connections already made keep working.
 const MAX_FAILURES = 10;
+const MAX_ATTEMPTS_PER_REQUEST = 5;
 const FAILURE_WINDOW_MS = 15 * 60 * 1000;
 
 interface StoredClient extends OAuthClientInformationFull {
@@ -59,6 +62,7 @@ interface PendingConsent {
   params: AuthorizationParams;
   createdAt: number;
   attempts: number;
+  checking?: boolean;
 }
 
 interface IssuedCode {
@@ -70,16 +74,12 @@ interface IssuedCode {
   expiresAt: number;
 }
 
+// Throws when the file is there but cannot be read: callers must not take
+// that for "no clients" and write the emptiness over it.
 function readOAuthState(file: string): OAuthState {
-  const empty: OAuthState = { clients: [], access: [], refresh: [] };
-  if (!existsSync(file)) return empty;
-  try {
-    const raw = JSON.parse(readFileSync(file, "utf8")) as Partial<OAuthState>;
-    return { clients: raw.clients ?? [], access: raw.access ?? [], refresh: raw.refresh ?? [] };
-  } catch (err) {
-    warn(`could not read ${file} (${(err as Error).message}); OAuth clients will have to connect again`);
-    return empty;
-  }
+  if (!existsSync(file)) return { clients: [], access: [], refresh: [] };
+  const raw = JSON.parse(readFileSync(file, "utf8")) as Partial<OAuthState>;
+  return { clients: raw.clients ?? [], access: raw.access ?? [], refresh: raw.refresh ?? [] };
 }
 
 async function writeOAuthState(state: OAuthState, file: string): Promise<void> {
@@ -149,6 +149,13 @@ export class OwnerOAuthProvider implements OAuthServerProvider {
   private readonly pending = new Map<string, PendingConsent>();
   private readonly codes = new Map<string, IssuedCode>();
   private failures: number[] = [];
+  // One scrypt at a time: parallel guesses would otherwise all run at once
+  // and take every thread that file I/O needs.
+  private checking: Promise<unknown> = Promise.resolve();
+  private saving: Promise<void> = Promise.resolve();
+  // Saves queued or running. While one is, the file on disk is this
+  // process's own, older than what is in memory: not to be read back.
+  private unsaved = 0;
 
   constructor(
     private readonly opts: {
@@ -178,24 +185,53 @@ export class OwnerOAuthProvider implements OAuthServerProvider {
   }
 
   // Read the file again when someone else changed it: `server oauth revoke`
-  // run while the server is up takes effect on the next request.
+  // run while the server is up takes effect on the next request. A file that
+  // does not parse keeps what is in memory, and a copy of it is set aside
+  // before the next save writes over it.
   private sync(): void {
+    if (this.unsaved > 0) return;
     const mtime = this.mtime();
     if (mtime === this.loadedMtime) return;
-    this.state = readOAuthState(this.file);
+    try {
+      this.state = readOAuthState(this.file);
+    } catch (err) {
+      const copy = `${this.file}.unreadable`;
+      try {
+        copyFileSync(this.file, copy);
+      } catch {
+        // nothing to keep
+      }
+      warn(`could not read ${this.file} (${(err as Error).message}); kept a copy at ${copy}`);
+    }
     this.loadedMtime = mtime;
   }
 
-  private async save(): Promise<void> {
-    const now = nowS();
-    const cutoff = Date.now() - UNUSED_CLIENT_MS;
-    this.state = {
-      clients: this.state.clients.filter((c) => c.last_used_at || (c.client_id_issued_at ?? 0) * 1000 > cutoff),
-      access: this.state.access.filter((t) => t.expiresAt > now),
-      refresh: this.state.refresh.filter((t) => t.expiresAt > now),
-    };
-    await writeOAuthState(this.state, this.file);
-    this.loadedMtime = this.mtime();
+  // Saves run one after another: each writes the state as it is by then.
+  private save(): Promise<void> {
+    this.unsaved++;
+    const run = this.saving.then(async () => {
+      const now = nowS();
+      const cutoff = Date.now() - UNUSED_CLIENT_MS;
+      this.state = {
+        clients: this.state.clients.filter((c) => c.last_used_at || (c.client_id_issued_at ?? 0) * 1000 > cutoff),
+        access: this.state.access.filter((t) => t.expiresAt > now),
+        refresh: this.state.refresh.filter((t) => t.expiresAt > now),
+      };
+      try {
+        await writeOAuthState(this.state, this.file);
+        this.loadedMtime = this.mtime();
+      } finally {
+        this.unsaved--;
+      }
+    });
+    this.saving = run.catch(() => undefined);
+    return run;
+  }
+
+  private checkPassword(password: string): Promise<boolean> {
+    const run = this.checking.then(() => checkOwnerPassword(password, this.owner));
+    this.checking = run.catch(() => undefined);
+    return run;
   }
 
   get clientsStore(): OAuthRegisteredClientsStore {
@@ -306,11 +342,38 @@ button.quiet{background:transparent;color:inherit;border-color:#999}.err{color:#
         this.page(res, 429, "Too many attempts", "<p>Too many wrong passwords. Try again in a quarter of an hour.</p>");
         return;
       }
-      if (!(await checkOwnerPassword(String(body.password ?? ""), this.owner))) {
-        this.failures.push(now);
+      // One check at a time per request, and the failure counted before the
+      // slow check, so guesses sent in parallel cannot get past the limits.
+      // The right password takes it back.
+      const id = String(body.request);
+      if (pending.checking) {
+        this.page(res, 429, "Too many attempts", "<p>A password for this request is being checked already.</p>");
+        return;
+      }
+      const slot = now;
+      this.failures.push(slot);
+      pending.checking = true;
+      let ok = false;
+      try {
+        ok = await this.checkPassword(String(body.password ?? ""));
+      } finally {
+        pending.checking = false;
+      }
+      if (!ok) {
         pending.attempts++;
-        if (pending.attempts >= 5) this.pending.delete(String(body.request));
-        this.consentPage(res, String(body.request), client, params.redirectUri, "Wrong password.");
+        if (pending.attempts < MAX_ATTEMPTS_PER_REQUEST) {
+          this.consentPage(res, id, client, params.redirectUri, "Wrong password.");
+        } else {
+          this.pending.delete(id);
+          this.page(res, 401, "Too many attempts", "<p>Too many wrong passwords for this request. Start the connection again from the app.</p>");
+        }
+        return;
+      }
+      const i = this.failures.indexOf(slot);
+      if (i >= 0) this.failures.splice(i, 1);
+      // Denied or dropped while the password was being checked.
+      if (this.pending.get(id) !== pending) {
+        this.page(res, 400, "Expired", "<p>This request has expired. Start the connection again from the app.</p>");
         return;
       }
 
@@ -368,9 +431,15 @@ button.quiet{background:transparent;color:inherit;border-color:#999}.err{color:#
     if (!found || found.clientId !== client.client_id || found.expiresAt <= nowS()) {
       throw new InvalidGrantError("unknown or expired refresh token");
     }
-    // Rotation: the token just used is spent.
+    // Rotation: the token just used is spent, unless the new ones could not
+    // be saved; then the client still holds a token that works.
     this.state.refresh = this.state.refresh.filter((t) => t !== found);
-    return this.issue(client.client_id, found.scopes, found.resource);
+    try {
+      return await this.issue(client.client_id, found.scopes, found.resource);
+    } catch (err) {
+      this.state.refresh.push(found);
+      throw err;
+    }
   }
 
   private async issue(clientId: string, scopes: string[], resource: string): Promise<OAuthTokens> {

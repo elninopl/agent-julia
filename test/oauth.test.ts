@@ -1,8 +1,8 @@
 import { createHash, randomBytes } from "node:crypto";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
@@ -318,6 +318,46 @@ describe("OAuth for claude.ai", () => {
       body: "{}",
     });
     expect(res.status).toBe(401);
+  });
+
+  it("checks no more passwords than the limit allows, however many arrive at once", async () => {
+    const { origin } = await serve();
+    const clientId = await register(origin);
+    const ids = await Promise.all(
+      Array.from({ length: 20 }, async () => requestId(await (await openConsent(origin, clientId, pkce().challenge)).text())),
+    );
+    const guesses = await Promise.all(
+      Array.from({ length: 40 }, (_, i) => consent(origin, { request: ids[i % ids.length]!, action: "allow", password: `guess number ${i}` })),
+    );
+    const statuses = guesses.map((r) => r.status);
+    // Every request is answered, and exactly ten wrong passwords are checked.
+    expect(statuses.every((s) => s === 401 || s === 429)).toBe(true);
+    expect(statuses.filter((s) => s === 401)).toHaveLength(10);
+
+    // The owner, after that, is told to wait rather than let in.
+    const fresh = requestId(await (await openConsent(origin, clientId, pkce().challenge)).text());
+    expect((await consent(origin, { request: fresh, action: "allow", password: PASSWORD })).status).toBe(429);
+  });
+
+  it("keeps every client registered at once, and the file readable", async () => {
+    const { origin, files } = await serve();
+    const ids = await Promise.all(Array.from({ length: 12 }, () => register(origin)));
+    const stored = JSON.parse(readFileSync(files.oauth, "utf8")) as { clients: Array<{ client_id: string }> };
+    expect(stored.clients.map((c) => c.client_id).sort()).toEqual([...ids].sort());
+    expect(readdirSync(dirname(files.oauth)).filter((f) => f.endsWith(".tmp"))).toEqual([]);
+  });
+
+  it("does not take an unreadable state file for an empty one", async () => {
+    const { origin, resource, files } = await serve();
+    const { clientId, tokens } = await authorize(origin);
+    const good = readFileSync(files.oauth, "utf8");
+    writeFileSync(files.oauth, good.slice(0, 40));
+
+    const reborn = new OwnerOAuthProvider({ resource, displayName: "Julia", file: files.oauth, ownerFile: files.owner });
+    await expect(reborn.verifyAccessToken(tokens.access_token)).rejects.toThrow();
+    expect(readFileSync(`${files.oauth}.unreadable`, "utf8")).toBe(good.slice(0, 40));
+    expect(() => listOAuthClients(files.oauth)).toThrow();
+    expect(clientId).toBeTruthy();
   });
 
   it("still takes static bearer tokens next to OAuth", async () => {
