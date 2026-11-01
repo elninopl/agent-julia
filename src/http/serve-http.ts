@@ -172,7 +172,6 @@ export async function listenHttp(
     verifier = deps.verifier ?? new StaticTokenVerifier();
   }
 
-  app.use(express.json({ limit: BODY_LIMIT }));
   if (verifier) {
     app.use(
       "/mcp",
@@ -195,8 +194,10 @@ export async function listenHttp(
   };
 
   // One McpServer per session, all over the one runtime: one index per store,
-  // one embedding process, and the store lock to order their writes.
-  app.post("/mcp", async (req: Request, res: Response) => {
+  // one embedding process, and the store lock to order their writes. The body
+  // is read after the token is checked, so a stranger cannot make the server
+  // buffer and parse megabytes.
+  app.post("/mcp", express.json({ limit: BODY_LIMIT }), async (req: Request, res: Response) => {
     const id = req.header("mcp-session-id");
     const clientId = req.auth?.clientId ?? null;
     let session = id ? sessions.get(id) : undefined;
@@ -246,16 +247,20 @@ export async function listenHttp(
   // Open to anyone: whether the server is up, and which version. The rest
   // (store names, write times, push state) needs a valid token.
   app.get("/healthz", async (req: Request, res: Response) => {
+    let info: AuthInfo | null = null;
     if (verifier) {
       const bearer = /^Bearer (.+)$/i.exec(req.headers.authorization ?? "")?.[1];
-      const ok = bearer ? await verifier.verifyAccessToken(bearer).then(() => true, () => false) : false;
-      if (!ok) {
+      info = bearer ? await verifier.verifyAccessToken(bearer).catch(() => null) : null;
+      if (!info) {
         res.status(200).json({ ok: true, version: await packageVersion() });
         return;
       }
     }
+    // A token limited to some stores sees only those.
+    const scope = info?.extra?.stores as string[] | undefined;
+    const shown = [primaryStore(rt), ...(rt.stores ?? [])].filter((s) => !scope || scope.includes(s.name ?? "primary"));
     const stores = await Promise.all(
-      [primaryStore(rt), ...(rt.stores ?? [])].map(async (s) => {
+      shown.map(async (s) => {
         const mtime = await latestStoreMtime(s.paths).catch(() => 0);
         const maint = state.maintenance.get(s.name ?? "");
         return {
@@ -277,6 +282,19 @@ export async function listenHttp(
       sessions: sessions.size,
       stores,
     });
+  });
+
+  // A request that failed before its handler ran (a body that is not JSON,
+  // or too big) gets a JSON-RPC error, not Express's HTML page with a stack
+  // trace and the server's paths.
+  app.use((err: unknown, _req: Request, res: Response, next: NextFunction) => {
+    if (res.headersSent) return next(err);
+    const e = err as { type?: string; status?: number; message?: string };
+    if (e?.type === "entity.parse.failed") return rpcError(res, 400, "Parse error: the body is not valid JSON");
+    if (e?.type === "entity.too.large") return rpcError(res, 413, "Request body too large");
+    warn(`HTTP request failed: ${e?.message ?? String(err)}`);
+    const status = typeof e?.status === "number" && e.status >= 400 && e.status < 600 ? e.status : 500;
+    rpcError(res, status, status === 500 ? "Internal error" : (e?.message ?? "Bad request"));
   });
 
   const http: Server = await new Promise((resolve, reject) => {

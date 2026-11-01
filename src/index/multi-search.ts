@@ -25,6 +25,8 @@ function embedQueryOnce(provider: EmbeddingProvider): EmbeddingProvider {
 // for all, so the numbers compare), and the merged lists are fused exactly as a
 // single store's are. With one store this is that store's search.
 export async function searchStores(stores: MountedStore[], query: string, limit: number): Promise<SearchResult[]> {
+  // A scope that names no store mounted here leaves nothing to search.
+  if (stores.length === 0) return [];
   const primary = stores[0]!;
   const mode = primary.config.search;
   const provider = embedQueryOnce(primary.indexer.provider);

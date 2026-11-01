@@ -168,6 +168,34 @@ describe("bearer tokens", () => {
       await fetch(`${handle.url}/healthz`, { headers: { authorization: `Bearer ${token}` } })
     ).json()) as { stores: unknown[] };
     expect(full.stores).toHaveLength(2);
+
+    const { token: narrow } = await addToken("group", ["team"], file);
+    const scoped = (await (
+      await fetch(`${handle.url}/healthz`, { headers: { authorization: `Bearer ${narrow}` } })
+    ).json()) as { stores: Array<{ name: string | null }> };
+    expect(scoped.stores.map((s) => s.name)).toEqual(["team"]);
+  });
+
+  it("read no body before the token is checked, and answer a broken one in JSON", async () => {
+    const { handle, file } = await serve();
+    // Not JSON at all: without a token it is refused before anyone parses it.
+    const stranger = await post(handle, {}, "{".repeat(1000));
+    expect(stranger.status).toBe(401);
+
+    const { token } = await addToken("owner", undefined, file);
+    const broken = await post(handle, { authorization: `Bearer ${token}` }, "{ not json");
+    expect(broken.status).toBe(400);
+    expect(broken.headers.get("content-type")).toMatch(/json/);
+    const text = await broken.text();
+    expect(JSON.parse(text).error.message).toMatch(/not valid JSON/);
+    expect(text).not.toMatch(/node_modules|at \w+ \(/);
+  });
+
+  it("search nothing, without failing, when the scope names no store mounted here", async () => {
+    const { handle, file } = await serve();
+    const ghost = await connect(handle, (await addToken("ghost", ["gone"], file)).token);
+    const res = await ghost.callTool({ name: "search", arguments: { query: "anything" } });
+    expect(res.isError).toBeFalsy();
   });
 
   it("refuse a store named like the primary in token scopes", () => {
