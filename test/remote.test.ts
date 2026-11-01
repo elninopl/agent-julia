@@ -206,7 +206,7 @@ describe("remote client", { timeout: 30_000 }, () => {
     await up.start();
 
     const res = await client.callTool({ name: "ingest", arguments: { page: "two", content: "Second page." } });
-    expect(res.isError).toBeFalsy();
+    expect(res.isError, textOf(res)).toBeFalsy();
     expect(existsSync(join(up.dir, "pages", "two.md"))).toBe(true);
   });
 

@@ -94,7 +94,8 @@ describe("the HTTP server", () => {
     expect(handle.sessionCount()).toBe(1);
   });
 
-  it("lands every write from two sessions writing at once", async () => {
+  // Ten git commits in a row: Windows runners need well over the default.
+  it("lands every write from two sessions writing at once", { timeout: 30_000 }, async () => {
     const { handle, dir } = await serve({ git: true });
     const a = await connect(handle, "client-a");
     const b = await connect(handle, "client-b");
