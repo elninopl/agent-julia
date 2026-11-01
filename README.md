@@ -126,6 +126,20 @@ The skill starts only when you ask for it (or accept a one-line offer). Your own
 
 The persona you built is not locked to Claude. `agent-julia export codex` writes it into `~/.codex/AGENTS.md`, `export gemini` into `~/.gemini/GEMINI.md`, and `export <path>` into any AGENTS.md-style instruction file — as a marked, removable block, backed up on first touch, and **kept refreshed by the server on every boot** (a voice correction you make in Claude reaches Codex on its next session). The export carries the persona itself — identity, voice, corrections, privacy rail — without the Claude-specific memory instructions; attach the same MCP server in the other tool if it supports MCP, and the memory follows too.
 
+## Run as a server
+
+By default every Claude session starts its own Agent Julia over stdio, on the machine the session runs on. `agent-julia serve --http` runs one long-lived process instead, serving every session of every client over MCP's Streamable HTTP transport at `/mcp`. It is the way to reach one memory from more than one machine, and the only way to reach it from a client that cannot start local processes.
+
+```json
+"server": { "host": "127.0.0.1", "port": 8787, "auth": "none", "maintenanceEveryMinutes": 60 }
+```
+
+- One process, one index per store, many sessions. Writes from different sessions are ordered by the same store lock the stdio servers use, so a CLI command on the same machine is still safe to run.
+- It pulls and maintains every store on start and then every `maintenanceEveryMinutes`. It never touches `~/.claude`, skills, exports or Claude Code's memory on the machine it runs on: there is no local Claude there to serve.
+- `GET /healthz` returns JSON for a monitor: version, open sessions, and per store the last write, the last maintenance and its outcome, and how many commits are waiting to be pushed.
+- It binds loopback by default and refuses to start without authentication on any other address, or with a `publicUrl` set. Requests must carry a Host the server answers to, and with `auth: "none"` a request that came through a proxy is refused.
+- `--host` and `--port` override the config for one run. Each persona is its own process with its own config (`AGENT_JULIA_CONFIG`).
+
 ---
 
 ## Reference
@@ -271,6 +285,7 @@ The persona core is also exposed as a resource (`agent-julia://core`) for client
 | Command | |
 | --- | --- |
 | `agent-julia serve` | Start the MCP server (default; used by the Claude apps) |
+| `agent-julia serve --http` | Run one long-lived HTTP server for many sessions and machines (see [Run as a server](#run-as-a-server)) |
 | `agent-julia init` | Run the setup wizard |
 | `agent-julia sync` | Re-apply registration, the persona block, the shipped skills and the Claude Code memory handling (`codeMemory`) for the current config. `--print` shows the exact changes instead of making them; `--absorb-all` also brings in directories holding more than 25 facts |
 | `agent-julia uninstall` | Remove the managed blocks, registration, and shipped skills (backups are kept) |
@@ -312,6 +327,7 @@ Settings live in `~/.config/agent-julia/config.json` and carry a `schemaVersion`
 | `exports` | Files outside Claude that carry an exported persona block, kept current on every start (managed with `agent-julia export`) |
 | `weeklyMaintenance` | How the weekly digest is meant to run: `cowork-task` (a scheduled Cowork task) or `own-routine` |
 | `privacyHardOff` | Categories the agent must never store (keys, card numbers, third-party private data) |
+| `server` | Optional, read only by `serve --http`: `host`, `port`, `publicUrl`, `auth`, `maintenanceEveryMinutes` (see [Run as a server](#run-as-a-server)) |
 | `stores` | Optional. Other agent-julia stores mounted next to yours: `name`, `dir`, `write` (default off), `git`, `gitRemote`, `gitAutoPush` (see [Shared stores](#shared-stores)) |
 | `personaDir` | Optional. Read `persona.md` and `voice-corrections.md` from another agent-julia store instead of `memoryDir`, and record corrections there. For a process whose memory is a shared store but whose voice is yours. Corrections are committed in that store's repo; its own server pushes them |
 

@@ -370,3 +370,16 @@ export async function pageHistory(
     return [];
   }
 }
+
+// Commits on the current branch that its upstream does not have, or null when
+// there is no upstream to compare with (no remote, never pushed, not a repo).
+// For the HTTP server's health report: a number that only grows means pushes
+// have been failing.
+export async function unpushedCommits(root: string): Promise<number | null> {
+  if (!isGitRepo(root)) return null;
+  try {
+    return Number(await git(root, ["rev-list", "--count", "@{u}..HEAD"]));
+  } catch {
+    return null;
+  }
+}

@@ -7,8 +7,16 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ## [Unreleased]
 
+> Requires `@modelcontextprotocol/sdk` 1.32.1 or newer (was 1.30.2), and adds
+> `express`, which the SDK already depended on.
+
 ### Added
 
+- **Server mode.** `agent-julia serve --http` runs one long-lived process
+  that serves every session over Streamable HTTP at `/mcp`, with `/healthz`
+  for monitoring. It maintains the stores on a timer, never writes the
+  local Claude files, binds loopback by default and refuses to start
+  unauthenticated anywhere else. The stdio server is unchanged.
 - **Shared stores.** `stores` in the config mounts other agent-julia stores
   next to your own. Their pages are `name:page`; `search` and `list` cover
   all of them and rank them as one store; `read`, `history`, `related` and

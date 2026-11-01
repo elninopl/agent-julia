@@ -104,7 +104,10 @@ async function migrationNotice(client: string): Promise<string> {
 }
 
 // Wire the MCP tool surface onto an McpServer instance.
-export function registerTools(server: McpServer, rt: Runtime): void {
+// `localSurfaces: false` is the HTTP server: it serves clients on other
+// machines, so nothing here may write the Claude files of the machine it runs on.
+export function registerTools(server: McpServer, rt: Runtime, opts: { localSurfaces?: boolean } = {}): void {
+  const localSurfaces = opts.localSurfaces ?? true;
   const { paths, indexer, config } = rt;
   const lastFetchRecord = new Map<string, { hash: string; at: number }>();
 
@@ -243,7 +246,7 @@ export function registerTools(server: McpServer, rt: Runtime): void {
       const fingerprint =
         `<!-- agent-julia core · ${short} · ${corrections} line(s) · ${core.tokens} tok · layout ${PASTE_LAYOUT}` +
         `${core.droppedCorrections ? ` · ${core.droppedCorrections} dropped` : ""} -->`;
-      const trailer = await migrationNotice(client);
+      const trailer = localSurfaces ? await migrationNotice(client) : "";
       return text([core.text, memoryInstruction(), fingerprint, trailer].filter(Boolean).join("\n\n"));
     },
   );
@@ -545,7 +548,7 @@ export function registerTools(server: McpServer, rt: Runtime): void {
       }
       await commitPersona("Update memory: voice correction", true);
       // Make the Claude Code block current now rather than two sessions later.
-      await refreshInjectedCore(config).catch(() => undefined);
+      if (localSurfaces) await refreshInjectedCore(config).catch(() => undefined);
       return text(
         `Saved: ${res.saved}\n\n` +
           "Apply it from this turn on. It is not yet in your system prompt for this session " +

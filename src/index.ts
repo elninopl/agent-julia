@@ -15,6 +15,7 @@ const HELP = `agent-julia — one brain for your AI
 
 Usage:
   agent-julia serve      Start the MCP stdio server (default; used by Claude clients)
+  agent-julia serve --http [--host h] [--port n]  Run as a long-lived HTTP server for many clients (see "Run as a server")
   agent-julia init       Run the interactive setup wizard
   agent-julia sync       Re-apply MCP registration + persona core + shipped skills (--print shows the steps; --absorb-all also brings in a large Claude Code memory)
   agent-julia uninstall  Remove the managed persona blocks, MCP registration, and shipped skills
@@ -53,9 +54,25 @@ async function main(): Promise<void> {
   const cmd = process.argv[2] ?? "serve";
 
   switch (cmd) {
-    case "serve":
+    case "serve": {
+      if (process.argv.includes("--http")) {
+        const flag = (name: string): string | undefined => {
+          const i = process.argv.indexOf(name);
+          return i > 0 ? process.argv[i + 1] : undefined;
+        };
+        const port = flag("--port");
+        const host = flag("--host");
+        if (port !== undefined && !/^\d+$/.test(port)) throw new Error(`--port needs a number, got "${port}"`);
+        const { startHttpServer } = await import("./http/serve-http.js");
+        await startHttpServer({
+          ...(port !== undefined ? { port: Number(port) } : {}),
+          ...(host !== undefined ? { host } : {}),
+        });
+        break;
+      }
       await startServer();
       break;
+    }
     case "init":
     case "wizard":
       await runWizard();
