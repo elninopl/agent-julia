@@ -124,7 +124,9 @@ async function until(check: () => boolean, ms = 3_000): Promise<void> {
   }
 }
 
-describe("remote client", () => {
+// Windows reports a refused connection after its SYN retries, about two
+// seconds, so the limits leave room for that and still catch a hang.
+describe("remote client", { timeout: 30_000 }, () => {
   it("forwards tools, instructions and the core resource to the server", async () => {
     const up = await upstream();
     const me = here(up.url, up.token);
@@ -178,7 +180,7 @@ describe("remote client", () => {
     expect(res.isError).toBe(true);
     expect(textOf(res)).toContain(url);
     expect(textOf(res)).toMatch(/cannot reach/);
-    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(Date.now() - started).toBeLessThan(12_000);
   });
 
   it("serves the tools it saw last while the server is away", async () => {

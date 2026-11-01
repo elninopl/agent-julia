@@ -19,9 +19,10 @@ Agent Julia gives your AI an identity instead of a configuration. The first thin
 
 ## Highlights
 
-- **A persona you build, then call by name** — the wizard asks what it is called before it asks anything else, then pronouns, the language it replies in and how it writes. You open with "Julia, look at this" the way you would with a person, it answers as that name rather than as "the assistant", and it is the same character on every surface. Renaming it later is a line in `~/.config/agent-julia/config.json` plus `agent-julia sync`.
+- **A persona you build, then call by name** — the wizard asks what it is called, then pronouns, the language it replies in and how it writes. You open with "Julia, look at this" the way you would with a person, it answers as that name rather than as "the assistant", and it is the same character on every surface. Renaming it later is a line in `~/.config/agent-julia/config.json` plus `agent-julia sync`.
 - **A voice you shape by talking** — "stop hedging", "don't use that word", "write to my co-founder, not to an engineer". Say it once, in passing, and it holds. Withdraw it the same way.
 - **One memory, every surface** — Claude Code and Claude Desktop share the same brain; a fact saved in one is known in the other.
+- **Other machines, claude.ai and the phone too** — run it as a server and every Claude you use reaches the same memory: another computer through a relay, claude.ai and the mobile app as a custom connector. Shared stores sit next to your own when a team keeps one.
 - **You own it** — plain markdown in a git repo you control, not a database locked inside an app. Readable, portable, `git log`-able, and no write can silently destroy what it was meant to extend.
 - **Small context footprint** — only a budgeted persona core rides each turn; everything else is recalled on demand, so the window stays clear.
 

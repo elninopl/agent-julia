@@ -168,7 +168,7 @@ async function onExtract() {
   const body = text.length > MAX ? text.slice(text.length - MAX) : text;
   const job = join(dir, safeId(input.session_id) + "-" + Date.now() + ".job");
   writeFileSync(job, INSTRUCTION + body);
-  const child = spawn(process.execPath, [process.argv[1], "run", job], { detached: true, stdio: "ignore" });
+  const child = spawn(process.execPath, [process.argv[1], "run", job], { detached: true, stdio: "ignore", windowsHide: true });
   child.unref();
   log("extract queued: session " + safeId(input.session_id) + " (" + (input.hook_event_name || "?") + "), " + body.length + " chars");
 }
@@ -187,6 +187,7 @@ function onRun(job) {
     env: { ...process.env, AGENT_JULIA_HOOK_CHILD: "1" },
     stdio: ["pipe", "pipe", "pipe"],
     shell: win,
+    windowsHide: true,
   });
   let out = "";
   child.stdout.on("data", (d) => { out += d; });
