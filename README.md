@@ -18,7 +18,7 @@ npx agent-julia init
 ## What it looks like
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/elninopl/agent-julia/main/scripts/demo/demo.gif" alt="On Monday, in Claude Code, you tell Julia that the Atlas launch moves to April. On Wednesday you ask her in the Claude app on your phone, and she answers: April, because of the security audit. A voice correction made on the phone reaches Claude Code at its next session." width="880">
+  <img src="https://raw.githubusercontent.com/elninopl/agent-julia/main/scripts/demo/demo.gif" alt="On Monday, in Claude Code, you tell Julia that the Atlas launch moves to April. On Wednesday you ask her in the Claude app on your phone; she opens with Great question, and you tell her to skip it. On Friday, in Claude Desktop, she loads that correction with her voice and answers without the preamble." width="880">
 </p>
 
 The phone and claude.ai reach your memory through [server mode](#run-as-a-server).
