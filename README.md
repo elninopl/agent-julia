@@ -17,23 +17,9 @@ npx agent-julia init
 
 ## What it looks like
 
-**Monday, Claude Code on your laptop**
-
-> **You:** Julia, remember: the Atlas launch moves to April, after the security audit.
->
-> **Julia:** Saved → atlas.
-
-**Wednesday, the Claude app on your phone**
-
-> **You:** Julia, when does Atlas launch?
->
-> **Julia:** In April. You moved it on Monday because of the security audit.
-
-**Any day, in any app**
-
-> **You:** Stop opening with "Great question".
->
-> **Julia:** Saved as a voice correction. Every app follows it from now on.
+<p align="center">
+  <img src="https://raw.githubusercontent.com/elninopl/agent-julia/main/scripts/demo/demo.gif" alt="On Monday, in Claude Code, you tell Julia that the Atlas launch moves to April. On Wednesday you ask her in the Claude app on your phone, and she answers: April, because of the security audit. A voice correction made on the phone reaches Claude Code at its next session." width="880">
+</p>
 
 The phone and claude.ai reach your memory through [server mode](#run-as-a-server).
 
@@ -479,6 +465,8 @@ git push --follow-tags
 ```
 
 A `vX.Y.Z` tag triggers the release workflow: it checks the tag against `package.json`, runs the tests, publishes to npm via Trusted Publishing (OIDC — no stored token, provenance attached automatically), and cuts a GitHub release from the matching CHANGELOG section.
+
+The animation at the top of this README is `scripts/demo/demo.html`; `node scripts/demo/render.mjs` turns it into `demo.gif` (it needs Google Chrome and ffmpeg).
 
 Some names must never appear in this repository. `npm run hooks` points git at `.githooks`, whose pre-commit, commit-msg and pre-push hooks run `scripts/check-names.mjs` over what is about to leave the machine: added lines, file paths, commit messages and branch names, ignoring case and accents. The names themselves stay out of the repo, in `git config --global --add agentjulia.forbiddenName <name>`, and in the `AJ_FORBIDDEN_NAMES` secret for CI and the release workflow, which check the whole tree. To check a PR description before posting it, pipe it to `node scripts/check-names.mjs --stdin`.
 

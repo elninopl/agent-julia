@@ -64,11 +64,17 @@
   },
   "keywords": [
     "mcp",
-    "memory",
-    "persona",
+    "mcp-server",
+    "model-context-protocol",
     "claude",
     "claude-code",
+    "claude-desktop",
+    "claude-ai",
+    "memory",
+    "ai-memory",
+    "persona",
     "local-first",
+    "markdown",
     "knowledge-base"
   ]
 }
