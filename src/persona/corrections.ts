@@ -23,10 +23,11 @@ const HEADER = `# Voice corrections
 // rewrites the whole file, so an append from another session that landed
 // between its read and its write was erased; two first appends could each
 // write the header and the second would truncate the first one's rule. The
-// store lock serializes them. A lock that cannot be had in time is an error,
+// lock of the directory holding the file serializes them: the store's own, or
+// personaDir's when the persona lives in another store. A lock that cannot be had in time is an error,
 // never a quiet skip: the caller is about to tell the user it was saved.
 async function underStoreLock<T>(paths: StorePaths, fn: () => Promise<T>): Promise<T> {
-  const res = await withStoreLock(paths.root, async () => ({ value: await fn() }));
+  const res = await withStoreLock(paths.personaRoot, async () => ({ value: await fn() }));
   if (!res) {
     throw new Error(
       "another agent-julia process is writing to this store and did not finish in time; " +

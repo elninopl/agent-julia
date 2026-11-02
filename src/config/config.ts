@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { copyFile, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
@@ -27,10 +28,19 @@ export async function loadConfig(): Promise<Config> {
     );
   }
   const raw = JSON.parse(await readFile(path, "utf8"));
-  const cfg = ConfigSchema.parse(raw);
-  // Always resolve memoryDir to an absolute path for downstream consumers.
-  cfg.memoryDir = resolve(expandPath(cfg.memoryDir));
-  return cfg;
+  // Always resolve directories to absolute paths for downstream consumers.
+  return withAbsoluteDirs(ConfigSchema.parse(raw));
+}
+
+// memoryDir, personaDir and every mounted store's dir, made absolute. A field
+// that is not set stays absent rather than becoming `undefined`, so a config
+// from an earlier version comes back with exactly the keys it had.
+export function withAbsoluteDirs(cfg: Config): Config {
+  const abs = (p: string) => resolve(expandPath(p));
+  const out: Config = { ...cfg, memoryDir: abs(cfg.memoryDir) };
+  if (cfg.personaDir !== undefined) out.personaDir = abs(cfg.personaDir);
+  if (cfg.stores !== undefined) out.stores = cfg.stores.map((s) => ({ ...s, dir: abs(s.dir) }));
+  return out;
 }
 
 // Keep this many previous versions of the config. It is one small file holding
@@ -66,12 +76,12 @@ export async function saveConfig(cfg: Config): Promise<string> {
   await mkdir(dirname(path), { recursive: true });
   await rotateBackups(path);
 
-  // Store memoryDir as written by the user (may contain ~) is avoided — we persist
-  // the resolved absolute path for stability across cwd changes.
-  const toWrite: Config = { ...cfg, memoryDir: resolve(expandPath(cfg.memoryDir)) };
+  // Directories are persisted as resolved absolute paths, never as typed (with
+  // a ~ or relative to some cwd), so the file means the same from anywhere.
+  const toWrite = withAbsoluteDirs(cfg);
   // Temp file plus rename: a crash or a full disk leaves the previous config
   // intact rather than a truncated one that fails to parse on the next start.
-  const tmp = `${path}.${process.pid}.tmp`;
+  const tmp = `${path}.${process.pid}.${randomUUID().slice(0, 8)}.tmp`;
   try {
     await writeFile(tmp, JSON.stringify(toWrite, null, 2) + "\n", "utf8");
     await rename(tmp, path);

@@ -3,9 +3,11 @@ import { configBackups, configPath, loadConfig } from "./config/config.js";
 import { migrate } from "./migrations/runner.js";
 import { existsSync } from "node:fs";
 import { Indexer } from "./index/indexer.js";
-import { StorePaths, storePaths } from "./store/paths.js";
+import { StorePaths, primaryPaths } from "./store/paths.js";
 import { ensureGitRepo, gitAvailable } from "./store/git.js";
 import { log, warn } from "./util/log.js";
+import { MountedStore, mountExtraStores } from "./store/stores.js";
+import { extraStores } from "./config/schema.js";
 
 // Shared runtime: config + store paths + the derived index handle. Built once on
 // startup, after migrations have brought the store up to the current schema.
@@ -13,6 +15,9 @@ export interface Runtime {
   config: Config;
   paths: StorePaths;
   indexer: Indexer;
+  // Stores mounted next to the primary one. Absent or empty: the primary is
+  // the only store and every tool behaves as it always has.
+  stores?: MountedStore[];
 }
 
 export async function buildRuntime(): Promise<Runtime> {
@@ -33,12 +38,20 @@ export async function buildRuntime(): Promise<Runtime> {
     );
   }
 
+  if (config.personaDir && !existsSync(config.personaDir)) {
+    warn(
+      `personaDir does not exist: ${config.personaDir}. The persona falls back to the preset and ` +
+        "voice corrections cannot be saved until it does.",
+    );
+  }
+
   // Bring an older store up to the current schema before opening it.
   const migrated = await migrate(config);
   config = migrated.config;
   if (migrated.ranAny) log("migrations applied on startup");
 
-  if (config.git && !(await gitAvailable())) {
+  const gitOk = config.git || extraStores(config).some((s) => s.git) ? await gitAvailable() : false;
+  if (config.git && !gitOk) {
     warn(
       "git is not on PATH — history is off for this session. Your memory is still written as plain " +
         "markdown; install git (on macOS: xcode-select --install) to get versioning back.",
@@ -47,11 +60,12 @@ export async function buildRuntime(): Promise<Runtime> {
   }
   if (config.git) await ensureGitRepo(config.memoryDir);
 
-  const paths = storePaths(config.memoryDir);
+  const paths = primaryPaths(config);
   // Opening the index loads no model. Re-embedding after a model change is a
   // startup task the server runs once the client is connected: done here, it
   // held the handshake for as long as the whole store took to embed.
   const indexer = Indexer.open(paths, config);
 
-  return { config, paths, indexer };
+  const stores = await mountExtraStores(config, { paths, indexer }, gitOk);
+  return stores.length > 0 ? { config, paths, indexer, stores } : { config, paths, indexer };
 }

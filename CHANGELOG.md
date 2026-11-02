@@ -7,6 +7,70 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ## [Unreleased]
 
+> Requires `@modelcontextprotocol/sdk` 1.32.1 or newer (was 1.30.2), moves
+> to zod 4 (zod 3 has an open advisory with no fix on that line), and adds
+> `express`, which the SDK already depended on.
+
+### Added
+
+- **Server mode.** `agent-julia serve --http` runs one long-lived process
+  that serves every session over Streamable HTTP at `/mcp`, with `/healthz`
+  for monitoring. It maintains the stores on a timer, never writes the
+  local Claude files, binds loopback by default and refuses to start
+  unauthenticated anywhere else. The stdio server is unchanged.
+- **Bearer tokens** for the HTTP server (`auth: "bearer"`), managed with
+  `agent-julia server token add|list|revoke`. Stored hashed, reloaded on
+  change, optionally limited to some stores; a session stays with the token
+  that opened it.
+- **Claude.ai and mobile as a custom connector.** With `auth: "oauth"` and
+  a `publicUrl`, the HTTP server is its own OAuth authorization server:
+  dynamic client registration, PKCE, a consent page guarded by an owner
+  password (`agent-julia server set-owner`), hourly access tokens and
+  rotating refresh tokens kept hashed across restarts.
+  `agent-julia server oauth list|revoke` shows and cuts off connected apps.
+  Bearer tokens keep working next to it.
+- **Connect a machine to a server.** With `remote` in the config (or
+  `serve --remote <url>`), `agent-julia serve` relays to an agent-julia
+  server instead of opening a local store: tools, the core resource and
+  the instructions come from the server, the local persona block and skills
+  are refreshed from its core, and a server that is down costs a session
+  seconds, not a hang. `agent-julia init` asks first whether memory lives
+  on this machine or on a server; `doctor` checks reachability, the token
+  and the version on both sides.
+  The relay opens no stream for messages the server never sends, so it
+  works behind a proxy that holds such a stream, as a Cloudflare tunnel
+  does.
+- **Capture hooks** for Claude Code, opt-in with `agent-julia hooks
+  install|uninstall|status`. On each prompt: a reminder to call
+  `correct_voice` when the message reads like a voice correction, and to
+  `ingest` every `nudgeEveryTurns` turns. Before a compaction and at the
+  end of a session: a background `claude -p` reads the new part of the
+  transcript and saves what the session did not, with only search, read,
+  ingest and correct_voice allowed. Only the hooks it wrote are ever
+  changed; `CLAUDE_CONFIG_DIR` is honoured.
+- **Server nudge** (`capture.serverNudge`, off by default): a session that
+  has been reading for 20 minutes without saving anything gets one extra
+  line with its next read, asking whether something is worth keeping. For
+  the surfaces that run no hooks.
+- **Shared stores.** `stores` in the config mounts other agent-julia stores
+  next to your own. Their pages are `name:page`; `search` and `list` cover
+  all of them and rank them as one store; `read`, `history`, `related` and
+  `archive` take the prefixed id; `ingest` writes to a shared store only
+  when given `store`, and never to a read-only one. Each store keeps its own
+  index, lock, git history and remote. Without `stores`, the tools, their
+  arguments and their output are the same as before.
+- **`personaDir`** in the config: the voice (`persona.md`,
+  `voice-corrections.md`) can come from another agent-julia store than the
+  memory. Corrections are written and committed there. Without the field
+  nothing changes.
+
+### Fixed
+
+- **A session killed mid-write held up the others for a minute.** Its store
+  lock stayed behind until it went stale, and every write in the meantime
+  waited and then failed. A lock left by a process on this machine that is
+  no longer running is now taken over at once.
+
 ## [0.1.44] - 2026-10-10
 
 > If you absorbed Claude Code's memory with 0.1.43, run `agent-julia sync`

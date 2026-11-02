@@ -61,7 +61,14 @@ const MIGRATE_WAIT_MS = 60_000;
 // config backups filled with copies written after the migration, pushing out
 // the ones from before it. Under the store lock the state is read again; a
 // server that waited finds the work done and moves on.
-export async function migrate(config: Config): Promise<{ config: Config; ranAny: boolean }> {
+// `persistConfig: false` is for a mounted store: its migrations run against a
+// view of the config pointing at that store, and saving that view would point
+// the user's config at the wrong directory.
+export async function migrate(
+  config: Config,
+  opts: { persistConfig?: boolean } = {},
+): Promise<{ config: Config; ranAny: boolean }> {
+  const persistConfig = opts.persistConfig ?? true;
   const paths = storePaths(config.memoryDir);
   // Unlocked first look: on every boot but the first after a schema change
   // there is nothing to do, and that must not cost a lock.
@@ -69,7 +76,9 @@ export async function migrate(config: Config): Promise<{ config: Config; ranAny:
   refuseNewer(seen);
   if (seen.schemaVersion === CURRENT_SCHEMA_VERSION) return { config, ranAny: false };
 
-  const result = await withStoreLock(paths.root, () => migrateLocked(config, paths), { waitMs: MIGRATE_WAIT_MS });
+  const result = await withStoreLock(paths.root, () => migrateLocked(config, paths, persistConfig), {
+    waitMs: MIGRATE_WAIT_MS,
+  });
   if (!result) {
     throw new Error(
       "another agent-julia process is migrating this memory store and has not finished; start again in a moment",
@@ -78,7 +87,11 @@ export async function migrate(config: Config): Promise<{ config: Config; ranAny:
   return result;
 }
 
-async function migrateLocked(config: Config, paths: StorePaths): Promise<{ config: Config; ranAny: boolean }> {
+async function migrateLocked(
+  config: Config,
+  paths: StorePaths,
+  persistConfig: boolean,
+): Promise<{ config: Config; ranAny: boolean }> {
   const state = await readState(paths);
   refuseNewer(state);
 
@@ -121,7 +134,7 @@ async function migrateLocked(config: Config, paths: StorePaths): Promise<{ confi
   }
 
   const updated: Config = { ...config, schemaVersion: CURRENT_SCHEMA_VERSION };
-  await saveConfig(updated);
+  if (persistConfig) await saveConfig(updated);
   return { config: updated, ranAny: true };
 }
 

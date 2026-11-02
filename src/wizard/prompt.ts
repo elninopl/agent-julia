@@ -1,5 +1,6 @@
 import { createInterface, Interface } from "node:readline/promises";
 import { c, wrapText } from "./ui.js";
+import { readHidden } from "../util/hidden-input.js";
 
 export interface ChoiceOption<T extends string> {
   value: T;
@@ -17,13 +18,19 @@ const PAD = "  ";
 export class Prompter {
   private rl: Interface;
   private closed = false;
+  private suspended = false;
   constructor() {
-    this.rl = createInterface({ input: process.stdin, output: process.stdout });
+    this.rl = this.open();
+  }
+
+  private open(): Interface {
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
     // If the input stream closes mid-wizard (Ctrl-D, piped EOF), stop rather than
     // racing through every remaining prompt on its default.
-    this.rl.on("close", () => {
-      this.closed = true;
+    rl.on("close", () => {
+      if (!this.suspended) this.closed = true;
     });
+    return rl;
   }
 
   private async ask(defaultHint?: string): Promise<string> {
@@ -69,6 +76,22 @@ export class Prompter {
       .toLowerCase();
     if (!raw) return defaultYes;
     return raw.startsWith("y");
+  }
+
+  // Input that is not echoed, for a token. readline echoes whatever it
+  // reads, so it is closed for this one answer, read in raw mode, and opened
+  // again.
+  async secret(): Promise<string> {
+    if (this.closed) throw new Error("input stream closed — setup aborted");
+    process.stdout.write(`${PAD}${c.cyanBold("❯")} ${c.dim("(hidden)")} `);
+    this.suspended = true;
+    this.rl.close();
+    try {
+      return (await readHidden()).trim();
+    } finally {
+      this.rl = this.open();
+      this.suspended = false;
+    }
   }
 
   close(): void {

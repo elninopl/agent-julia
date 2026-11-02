@@ -57,6 +57,55 @@ export const EmbeddingConfigSchema = z.object({
 });
 export type EmbeddingConfig = z.infer<typeof EmbeddingConfigSchema>;
 
+// A store mounted next to the primary one (memoryDir). Same layout, its own
+// index, lock and git; its pages are addressed as `<name>:<page>`. Read-only
+// unless `write` is set, so a model can never write into it by accident.
+export const STORE_NAME_RE = /^[a-z][a-z0-9-]{1,31}$/;
+export const ExtraStoreSchema = z.object({
+  name: z
+    .string()
+    .regex(STORE_NAME_RE, "store name: 2-32 characters, lowercase letters, digits and dashes, starting with a letter")
+    // Token scopes call the primary store "primary".
+    .refine((n) => n !== "primary", 'store name "primary" is reserved for your own store'),
+  dir: z.string().min(1),
+  write: z.boolean().default(false),
+  git: z.boolean().default(true),
+  gitRemote: z.string().optional(),
+  gitAutoPush: z.boolean().default(false),
+});
+export type ExtraStore = z.infer<typeof ExtraStoreSchema>;
+
+export const SERVER_AUTH = ["oauth", "bearer", "none"] as const;
+export type ServerAuth = (typeof SERVER_AUTH)[number];
+
+// Only read by `serve --http`.
+export const ServerConfigSchema = z.object({
+  host: z.string().min(1).default("127.0.0.1"),
+  port: z.number().int().min(0).max(65535).default(8787),
+  // The URL clients use to reach this server through a reverse proxy, e.g.
+  // https://julia.example.com. Required for oauth; with it set, "none" is refused.
+  publicUrl: z.string().url().optional(),
+  auth: z.enum(SERVER_AUTH).default("none"),
+  maintenanceEveryMinutes: z.number().int().positive().default(60),
+});
+export type ServerConfig = z.infer<typeof ServerConfigSchema>;
+
+// Only read by `serve --remote`. The token comes from the environment, never
+// from this file.
+export const RemoteConfigSchema = z.object({
+  url: z.string().url(),
+  tokenEnv: z.string().min(1).default("AGENT_JULIA_TOKEN"),
+});
+export type RemoteConfig = z.infer<typeof RemoteConfigSchema>;
+
+export const CaptureConfigSchema = z.object({
+  hooks: z.boolean().default(false),
+  nudgeEveryTurns: z.number().int().positive().default(10),
+  extractOnCompact: z.boolean().default(true),
+  serverNudge: z.boolean().default(false),
+});
+export type CaptureConfig = z.infer<typeof CaptureConfigSchema>;
+
 export const ConfigSchema = z.object({
   schemaVersion: z.number().int().positive().default(CURRENT_SCHEMA_VERSION),
 
@@ -107,9 +156,47 @@ export const ConfigSchema = z.object({
     "card numbers, bank account numbers, IBANs, exact financial amounts",
     "third-party private data without consent",
   ]),
+
+  // Everything below is optional and has no default, so a config written by an
+  // earlier version parses to exactly what it parsed to there and is saved back
+  // byte for byte. Read them through the helpers at the end of this file.
+
+  // Read persona.md and voice-corrections.md from this directory instead of
+  // memoryDir, and write corrections there. Lets a process whose memory is a
+  // shared store keep the persona of a private one.
+  personaDir: z.string().min(1).optional(),
+
+  stores: z
+    .array(ExtraStoreSchema)
+    .superRefine((stores, ctx) => {
+      const seen = new Set<string>();
+      stores.forEach((s, i) => {
+        if (seen.has(s.name)) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, path: [i, "name"], message: `duplicate store name "${s.name}"` });
+        }
+        seen.add(s.name);
+      });
+    })
+    .optional(),
+
+  server: ServerConfigSchema.optional(),
+  remote: RemoteConfigSchema.optional(),
+  capture: CaptureConfigSchema.optional(),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
+
+export function extraStores(cfg: Config): ExtraStore[] {
+  return cfg.stores ?? [];
+}
+
+export function serverSettings(cfg: Config): ServerConfig {
+  return ServerConfigSchema.parse(cfg.server ?? {});
+}
+
+export function captureSettings(cfg: Config): CaptureConfig {
+  return CaptureConfigSchema.parse(cfg.capture ?? {});
+}
 
 export function defaultConfig(memoryDir: string): Config {
   return ConfigSchema.parse({ memoryDir, schemaVersion: CURRENT_SCHEMA_VERSION });

@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { hostname } from "node:os";
 import { join } from "node:path";
 import { warn } from "../util/log.js";
 
@@ -47,7 +48,7 @@ export async function withStoreLock<T>(
   if (outer?.has(lockDir)) return fn();
 
   await mkdir(internal, { recursive: true });
-  const token = `${process.pid}:${randomUUID()}`;
+  const token = `${process.pid}:${randomUUID()}@${HOST}`;
   const deadline = Date.now() + waitMs;
 
   for (;;) {
@@ -59,7 +60,8 @@ export async function withStoreLock<T>(
       if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
       const owner = await readOwner(tokenFile);
       const age = await lockAge(tokenFile, lockDir);
-      if (age !== null && age > STALE_MS && (await reclaim(lockDir, tokenFile, owner, name))) continue;
+      const stale = (age !== null && age > STALE_MS) || deadHolder(owner);
+      if (stale && (await reclaim(lockDir, tokenFile, owner, name))) continue;
       if (Date.now() >= deadline) {
         if (waitMs > 0) warn(`${name} lock busy — skipping this operation (the next write picks the changes up)`);
         return null;
@@ -126,12 +128,36 @@ async function reclaim(lockDir: string, tokenFile: string, owner: string | null,
     if ((await readOwner(tokenFile)) !== owner) return false;
     const age = await lockAge(tokenFile, lockDir);
     if (age === null) return true;
-    if (age <= STALE_MS) return false;
-    warn(`reclaiming a stale ${name} lock (holder ${owner ?? "unknown"}, idle ${Math.round(age / 1000)}s)`);
+    const dead = deadHolder(owner);
+    if (age <= STALE_MS && !dead) return false;
+    warn(
+      dead
+        ? `reclaiming a ${name} lock left by a process that is gone (holder ${owner})`
+        : `reclaiming a stale ${name} lock (holder ${owner ?? "unknown"}, idle ${Math.round(age / 1000)}s)`,
+    );
     await rm(lockDir, { recursive: true, force: true });
     return true;
   } finally {
     await rm(guard, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
+// A holder on this machine whose process no longer exists: killed, crashed,
+// or the machine restarted. Its lock is free now, not in a minute. Tokens
+// name their host, so a store synced between machines never has a lock taken
+// from a live process on the other one; a token from before hosts were
+// recorded is left to the idle rule.
+const HOST = hostname();
+export function deadHolder(owner: string | null): boolean {
+  const m = owner ? /^(\d+):[^@]+@(.+)$/.exec(owner) : null;
+  if (!m || m[2] !== HOST) return false;
+  const pid = Number(m[1]);
+  if (pid === process.pid) return false;
+  try {
+    process.kill(pid, 0);
+    return false;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === "ESRCH";
   }
 }
 

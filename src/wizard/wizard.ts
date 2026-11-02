@@ -12,7 +12,7 @@ import {
 import { configExists, configPath, saveConfig } from "../config/config.js";
 import { migrate } from "../migrations/runner.js";
 import { Indexer } from "../index/indexer.js";
-import { storePaths } from "../store/paths.js";
+import { primaryPaths } from "../store/paths.js";
 import { listPageIds } from "../store/markdown.js";
 import { ensureGitRepo, setRemoteUrl, verifyRemote } from "../store/git.js";
 import { allPresets, presetSample, styleLabel } from "../persona/presets.js";
@@ -64,6 +64,27 @@ export async function runWizard(): Promise<void> {
         info("Kept your existing setup. Nothing changed.");
         return;
       }
+    }
+
+    console.log("");
+    info("Where should your memory live?");
+    const where = await p.choice<"local" | "remote">([
+      {
+        value: "local",
+        label: "On this machine",
+        recommended: true,
+        desc: "A folder you own, as plain markdown under git. The usual setup, and all you need on one computer.",
+      },
+      {
+        value: "remote",
+        label: "On an agent-julia server",
+        desc: "Connect to one that already runs `agent-julia serve --http`, e.g. on your other computer. Nothing is stored here: persona and memory come from the server.",
+      },
+    ]);
+    if (where === "remote") {
+      const { runRemoteSetup } = await import("./remote-setup.js");
+      await runRemoteSetup(p);
+      return;
     }
 
     // 1 — Name
@@ -351,7 +372,7 @@ export async function runWizard(): Promise<void> {
     }
 
     // Adopt an existing markdown knowledge base if one is already there.
-    const paths = storePaths(config.memoryDir);
+    const paths = primaryPaths(config);
     const existing = await listPageIds(paths);
     if (existing.length > 0) {
       ok(`Adopted your existing knowledge base — ${c.bold(String(existing.length))} page(s).`);

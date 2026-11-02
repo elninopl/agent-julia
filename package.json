@@ -1,7 +1,7 @@
 {
   "name": "agent-julia",
   "version": "0.1.44",
-  "description": "One brain for your AI — a local-first, owned memory and configurable persona shared across Claude Code and Cowork (Claude Desktop), exposed as an MCP server.",
+  "description": "One AI that knows you, in every Claude you use: a named persona and a memory you own, shared by Claude Code, Claude Desktop, claude.ai and the Claude mobile app. Plain markdown in git, served over MCP.",
   "author": "Paweł Gniadkowski (elniño) <el@elnino.pl>",
   "license": "MIT",
   "type": "module",
@@ -40,10 +40,11 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.30.2",
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "express": "^5.2.1",
     "franc-min": "^6.2.0",
     "js-yaml": "^4.3.2",
-    "zod": "^3.24.0"
+    "zod": "^4.6.7"
   },
   "peerDependencies": {
     "@huggingface/transformers": "^3 || ^4"
@@ -54,6 +55,7 @@
     }
   },
   "devDependencies": {
+    "@types/express": "^5.0.6",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^24.0.0",
     "tsx": "^4.19.0",

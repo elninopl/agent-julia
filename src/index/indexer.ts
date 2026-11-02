@@ -15,7 +15,7 @@ import {
 } from "./db.js";
 import { EmbeddingProvider, makeEmbeddingProvider } from "./embeddings.js";
 import { ftsDelete, ftsUpsert } from "./fts.js";
-import { SearchResult, search } from "./search.js";
+import { SearchResult, SearchSignals, search, searchSignals } from "./search.js";
 import {
   clearEmbeddings,
   dropOtherModels,
@@ -34,16 +34,20 @@ export class Indexer {
     readonly provider: EmbeddingProvider,
     private readonly paths: StorePaths,
     private readonly config: Config,
+    private readonly ownsProvider: boolean,
   ) {}
 
   // `provider` is an injection seam for tests; production callers omit it.
-  static open(paths: StorePaths, config: Config, provider?: EmbeddingProvider): Indexer {
+  // `shared: true` borrows a provider another indexer owns: mounted stores use
+  // the primary's, so one embedding process serves them all, and closing a
+  // store's index leaves it running for the others.
+  static open(paths: StorePaths, config: Config, provider?: EmbeddingProvider, opts: { shared?: boolean } = {}): Indexer {
     const db = openDb(paths, ftsTokenizerFor(config.language));
-    return new Indexer(db, provider ?? makeEmbeddingProvider(config.embedding), paths, config);
+    return new Indexer(db, provider ?? makeEmbeddingProvider(config.embedding), paths, config, !opts.shared);
   }
 
   close(): void {
-    this.provider.close?.();
+    if (this.ownsProvider) this.provider.close?.();
     // Truncate the WAL back into the main db on clean shutdown so the -wal file
     // doesn't linger large and mmapped for the next readers. Best-effort.
     try {
@@ -151,6 +155,12 @@ export class Indexer {
       { name: "embed", waitMs: 0 },
     );
     return ran ?? false;
+  }
+
+  // `provider` overrides this index's own for one call: a search across stores
+  // passes one that embeds the query once for all of them.
+  signals(query: string, pool: number, provider: EmbeddingProvider = this.provider): Promise<SearchSignals> {
+    return searchSignals(this.db, provider, this.config.search, query, pool);
   }
 
   search(query: string, limit: number): Promise<SearchResult[]> {

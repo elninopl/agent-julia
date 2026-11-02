@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "name": "Ada",
+  "gender": "n",
+  "pronouns": "they/them",
+  "language": "de",
+  "stylePreset": "custom",
+  "memoryDir": "/home/ada/memory",
+  "git": true,
+  "gitRemote": "git@example.com:ada/memory.git",
+  "gitAutoPush": true,
+  "search": "hybrid",
+  "embedding": {
+    "provider": "local",
+    "model": "Xenova/multilingual-e5-small",
+    "apiKeyEnv": "AGENT_JULIA_EMBED_API_KEY",
+    "dtype": "q8"
+  },
+  "contextBudget": 1500,
+  "surfaces": [
+    "code"
+  ],
+  "exports": [
+    "/home/ada/.codex/AGENTS.md"
+  ],
+  "weeklyMaintenance": "own-routine",
+  "codeMemory": "absorb",
+  "privacyHardOff": [
+    "passwords, API keys, tokens, access secrets",
+    "card numbers, bank account numbers, IBANs, exact financial amounts",
+    "third-party private data without consent"
+  ]
+}

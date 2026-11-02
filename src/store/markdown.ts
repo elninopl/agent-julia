@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, readdir, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
@@ -45,10 +46,18 @@ export function todayISO(now = new Date()): string {
 }
 
 // Extract [[wiki-style]] cross-links from a body, normalized to page ids.
-export function extractLinks(body: string): string[] {
+// Links into a mounted store ([[team:page]], with "team" in `foreign`) are not
+// links of this store and are left out.
+export function extractLinks(body: string, foreign?: ReadonlySet<string>): string[] {
   const out = new Set<string>();
   for (const m of body.matchAll(LINK_RE)) {
-    if (m[1]) out.add(pageId(m[1].split("|")[0]!.trim()));
+    if (!m[1]) continue;
+    const ref = m[1].split("|")[0]!.trim();
+    if (foreign && foreign.size > 0) {
+      const colon = ref.indexOf(":");
+      if (colon > 0 && foreign.has(ref.slice(0, colon).trim().toLowerCase())) continue;
+    }
+    out.add(pageId(ref));
   }
   return [...out];
 }
@@ -371,7 +380,8 @@ function stripCoreKeys(fm: PageFrontmatter): PageFrontmatter {
 // leaves a half-written page where a whole one used to be — in the store that is
 // the product's only copy of what it knows.
 export async function writeFileAtomic(path: string, content: string): Promise<void> {
-  const tmp = `${path}.${process.pid}.tmp`;
+  // pid alone is not unique: a server writes for many sessions at once.
+  const tmp = `${path}.${process.pid}.${randomUUID().slice(0, 8)}.tmp`;
   try {
     await writeFile(tmp, content, "utf8");
     await rename(tmp, path);

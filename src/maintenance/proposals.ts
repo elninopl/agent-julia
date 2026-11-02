@@ -30,7 +30,11 @@ const MAX_DUPLICATES = 10;
 const OVERSIZED_TOKENS = 1200;
 const STALE_AFTER_DAYS = 270;
 
-export async function buildProposals(paths: StorePaths, indexer: Indexer): Promise<Proposals> {
+export async function buildProposals(
+  paths: StorePaths,
+  indexer: Indexer,
+  foreign?: ReadonlySet<string>,
+): Promise<Proposals> {
   const ids = await listPageIds(paths);
   const idSet = new Set(ids);
 
@@ -45,7 +49,7 @@ export async function buildProposals(paths: StorePaths, indexer: Indexer): Promi
   for (const id of ids) {
     const page = await readPage(paths, id);
     if (!page) continue;
-    const links = extractLinks(page.body).filter((l) => l !== id);
+    const links = extractLinks(page.body, foreign).filter((l) => l !== id);
     outbound.set(id, links);
     for (const link of links) {
       if (idSet.has(link)) hasInbound.add(link);

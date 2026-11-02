@@ -2,7 +2,7 @@
 import { startServer } from "./server.js";
 import { runWizard } from "./wizard/wizard.js";
 import { buildInstructions, install, uninstall } from "./wizard/register.js";
-import { loadConfig, saveConfig } from "./config/config.js";
+import { configExists, loadConfig, saveConfig } from "./config/config.js";
 import { migrate } from "./migrations/runner.js";
 import { ensureGitRepo, getRemoteUrl, pushToRemote, setRemoteUrl, verifyRemote } from "./store/git.js";
 import { dirname } from "node:path";
@@ -15,6 +15,12 @@ const HELP = `agent-julia — one brain for your AI
 
 Usage:
   agent-julia serve      Start the MCP stdio server (default; used by Claude clients)
+  agent-julia serve --http [--host h] [--port n]  Run as a long-lived HTTP server for many clients (see "Run as a server")
+  agent-julia serve --remote [url]  Relay to an agent-julia server instead of a local store (the default when the config has "remote")
+  agent-julia server token add <name> [--stores a,b] | list | revoke <name>  Manage the server's bearer tokens
+  agent-julia server set-owner  Set the password that approves OAuth connections (claude.ai)
+  agent-julia server oauth list | revoke <client-id|all>  See or cut off the apps connected over OAuth
+  agent-julia hooks install | uninstall | status  Claude Code hooks that remind the agent to save, and save what a session left out
   agent-julia init       Run the interactive setup wizard
   agent-julia sync       Re-apply MCP registration + persona core + shipped skills (--print shows the steps; --absorb-all also brings in a large Claude Code memory)
   agent-julia uninstall  Remove the managed persona blocks, MCP registration, and shipped skills
@@ -48,20 +54,164 @@ function assertNodeVersion(): void {
   }
 }
 
+// Commands that work on the local store. A machine that connects to a server
+// has none, and running them would quietly create an empty one.
+const LOCAL_STORE_COMMANDS = new Set([
+  "remote", "pull", "push", "search", "read", "export", "maintenance", "undo",
+  "reindex", "unarchive", "relocate", "migrate",
+]);
+
 async function main(): Promise<void> {
   assertNodeVersion();
   const cmd = process.argv[2] ?? "serve";
 
+  const withVoicePaste = cmd === "paste" && process.argv.includes("--with-voice");
+  if ((LOCAL_STORE_COMMANDS.has(cmd) || withVoicePaste) && configExists()) {
+    const cfg = await loadConfig();
+    if (cfg.remote) {
+      console.error(
+        `This machine connects to the agent-julia server at ${cfg.remote.url}, so it has no memory store of its own. ` +
+          `Run \`agent-julia ${cmd}\` on the server.`,
+      );
+      process.exit(1);
+    }
+  }
+
   switch (cmd) {
-    case "serve":
+    case "serve": {
+      if (process.argv.includes("--http")) {
+        const flag = (name: string): string | undefined => {
+          const i = process.argv.indexOf(name);
+          return i > 0 ? process.argv[i + 1] : undefined;
+        };
+        const port = flag("--port");
+        const host = flag("--host");
+        if (port !== undefined && !/^\d+$/.test(port)) throw new Error(`--port needs a number, got "${port}"`);
+        const { startHttpServer } = await import("./http/serve-http.js");
+        await startHttpServer({
+          ...(port !== undefined ? { port: Number(port) } : {}),
+          ...(host !== undefined ? { host } : {}),
+        });
+        break;
+      }
+      const i = process.argv.indexOf("--remote");
+      const remoteUrl = i > 0 && process.argv[i + 1] && !process.argv[i + 1]!.startsWith("--") ? process.argv[i + 1] : undefined;
+      const cfg = configExists() ? await loadConfig() : null;
+      if (i > 0 || cfg?.remote) {
+        if (!cfg) throw new Error("serve --remote needs a config for the persona's name and surfaces; run agent-julia init first");
+        const { startRemoteProxy } = await import("./remote/remote.js");
+        await startRemoteProxy(cfg, remoteUrl);
+        break;
+      }
       await startServer();
       break;
+    }
+    case "server": {
+      const [sub, verb, arg] = process.argv.slice(3);
+      if (sub === "set-owner") {
+        const { readPassword, setOwnerPassword, ownerFile, ownerIsSet } = await import("./http/owner.js");
+        const replacing = ownerIsSet();
+        const first = await readPassword("Owner password (12+ characters): ");
+        if (process.stdin.isTTY && (await readPassword("Again: ")) !== first) throw new Error("the passwords differ");
+        await setOwnerPassword(first);
+        console.log(`Owner password ${replacing ? "changed" : "set"} (kept hashed in ${ownerFile()}).`);
+        if (replacing) console.log("Apps already connected stay connected. To cut them off: agent-julia server oauth revoke all");
+        break;
+      }
+      if (sub === "oauth" && (verb === "list" || verb === "revoke")) {
+        const { listOAuthClients, revokeOAuthClients, oauthFile } = await import("./http/oauth.js");
+        if (verb === "list") {
+          const clients = listOAuthClients();
+          if (clients.length === 0) console.log(`No OAuth clients (${oauthFile()}).`);
+          for (const c of clients) {
+            console.log(
+              `${c.id}  ${c.name}  registered ${c.registeredAt.slice(0, 10)}  ` +
+                (c.lastUsedAt ? `last used ${c.lastUsedAt.slice(0, 10)}, ${c.grants} active grant(s)` : "never used"),
+            );
+          }
+          break;
+        }
+        if (!arg) throw new Error("agent-julia server oauth revoke needs a client id (see `server oauth list`) or all");
+        const n = await revokeOAuthClients(arg);
+        console.log(n > 0 ? `Revoked ${n} client(s); they have to be approved again.` : `No client matches "${arg}".`);
+        break;
+      }
+      if (sub !== "token" || !["add", "list", "revoke"].includes(verb ?? "")) {
+        console.log(
+          "Usage:\n  agent-julia server token add <name> [--stores primary,team] | list | revoke <name>\n" +
+            "  agent-julia server set-owner\n  agent-julia server oauth list | revoke <client-id|all>",
+        );
+        break;
+      }
+      const { addToken, readTokens, revokeToken, tokensFile, PRIMARY_SCOPE } = await import("./http/tokens.js");
+      if (verb === "list") {
+        const tokens = await readTokens();
+        if (tokens.length === 0) console.log(`No tokens (${tokensFile()}).`);
+        for (const t of tokens) {
+          console.log(`${t.name}  ${t.stores ? `stores: ${t.stores.join(", ")}` : "all stores"}  created ${t.createdAt.slice(0, 10)}`);
+        }
+        break;
+      }
+      if (!arg) throw new Error(`agent-julia server token ${verb} needs a name`);
+      if (verb === "revoke") {
+        console.log((await revokeToken(arg)) ? `Revoked "${arg}".` : `No token named "${arg}".`);
+        break;
+      }
+      const i = process.argv.indexOf("--stores");
+      const stores = i > 0 ? (process.argv[i + 1] ?? "").split(",").map((x) => x.trim()).filter(Boolean) : undefined;
+      if (stores) {
+        const cfg = await loadConfig();
+        const known = new Set([PRIMARY_SCOPE, ...(cfg.stores ?? []).map((x) => x.name)]);
+        const unknown = stores.filter((x) => !known.has(x));
+        if (unknown.length > 0) {
+          throw new Error(`unknown store(s): ${unknown.join(", ")}. Known: ${[...known].join(", ")}`);
+        }
+      }
+      const { token } = await addToken(arg, stores);
+      console.log(`Token "${arg}"${stores ? ` for ${stores.join(", ")}` : ""}. Shown once, store it now:\n\n${token}\n`);
+      console.log(`Clients send it as: Authorization: Bearer <token>. Kept hashed in ${tokensFile()}.`);
+      break;
+    }
+    case "hooks": {
+      const verb = process.argv[3];
+      const cfg = await loadConfig();
+      const { installHooks, uninstallHooks, hookStatus } = await import("./hooks/hooks.js");
+      if (verb === "install") {
+        const res = await installHooks(cfg);
+        console.log(`Hooks ${res.settingsChanged ? "written to" : "already in"} ${res.settingsFile}: ${res.events.join(", ")}.`);
+        console.log("Every prompt: a reminder to call correct_voice when you correct the voice, and to ingest every " +
+          `${res.config.capture?.nudgeEveryTurns ?? 10} turns.`);
+        if (res.events.includes("PreCompact")) {
+          console.log("Before a compaction and at the end of a session, a background `claude -p` reads what was said and saves " +
+            "what the session did not. It runs on your Claude plan; set capture.extractOnCompact to false to turn it off.");
+        }
+        console.log("Restart Claude Code sessions to pick them up.");
+      } else if (verb === "uninstall") {
+        const res = await uninstallHooks(cfg);
+        console.log(res.settingsChanged ? `Removed agent-julia hooks from ${res.settingsFile}.` : `No agent-julia hooks in ${res.settingsFile}.`);
+      } else if (verb === "status") {
+        const st = await hookStatus(cfg);
+        console.log(`capture.hooks: ${st.enabled ? "on" : "off"}`);
+        console.log(`settings: ${st.settingsFile} — ${st.events.length ? st.events.join(", ") : "no agent-julia hooks"}`);
+        console.log(`script: ${st.script}${st.claude ? ` · claude: ${st.claude}` : ""}`);
+      } else {
+        console.log("Usage: agent-julia hooks install | uninstall | status");
+      }
+      break;
+    }
     case "init":
     case "wizard":
       await runWizard();
       break;
     case "sync": {
       const cfg = await loadConfig();
+      if (cfg.remote && !process.argv.includes("--print")) {
+        const { remoteInstallInputs } = await import("./remote/remote.js");
+        const { config: withId, core } = await remoteInstallInputs(cfg);
+        const steps = await install(withId, { core });
+        for (const s of steps) console.log(`[${s.status}] ${s.surface} — ${s.action}: ${s.detail}`);
+        break;
+      }
       if (process.argv.includes("--print")) {
         console.log(await buildInstructions(cfg));
       } else {
@@ -136,9 +286,9 @@ async function main(): Promise<void> {
         break;
       }
       const cfg = await loadConfig();
-      const { storePaths } = await import("./store/paths.js");
+      const { primaryPaths } = await import("./store/paths.js");
       const { Indexer } = await import("./index/indexer.js");
-      const idx = Indexer.open(storePaths(cfg.memoryDir), cfg);
+      const idx = Indexer.open(primaryPaths(cfg), cfg);
       try {
         await idx.sync();
         const hits = await idx.search(q, 10);
@@ -161,9 +311,9 @@ async function main(): Promise<void> {
         break;
       }
       const cfg = await loadConfig();
-      const { storePaths } = await import("./store/paths.js");
+      const { primaryPaths } = await import("./store/paths.js");
       const { readPage } = await import("./store/markdown.js");
-      const found = await readPage(storePaths(cfg.memoryDir), page);
+      const found = await readPage(primaryPaths(cfg), page);
       console.log(found ? `# ${found.frontmatter.title ?? found.id}\n\n${found.body}` : `No page found: ${page}`);
       break;
     }
@@ -199,12 +349,12 @@ async function main(): Promise<void> {
     }
     case "maintenance": {
       const cfg = await loadConfig();
-      const { storePaths } = await import("./store/paths.js");
+      const { primaryPaths } = await import("./store/paths.js");
       const { Indexer } = await import("./index/indexer.js");
       const { runMaintenance } = await import("./maintenance/maintenance.js");
-      const idx = Indexer.open(storePaths(cfg.memoryDir), cfg);
+      const idx = Indexer.open(primaryPaths(cfg), cfg);
       try {
-        const r = await runMaintenance(storePaths(cfg.memoryDir), idx, cfg, "auto");
+        const r = await runMaintenance(primaryPaths(cfg), idx, cfg, "auto");
         console.log(
           `Maintenance done: +${r.indexAdded}/~${r.indexUpdated}/-${r.indexRemoved} indexed, ` +
             `${r.staleFlagged.length} stale-flagged, ${r.orphanLinks.length} orphan link(s), ` +
@@ -219,6 +369,25 @@ async function main(): Promise<void> {
             `Warning: the persona core does not fit contextBudget ${r.coreBudget} — ${parts.join(" and ")}. ` +
               `Raise contextBudget in the config, or shorten persona.md / voice-corrections.md.`,
           );
+        }
+        const { extraStores } = await import("./config/schema.js");
+        if (extraStores(cfg).length > 0) {
+          const { mountExtraStores } = await import("./store/stores.js");
+          const { gitAvailable } = await import("./store/git.js");
+          const stores = await mountExtraStores(cfg, { paths: primaryPaths(cfg), indexer: idx }, await gitAvailable());
+          for (const s of stores) {
+            try {
+              const sr = await runMaintenance(s.paths, s.indexer, s.config, "auto");
+              console.log(
+                `Store ${s.name}: +${sr.indexAdded}/~${sr.indexUpdated}/-${sr.indexRemoved} indexed, ` +
+                  `${sr.orphanLinks.length} orphan link(s)${sr.committed ? ", committed" : ""}${sr.pushed ? ", pushed" : ""}.`,
+              );
+            } catch (err) {
+              console.log(`Store ${s.name}: maintenance failed (${(err as Error).message}).`);
+            } finally {
+              s.indexer.close();
+            }
+          }
         }
         console.log("For the interactive digest (merge/retire proposals), ask your agent to run the weekly digest.");
       } finally {
@@ -255,9 +424,9 @@ async function main(): Promise<void> {
         process.exitCode = 1;
         break;
       }
-      const { storePaths } = await import("./store/paths.js");
+      const { primaryPaths } = await import("./store/paths.js");
       const { Indexer } = await import("./index/indexer.js");
-      const idx = Indexer.open(storePaths(cfg.memoryDir), cfg);
+      const idx = Indexer.open(primaryPaths(cfg), cfg);
       try {
         const synced = await idx.sync();
         console.log(
@@ -271,9 +440,9 @@ async function main(): Promise<void> {
     }
     case "reindex": {
       const cfg = await loadConfig();
-      const { storePaths } = await import("./store/paths.js");
+      const { primaryPaths } = await import("./store/paths.js");
       const { Indexer } = await import("./index/indexer.js");
-      const idx = Indexer.open(storePaths(cfg.memoryDir), cfg);
+      const idx = Indexer.open(primaryPaths(cfg), cfg);
       try {
         const n = await idx.rebuild();
         console.log(`Rebuilt the index from ${n} page(s) of markdown.`);
@@ -285,9 +454,9 @@ async function main(): Promise<void> {
     case "unarchive": {
       const page = process.argv[3];
       const cfg = await loadConfig();
-      const { storePaths } = await import("./store/paths.js");
+      const { primaryPaths } = await import("./store/paths.js");
       const { listArchivedIds, unarchivePage } = await import("./store/markdown.js");
-      const paths = storePaths(cfg.memoryDir);
+      const paths = primaryPaths(cfg);
       if (!page) {
         const ids = await listArchivedIds(paths);
         console.log(ids.length ? `Archived pages:\n  ${ids.join("\n  ")}` : "Nothing is archived.");
@@ -357,14 +526,14 @@ async function main(): Promise<void> {
       const { pasteBody, pasteWithVoice, pasteHash, configFingerprint, PASTE_LAYOUT } = await import(
         "./persona/paste.js"
       );
-      const { storePaths } = await import("./store/paths.js");
+      const { primaryPaths } = await import("./store/paths.js");
       const { managedBlock } = await import("./managed/block.js");
       const { STARTUP_BLOCK_ID } = await import("./persona/startup.js");
       const { writePasteMarker } = await import("./wizard/register.js");
       const { copyToClipboard } = await import("./util/clipboard.js");
       const { hostname } = await import("node:os");
 
-      const body = withVoice ? await pasteWithVoice(storePaths(cfg.memoryDir), cfg) : await pasteBody(cfg);
+      const body = withVoice ? await pasteWithVoice(primaryPaths(cfg), cfg) : await pasteBody(cfg);
       const block = managedBlock(STARTUP_BLOCK_ID, body);
       const copied = await copyToClipboard(block);
 
@@ -401,14 +570,30 @@ async function main(): Promise<void> {
     }
     case "doctor": {
       const cfg = await loadConfig();
+      if (cfg.remote) {
+        const { runRemoteDoctor, formatChecks } = await import("./doctor/doctor.js");
+        let checks = await runRemoteDoctor(cfg);
+        console.log(formatChecks(checks));
+        if (process.argv.includes("--fix") && checks.some((c) => c.name.startsWith("persona") || c.name.startsWith("mcp"))) {
+          console.log("\nApplying the repairs that are safe to make automatically:");
+          const { remoteInstallInputs } = await import("./remote/remote.js");
+          const { config: withId, core } = await remoteInstallInputs(cfg);
+          for (const s of await install(withId, { core })) console.log(`  [${s.status}] ${s.surface} — ${s.action}`);
+          checks = await runRemoteDoctor(cfg);
+          console.log("\nAfter:");
+          console.log(formatChecks(checks));
+        }
+        if (checks.some((c) => c.status === "fail")) process.exit(1);
+        break;
+      }
       const { runDoctor, formatChecks } = await import("./doctor/doctor.js");
       let checks = await runDoctor(cfg);
       console.log(formatChecks(checks));
       if (process.argv.includes("--fix")) {
         console.log("\nApplying the repairs that are safe to make automatically:");
-        const { storePaths } = await import("./store/paths.js");
+        const { primaryPaths } = await import("./store/paths.js");
         const { Indexer } = await import("./index/indexer.js");
-        const paths = storePaths(cfg.memoryDir);
+        const paths = primaryPaths(cfg);
         if (checks.some((c) => c.name === "index" && c.status !== "ok")) {
           const { rmSync } = await import("node:fs");
           rmSync(paths.dbPath, { force: true });
@@ -463,10 +648,10 @@ main().catch((err) => {
 // server does the same thing on boot.
 async function adoptCodeMemoryNow(cfg: Config, force = false): Promise<AdoptionReport> {
   const { adoptCodeMemory, codeMemoryRoot } = await import("./surfaces/code-memory.js");
-  const { storePaths } = await import("./store/paths.js");
+  const { primaryPaths } = await import("./store/paths.js");
   const { Indexer } = await import("./index/indexer.js");
   const { makeEmbeddingProvider } = await import("./index/embeddings.js");
-  const paths = storePaths(cfg.memoryDir);
+  const paths = primaryPaths(cfg);
   const idx = Indexer.open(paths, cfg, await makeEmbeddingProvider(cfg.embedding));
   try {
     return await adoptCodeMemory(paths, idx, cfg, codeMemoryRoot(), force);

@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import type { Config } from "../config/schema.js";
 
 // Canonical store layout (the wiki schema, enforced in code):
 //   index.md   — catalog of pages, always current
@@ -8,6 +9,9 @@ import { join } from "node:path";
 //   .agent-julia/  — derived/internal state (index db, migration state, backups)
 export interface StorePaths {
   root: string;
+  // Where persona.md and voice-corrections.md live: the store itself, unless
+  // the config's personaDir points somewhere else.
+  personaRoot: string;
   indexMd: string;
   logMd: string;
   pagesDir: string;
@@ -22,10 +26,11 @@ export interface StorePaths {
   personaFile: string;
 }
 
-export function storePaths(root: string): StorePaths {
+export function storePaths(root: string, personaRoot: string = root): StorePaths {
   const internalDir = join(root, ".agent-julia");
   return {
     root,
+    personaRoot,
     indexMd: join(root, "index.md"),
     logMd: join(root, "log.md"),
     pagesDir: join(root, "pages"),
@@ -34,9 +39,14 @@ export function storePaths(root: string): StorePaths {
     dbPath: join(internalDir, "index.sqlite"),
     migrationStatePath: join(internalDir, "migrations.json"),
     backupsDir: join(internalDir, "backups"),
-    voiceCorrections: join(root, "voice-corrections.md"),
-    personaFile: join(root, "persona.md"),
+    voiceCorrections: join(personaRoot, "voice-corrections.md"),
+    personaFile: join(personaRoot, "persona.md"),
   };
+}
+
+// The primary store, with the persona read from personaDir when it is set.
+export function primaryPaths(config: Pick<Config, "memoryDir" | "personaDir">): StorePaths {
+  return storePaths(config.memoryDir, config.personaDir ?? config.memoryDir);
 }
 
 // Map a page id ("elnino", "pages/elnino", "pages/elnino.md") to its file path.

@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { Config } from "./config/schema.js";
 import { Runtime, buildRuntime } from "./runtime.js";
+import { MountedStore } from "./store/stores.js";
 import { registerTools } from "./tools/register.js";
 import { composeCore } from "./persona/compose.js";
 import { serverInstructions } from "./persona/startup.js";
@@ -13,6 +14,7 @@ import { waitForIdle, withStoreLock } from "./store/lock.js";
 import { installSkills, skillsTargetDir } from "./skills/install.js";
 import { refreshInjectedCore } from "./wizard/register.js";
 import { refreshExports } from "./export/export.js";
+import { refreshHookScript } from "./hooks/hooks.js";
 import { log, warn } from "./util/log.js";
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -26,7 +28,13 @@ const WATCHDOG_MS = 30_000;
 
 // The package version, read from package.json (two levels up from dist/ and
 // src/ alike). Best-effort — the server must boot even if the read fails.
-async function packageVersion(): Promise<string> {
+// Read once: an HTTP server builds a fresh McpServer for every session.
+let versionRead: Promise<string> | null = null;
+export function packageVersion(): Promise<string> {
+  return (versionRead ??= readPackageVersion());
+}
+
+async function readPackageVersion(): Promise<string> {
   try {
     const here = dirname(fileURLToPath(import.meta.url));
     const raw = await readFile(join(here, "..", "package.json"), "utf8");
@@ -119,48 +127,8 @@ export async function detectLegacyPaste(config: Config, targets?: LegacyPasteTar
 // user looks. Tools answer while this runs; the index is already open.
 async function runStartupTasks(rt: Runtime): Promise<void> {
   await detectLegacyPaste(rt.config);
-  // Two-machine sync: pull the store from its remote before maintenance reads
-  // it, so a session on this machine starts from what the other machine pushed.
-  // Best-effort — offline is a quiet skip, a conflict is aborted and warned.
-  if (rt.config.git && rt.config.gitRemote) {
-    const pulled = await pullFromRemote(rt.config.memoryDir);
-    log(`git pull: ${pulled}`);
-  }
-
-  // Automatic maintenance on launch ("on write + cron" — this is the cron-ish
-  // half). Skip it when nothing on disk changed since the last run: every Claude
-  // session spawns its own serve, so running full maintenance (read all pages,
-  // refresh the catalog, git add/commit) on every cold start is pure repeated
-  // cost. The mtime check is a readdir + stat, no content reads. Non-fatal.
-  //
-  // One server at a time. Sessions that boot together all see the same change
-  // (a pull, a hand edit), and each of them reindexing it meant each starting
-  // its own copy of the embedding model for the same pages. The index is
-  // shared, so whoever holds the lock does it for everyone.
-  try {
-    const latest = await latestStoreMtime(rt.paths);
-    const stored = Number(getMeta(rt.indexer.db, MAINT_MTIME_KEY) ?? 0);
-    if (latest > stored) {
-      const report = await withStoreLock(
-        rt.paths.root,
-        () => runMaintenance(rt.paths, rt.indexer, rt.config, "auto"),
-        { name: "maintenance", waitMs: 0 },
-      );
-      if (report) {
-        setMeta(rt.indexer.db, MAINT_MTIME_KEY, String(latest));
-        log(
-          `maintenance: +${report.indexAdded}/~${report.indexUpdated}/-${report.indexRemoved} indexed, ` +
-            `${report.staleFlagged.length} stale, ${report.orphanLinks.length} orphan link(s)`,
-        );
-      } else {
-        log("maintenance: another server is running it — skipped");
-      }
-    } else {
-      log("maintenance: store unchanged since last run — skipped");
-    }
-  } catch (err) {
-    warn("startup maintenance failed (continuing):", (err as Error).message);
-  }
+  await pullAndMaintain(primaryStore(rt));
+  for (const store of rt.stores ?? []) await pullAndMaintain(store);
 
   // Refresh what init/sync installed: the shipped skills, and the persona block
   // in files that already carry it. Installs register the server as floating
@@ -189,6 +157,7 @@ async function runStartupTasks(rt: Runtime): Promise<void> {
         // bring in whatever was written there instead of here. Skipped when
         // neither the store nor those directories changed since the last run.
         code: await adoptCodeMemoryIfChanged(rt.paths, rt.indexer, rt.config),
+        hooks: await refreshHookScript(rt.config).catch(() => false),
       }),
       { name: "refresh" },
     );
@@ -212,11 +181,81 @@ async function runStartupTasks(rt: Runtime): Promise<void> {
   // Last, because it can take a while: vectors for pages that lack them under
   // the active model. Not gated on the store watermark above, since a change of
   // model or precision changes no page. A no-op on almost every boot.
-  try {
-    await rt.indexer.reembedIfStale();
-  } catch (err) {
-    warn("startup re-embed failed (continuing):", (err as Error).message);
+  for (const store of [{ name: null, indexer: rt.indexer }, ...(rt.stores ?? [])]) {
+    try {
+      await store.indexer.reembedIfStale();
+    } catch (err) {
+      warn(`startup re-embed${store.name ? ` of store "${store.name}"` : ""} failed (continuing):`, (err as Error).message);
+    }
   }
+}
+
+export function primaryStore(rt: Runtime): MountedStore {
+  return { name: null, paths: rt.paths, indexer: rt.indexer, config: rt.config, write: true };
+}
+
+export interface StoreMaintenance {
+  store: string | null;
+  at: string;
+  pulled?: string;
+  outcome: "maintained" | "unchanged" | "busy" | "failed";
+  error?: string;
+}
+
+// Pull a store from its remote, then run automatic maintenance on it if
+// anything on disk changed since the last run. Never throws: a failure is
+// logged and reported, and the next store still gets its turn.
+//
+// Two-machine sync: the pull comes first so a session on this machine starts
+// from what the other machine pushed. Best-effort — offline is a quiet skip, a
+// conflict is aborted and warned.
+//
+// Maintenance on launch is the cron-ish half of "on write + cron". It is
+// skipped when nothing on disk changed since the last run: every Claude session
+// spawns its own serve, and running full maintenance (read all pages, refresh
+// the catalog, git add/commit) on every cold start is pure repeated cost. The
+// mtime check is a readdir + stat, no content reads.
+//
+// One server at a time. Sessions that boot together all see the same change
+// (a pull, a hand edit), and each of them reindexing it meant each starting its
+// own copy of the embedding model for the same pages. The index is shared, so
+// whoever holds the lock does it for everyone.
+export async function pullAndMaintain(store: MountedStore): Promise<StoreMaintenance> {
+  const tag = store.name ? ` (${store.name})` : "";
+  const result: StoreMaintenance = { store: store.name, at: new Date().toISOString(), outcome: "unchanged" };
+  try {
+    if (store.config.git && store.config.gitRemote) {
+      result.pulled = await pullFromRemote(store.paths.root);
+      log(`git pull${tag}: ${result.pulled}`);
+    }
+    const latest = await latestStoreMtime(store.paths);
+    const stored = Number(getMeta(store.indexer.db, MAINT_MTIME_KEY) ?? 0);
+    if (latest <= stored) {
+      log(`maintenance${tag}: store unchanged since last run — skipped`);
+      return result;
+    }
+    const report = await withStoreLock(
+      store.paths.root,
+      () => runMaintenance(store.paths, store.indexer, store.config, "auto"),
+      { name: "maintenance", waitMs: 0 },
+    );
+    if (!report) {
+      log(`maintenance${tag}: another server is running it — skipped`);
+      result.outcome = "busy";
+      return result;
+    }
+    setMeta(store.indexer.db, MAINT_MTIME_KEY, String(latest));
+    log(
+      `maintenance${tag}: +${report.indexAdded}/~${report.indexUpdated}/-${report.indexRemoved} indexed, ` +
+        `${report.staleFlagged.length} stale, ${report.orphanLinks.length} orphan link(s)`,
+    );
+    result.outcome = "maintained";
+  } catch (err) {
+    warn(`startup maintenance${tag} failed (continuing):`, (err as Error).message);
+    result.outcome = "failed";
+    result.error = (err as Error).message;
+  }
+  return result;
 }
 
 // Which client started this server, so doctor can say whether the voice ever
@@ -249,7 +288,7 @@ function recordBootWhenKnown(server: McpServer): void {
 // 954 MB and a WAL handle each, every one of them having rewritten the user's
 // CLAUDE.md and skills directory at boot. A reparented process (ppid changed,
 // usually to 1) is an orphan.
-function startParentWatchdog(onOrphaned: () => void): void {
+export function startParentWatchdog(onOrphaned: () => void): void {
   const parent = process.ppid;
   const timer = setInterval(() => {
     if (process.ppid !== parent) {
@@ -259,6 +298,67 @@ function startParentWatchdog(onOrphaned: () => void): void {
   }, WATCHDOG_MS);
   // Never hold the process open for the watchdog itself.
   timer.unref?.();
+}
+
+// One MCP server over the shared runtime: the stdio server has one, an HTTP
+// server one per session. `localSurfaces: false` (the HTTP server) keeps the
+// tools away from files that belong to a local Claude install.
+export async function createMcpServer(
+  rt: Runtime,
+  opts: { localSurfaces?: boolean; scope?: readonly string[] } = {},
+): Promise<McpServer> {
+  // A scoped session hears only about the stores it can reach.
+  const scope = opts.scope;
+  const shown = scope ? { ...rt.config, stores: (rt.config.stores ?? []).filter((s) => scope.includes(s.name)) } : rt.config;
+  const server = new McpServer(
+    { name: "agent-julia", version: await packageVersion() },
+    {
+      // The only channel into a Claude Desktop session that needs no human
+      // action. It carries the stable layer — identity, language, the privacy
+      // rail, and the order to fetch the rest — because the volatile half is
+      // too large for it and would double up with Claude Code's block.
+      instructions: serverInstructions(shown),
+    },
+  );
+
+  registerTools(server, rt, { localSurfaces: opts.localSurfaces ?? true, ...(scope ? { scope } : {}) });
+
+  server.registerResource(
+    "persona-core",
+    "agent-julia://core",
+    {
+      title: "Persona core",
+      description:
+        "The same persona the get_core tool returns. Note that Claude Desktop maps tools only, " +
+        "so this resource is not a delivery channel for Cowork — it is here for other MCP clients " +
+        "and for attaching the core by hand.",
+      mimeType: "text/markdown",
+    },
+    async (uri) => {
+      const core = await composeCore(rt.paths, rt.config);
+      return {
+        contents: [
+          { uri: uri.href, mimeType: "text/markdown", text: core.text, _meta: { [IDENTITY_META]: identityOf(rt.config) } },
+        ],
+      };
+    },
+  );
+  return server;
+}
+
+// The part of the config a remote client needs to stand in for this one on its
+// own machine: the persona's identity, for the pasted Desktop block and for
+// instructions while the server is away. Nothing about paths or stores.
+export const IDENTITY_META = "agent-julia/identity";
+export type Identity = Pick<Config, "name" | "gender" | "pronouns" | "language" | "privacyHardOff">;
+export function identityOf(config: Config): Identity {
+  return {
+    name: config.name,
+    gender: config.gender,
+    pronouns: config.pronouns,
+    language: config.language,
+    privacyHardOff: config.privacyHardOff,
+  };
 }
 
 // Boot the MCP stdio server. Runs migrations, opens the index, registers tools,
@@ -289,6 +389,9 @@ export async function startServer(): Promise<void> {
       } finally {
         clearTimeout(deadline);
         try {
+          // Mounted stores first: they borrow the primary's embedding process,
+          // which closing the primary's index stops.
+          for (const store of rt.stores ?? []) store.indexer.close();
           // Also stops the embedding process, if one is running.
           rt.indexer.close();
         } catch {
@@ -306,35 +409,7 @@ export async function startServer(): Promise<void> {
   process.stdin.on("end", () => shutdown("stdin ended"));
   process.stdin.on("close", () => shutdown("stdin closed"));
 
-  const server = new McpServer(
-    { name: "agent-julia", version: await packageVersion() },
-    {
-      // The only channel into a Claude Desktop session that needs no human
-      // action. It carries the stable layer — identity, language, the privacy
-      // rail, and the order to fetch the rest — because the volatile half is
-      // too large for it and would double up with Claude Code's block.
-      instructions: serverInstructions(rt.config),
-    },
-  );
-
-  registerTools(server, rt);
-
-  server.registerResource(
-    "persona-core",
-    "agent-julia://core",
-    {
-      title: "Persona core",
-      description:
-        "The same persona the get_core tool returns. Note that Claude Desktop maps tools only, " +
-        "so this resource is not a delivery channel for Cowork — it is here for other MCP clients " +
-        "and for attaching the core by hand.",
-      mimeType: "text/markdown",
-    },
-    async (uri) => {
-      const core = await composeCore(rt.paths, rt.config);
-      return { contents: [{ uri: uri.href, mimeType: "text/markdown", text: core.text }] };
-    },
-  );
+  const server = await createMcpServer(rt);
 
   recordBootWhenKnown(server);
 

@@ -11,7 +11,7 @@ import { log, warn } from "../util/log.js";
 import { copyToClipboard } from "../util/clipboard.js";
 import { buildInjectedCore, STARTUP_BLOCK_ID } from "../persona/startup.js";
 import { PASTE_LAYOUT, configFingerprint, pasteBody, pasteHash } from "../persona/paste.js";
-import { storePaths } from "../store/paths.js";
+import { primaryPaths } from "../store/paths.js";
 import {
   hasManagedBlock,
   managedBlock,
@@ -340,14 +340,16 @@ export interface InstallStep {
 // surfaces. Two distinct jobs — registering the server is not enough; the persona
 // + "use your memory" instruction must be in each surface's startup context,
 // because the model reads those before anything else.
-export async function install(config: Config): Promise<InstallStep[]> {
+// `core`: the injected block when it does not come from a local store, as on a
+// machine that connects to an agent-julia server.
+export async function install(config: Config, opts: { core?: string } = {}): Promise<InstallStep[]> {
   const steps: InstallStep[] = [];
   const name = "agent-julia";
   // Chosen once, and probed when it has to be: with local embeddings selected,
   // registering a launcher that cannot load the model is how a fully configured
   // and fully indexed semantic search ends up never running.
   const entry = serverEntryFor(config.embedding.provider === "local");
-  const core = await buildInjectedCore(storePaths(config.memoryDir), config);
+  const core = opts.core ?? (await buildInjectedCore(primaryPaths(config), config));
   const wantCode = config.surfaces.includes("code");
   const wantDesktop = config.surfaces.includes("cowork") || config.surfaces.includes("dispatch");
 
@@ -470,8 +472,10 @@ export async function refreshInjectedCore(
     { path: claudeCodeMemoryPath(), body: "core" },
     { path: coworkMirrorPath(), body: "paste" },
   ],
+  // The block itself, when the persona is not in a local store (remote client).
+  block?: string,
 ): Promise<number> {
-  const core = await buildInjectedCore(storePaths(config.memoryDir), config);
+  const core = block ?? (await buildInjectedCore(primaryPaths(config), config));
   const paste = await pasteBody(config);
   let refreshed = 0;
   for (const t of targets) {
@@ -498,7 +502,7 @@ export async function buildInstructions(config: Config): Promise<string> {
   // Desktop the same short block install() does — not the full core, which goes
   // stale the moment a correction is recorded.
   const pasteForDesktop = await pasteBody(config);
-  const core = await buildInjectedCore(storePaths(config.memoryDir), config);
+  const core = await buildInjectedCore(primaryPaths(config), config);
   // The same launcher install() would register. The first candidate is not it
   // when the local model is chosen: printed from an npx run, that was the npx
   // entry, which can never load the model package.

@@ -107,16 +107,23 @@ function run(db: DB, match: string, limit: number, via: FtsHit["via"]): FtsHit[]
 // Each hit says which rung it came from, so a caller can tell a precise match
 // from a loose one.
 export function ftsSearch(db: DB, query: string, limit: number): FtsHit[] {
+  return ftsLadder(db, query, limit).hits;
+}
+
+// The same, with the rung that answered: 0 every term, 1 content words, 2 two
+// words, 3 one word or a substring. Searching several stores keeps only the
+// best rung any of them reached, as one store holding all their pages would.
+export function ftsLadder(db: DB, query: string, limit: number): { hits: FtsHit[]; rung: number } {
   const all = terms(query);
-  if (all.length === 0) return [];
+  if (all.length === 0) return { hits: [], rung: 0 };
 
   const strict = run(db, all.map(quoted).join(" "), limit, "fts");
-  if (strict.length > 0) return strict;
+  if (strict.length > 0) return { hits: strict, rung: 0 };
 
   const content = all.filter((t) => !STOPWORDS.has(t));
   if (content.length > 0 && content.length < all.length) {
     const hits = run(db, content.map(quoted).join(" "), limit, "fts");
-    if (hits.length > 0) return hits;
+    if (hits.length > 0) return { hits, rung: 1 };
   }
 
   // OR, but requiring two matches, so one common word cannot return the store.
@@ -127,17 +134,17 @@ export function ftsSearch(db: DB, query: string, limit: number): FtsHit[] {
       const hay = `${h.title} ${h.snippet}`.toLowerCase();
       return pool.filter((t) => hay.includes(t)).length >= 2;
     });
-    if (hits.length > 0) return hits.slice(0, limit);
+    if (hits.length > 0) return { hits: hits.slice(0, limit), rung: 2 };
     // Nothing matched two terms: try each word alone, longest first, and take
     // the first that finds anything. "The closest I have" beats "no hits" when
     // the alternative is the user concluding their memory is empty.
     for (const t of [...pool].sort((a, b) => b.length - a.length)) {
       const single = run(db, quoted(t), limit, "fts-loose");
-      if (single.length > 0) return single;
+      if (single.length > 0) return { hits: single, rung: 3 };
     }
-    return substringFallback(db, pool, limit);
+    return { hits: substringFallback(db, pool, limit), rung: 3 };
   }
-  return substringFallback(db, all, limit);
+  return { hits: substringFallback(db, all, limit), rung: 3 };
 }
 
 // The trigram tokenizer, which the index uses for Chinese, Japanese, Korean and

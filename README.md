@@ -1,10 +1,12 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/elninopl/agent-julia/main/scripts/AgentJulia.png" alt="Agent Julia — a named persona and one memory for Claude Code and Claude Desktop" width="540">
+  <img src="https://raw.githubusercontent.com/elninopl/agent-julia/main/scripts/AgentJulia.png" alt="Agent Julia: one persona and one memory for every Claude you use" width="540">
 </p>
 
 # Agent Julia
 
-**Give your AI a name, a voice, and a memory that stays.** You start by building the persona: what it is called, its pronouns, the language it answers in, how it writes, what it must never store. From then on you address it by that name instead of prompting an assistant, and the same character answers on Claude Code and on Claude Desktop. It is yours: plain markdown in a git repo you own, kept small in the model's context, corrected in passing and remembered for good.
+**One AI that knows you, in every Claude you use.**
+
+You build the persona once: what it is called, which language it answers in, how it writes and what it must never store. From then on you talk to it by name in Claude Code, Claude Desktop, claude.ai, the Claude app on your phone and on your other computers, and it is the same one everywhere. It remembers what you decided and writes the way you taught it. Everything it knows is plain markdown in a git repo you own.
 
 [![npm](https://img.shields.io/npm/v/agent-julia.svg)](https://www.npmjs.com/package/agent-julia)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
@@ -13,17 +15,55 @@
 npx agent-julia init
 ```
 
-Every Claude surface forgets between sessions and keeps its own separate notes, so the same person gets a slightly different, amnesiac assistant on each one — one that has to be re-taught the same preferences and called nothing in particular. The usual fix, piling everything into `CLAUDE.md` and global instructions, backfires: long context measurably degrades the model, and a pasted block goes stale the moment you correct something.
+## What it looks like
 
-Agent Julia gives your AI an identity instead of a configuration. The first thing the wizard asks is what to call it, and from then on that is who answers: you write "Julia, take a look at this" and Julia replies, in her own voice, on Claude Code and on Claude Desktop alike. You build that voice by talking, correcting it the way you would correct a colleague ("stop hedging", "don't open with my name"), and it keeps the correction everywhere from the next turn on. Its memory is one folder of markdown you own, with a small budgeted slice of persona riding each message and the rest recalled only when it is needed.
+**Monday, Claude Code on your laptop**
+
+> **You:** Julia, remember: the Atlas launch moves to April, after the security audit.
+>
+> **Julia:** Saved → atlas.
+
+**Wednesday, the Claude app on your phone**
+
+> **You:** Julia, when does Atlas launch?
+>
+> **Julia:** In April. You moved it on Monday because of the security audit.
+
+**Any day, in any app**
+
+> **You:** Stop opening with "Great question".
+>
+> **Julia:** Saved as a voice correction. Every app follows it from now on.
+
+The phone and claude.ai reach your memory through [server mode](#run-as-a-server).
+
+## Why it helps
+
+**You keep re-teaching the same preferences.** You told Claude Code to skip the "Great question!" preamble and to answer in Polish. Tomorrow, in Claude Desktop, the preamble is back and the answer comes in English. With Agent Julia you say it once, and every app reads the same correction from the next turn on.
+
+**Your `CLAUDE.md` has grown to 500 lines.** All of it loads on every turn of every session, and the answers get worse as the window fills with things the task at hand does not need. Agent Julia keeps a persona core of about 1,200 tokens in context and leaves the rest in memory, where the agent finds the one page it needs when you ask.
+
+## Where it works
+
+| | How it connects |
+| --- | --- |
+| **Claude Code** | registered by the wizard; the persona is in every session from the first message |
+| **Claude Desktop** (Cowork) | registered by the wizard; you paste one short block into its settings once |
+| **claude.ai** | a custom connector to your [server](#run-as-a-server), approved with your own password |
+| **The Claude app on your phone** | the same connector: add it on the web and it is there |
+| **Your other computers** | `agent-julia init`, then "On an agent-julia server" |
+| **A team or a household** | a [shared store](#shared-stores) mounted next to your own memory |
+| **Codex, Gemini CLI** | the persona [exported](#beyond-claude) into their instruction file and kept current |
 
 ## Highlights
 
-- **A persona you build, then call by name** — the wizard asks what it is called before it asks anything else, then pronouns, the language it replies in and how it writes. You open with "Julia, look at this" the way you would with a person, it answers as that name rather than as "the assistant", and it is the same character on every surface. Renaming it later is a line in `~/.config/agent-julia/config.json` plus `agent-julia sync`.
-- **A voice you shape by talking** — "stop hedging", "don't use that word", "write to my co-founder, not to an engineer". Say it once, in passing, and it holds. Withdraw it the same way.
-- **One memory, every surface** — Claude Code and Claude Desktop share the same brain; a fact saved in one is known in the other.
-- **You own it** — plain markdown in a git repo you control, not a database locked inside an app. Readable, portable, `git log`-able, and no write can silently destroy what it was meant to extend.
-- **Small context footprint** — only a budgeted persona core rides each turn; everything else is recalled on demand, so the window stays clear.
+- **A persona you call by name.** The wizard asks what it is called, then its pronouns, its language and how it writes. You open with "Julia, look at this" as you would with a colleague, and Julia is the one who answers.
+- **A voice you shape by talking.** "Stop hedging." "Don't open with my name." Say it once, in passing, and it holds in every app. Take it back the same way.
+- **It catches what you forget to save.** Ask it to remember and it does. With [capture hooks](#capture-hooks) on, a background pass after a Claude Code session also saves the decisions and corrections nobody asked it to keep.
+- **Yours, in plain files.** Markdown in a git repo you control: open it, edit it by hand, `git log` it, take it elsewhere. The search index is built from those files and rebuilds itself if you delete it.
+- **Light on context.** About 1,200 tokens of persona ride each turn. Everything else waits in memory until a question needs it.
+- **Search that gets your meaning.** Keyword search with stemming and accent folding is always on. Add the optional multilingual model, which runs on your machine, and a question in Polish finds a note you wrote in English.
+- **Private where it counts.** You decide what it must never store, starting from passwords, keys, card numbers and other people's private details, and that rule rides every message. The server listens only on your own machine until you turn on authentication, and claude.ai gets in only after you type the owner password.
 
 ---
 
@@ -86,20 +126,6 @@ You don't call tools or memorize commands. You talk to your agent by name, and i
 
 Everything you save lands as markdown in your repo and is committed, so you can open it, edit it by hand, or `git log` the history any time.
 
-## Why it helps
-
-Two everyday frustrations it removes:
-
-**A preference you keep re-teaching.** You tell Claude Code to skip the "Great question!" preamble and reply in Polish.
-
-- *Before* — tomorrow, in Cowork on your laptop, the preamble is back and it answers in English. You correct it again. And again.
-- *After* — you record it once with `correct_voice`; Code and Cowork both read the same correction from the next turn on.
-
-**The `CLAUDE.md` tax.** Your `~/.claude/CLAUDE.md` has grown to 500 lines — every project, every preference, every person.
-
-- *Before* — all of it loads on every turn of every session, and the answer degrades as the window fills with things this task doesn't need.
-- *After* — a persona core sized by `contextBudget` (1,200 tokens by default, plus a short instruction telling the agent where its memory lives) rides each turn; the 500 lines live in your memory, and only the page you actually need is pulled in when you ask.
-
 ## How it works
 
 - **Canonical store** — plain markdown in a git repo. Human-readable, portable, versioned, private. This is the source of truth, not a database.
@@ -122,9 +148,85 @@ agent-julia ships one skill, installed into `~/.claude/skills/` (which both Clau
 
 The skill starts only when you ask for it (or accept a one-line offer). Your own skill under the same name is never overwritten: installs and uninstalls only touch copies carrying the `author: agent-julia` marker.
 
+## Capture hooks
+
+The agent saves what it is told to save and, on a good day, what it notices. Both slip in a long session. `agent-julia hooks install` adds three Claude Code hooks that catch what slips, without touching any hook of yours:
+
+- **On every prompt** (`UserPromptSubmit`): when your message reads like a correction of the voice ("don't say", "nie pisz", "sounds off", "zamiast"), a one-line reminder to call `correct_voice` before replying. Every `nudgeEveryTurns` turns (10 by default), a one-line reminder to `ingest` what the session decided.
+- **Before a compaction and at the end of a session** (`PreCompact`, `SessionEnd`): a background `claude -p` reads what was said since the last pass, searches the memory, and saves the durable facts and voice corrections the session left out. It can only search, read, `ingest` and `correct_voice`, runs with hooks off, gives up after five minutes, and never holds up your session. What it did goes to `hooks.log` next to the config.
+
+```sh
+agent-julia hooks install     # or: uninstall, status
+```
+
+```json
+"capture": { "hooks": true, "nudgeEveryTurns": 10, "extractOnCompact": true }
+```
+
+- The hooks go into `settings.json` of the Claude Code account in use (`$CLAUDE_CONFIG_DIR`, else `~/.claude`), with a one-time backup. They run a small script next to the config with Node directly, so a prompt costs one Node start and no package download; the server keeps the script current with each update.
+- The background pass runs `claude -p` on your Claude plan, with Sonnet. Anthropic has changed how `claude -p` usage counts against plans before and may again; set `extractOnCompact` to `false` to keep only the reminders.
+- It works the same on a machine connected to a server: the pass saves through the relay.
+
+Claude.ai, the mobile app and Claude Desktop run no hooks. For them, `"serverNudge": true` in `capture` has the server itself ask: when a session has kept reading for 20 minutes and saved nothing, the next `search`, `read` or `list` result carries one extra line asking whether something is worth keeping. Once per 20 minutes at most, and never inside the result itself, which stays as it was. Off by default.
+
 ## Beyond Claude
 
 The persona you built is not locked to Claude. `agent-julia export codex` writes it into `~/.codex/AGENTS.md`, `export gemini` into `~/.gemini/GEMINI.md`, and `export <path>` into any AGENTS.md-style instruction file — as a marked, removable block, backed up on first touch, and **kept refreshed by the server on every boot** (a voice correction you make in Claude reaches Codex on its next session). The export carries the persona itself — identity, voice, corrections, privacy rail — without the Claude-specific memory instructions; attach the same MCP server in the other tool if it supports MCP, and the memory follows too.
+
+## Run as a server
+
+By default every Claude session starts its own Agent Julia over stdio, on the machine the session runs on. `agent-julia serve --http` runs one long-lived process instead, serving every session of every client over MCP's Streamable HTTP transport at `/mcp`. It is the way to reach one memory from more than one machine, and the only way to reach it from a client that cannot start local processes.
+
+```json
+"server": { "host": "127.0.0.1", "port": 8787, "auth": "none", "maintenanceEveryMinutes": 60 }
+```
+
+- One process, one index per store, many sessions. Writes from different sessions are ordered by the same store lock the stdio servers use, so a CLI command on the same machine is still safe to run.
+- It pulls and maintains every store on start and then every `maintenanceEveryMinutes`. It never touches `~/.claude`, skills, exports or Claude Code's memory on the machine it runs on: there is no local Claude there to serve.
+- `GET /healthz` returns JSON for a monitor: version, open sessions, and per store the last write, the last maintenance and its outcome, and how many commits are waiting to be pushed.
+- It binds loopback by default and refuses to start without authentication on any other address, or with a `publicUrl` set. Requests must carry a Host the server answers to, and with `auth: "none"` a request that came through a proxy is refused.
+- `--host` and `--port` override the config for one run. Each persona is its own process with its own config (`AGENT_JULIA_CONFIG`).
+
+**Tokens** (`"auth": "bearer"`) are for machine clients: a remote proxy, a monitor, a bot.
+
+```sh
+agent-julia server token add laptop            # prints the token once
+agent-julia server token add group --stores team   # this one reaches only the store "team"
+agent-julia server token list
+agent-julia server token revoke laptop
+```
+
+Clients send `Authorization: Bearer <token>`. Tokens are kept as SHA-256 hashes in `secrets/tokens.json` next to the config, readable by its owner only, and a running server picks up an added or revoked token without a restart. A token with `--stores` sees only those stores (`primary` is your own): the others are absent from `search`, `list` and `read`, it writes only with `store`, and it cannot change the voice. It still reads the voice: `get_core` gives it the persona and your corrections, so a group-chat process speaks as your persona over a shared memory. Don't hand such a token to anyone who should not see your corrections. A session belongs to the token that opened it. Without a token, `/healthz` answers only whether the server is up and its version; with one, it lists the stores that token reaches.
+
+**Claude.ai and the Claude mobile app** (`"auth": "oauth"`) connect as a custom connector, over OAuth. Claude.ai reaches the server from Anthropic's cloud, so it has to be reachable from the internet over HTTPS: put a reverse proxy or tunnel on the same machine in front of it (Caddy, nginx, `cloudflared`) and give its address as `publicUrl`.
+
+```json
+"server": { "auth": "oauth", "publicUrl": "https://julia.example.com" }
+```
+
+```sh
+agent-julia server set-owner     # the password that approves a connection
+agent-julia serve --http
+```
+
+Then in claude.ai: Settings → Connectors → Add custom connector, URL `https://julia.example.com/mcp`. Claude registers itself and opens the server's consent page, which names the app asking and where it will be sent back; type the owner password and allow. A connector added on the web is in the mobile app too. On a Team or Enterprise plan every member who connects goes through the same page, so they all need the owner password: this mode is for a server one person uses.
+
+- Access tokens last an hour and are refreshed without asking; a refresh token is replaced on every use and lapses after 90 days without one. Tokens are kept as hashes in `secrets/oauth.json`, readable by its owner only, so a restart logs nobody out.
+- `agent-julia server oauth list` shows the connected apps; `server oauth revoke <client-id>` (or `all`) cuts one off at once, running server included. Changing the owner password does not disconnect anyone by itself.
+- After ten wrong passwords within 15 minutes the consent page stops accepting any until the window passes.
+- Bearer tokens keep working next to OAuth, for the clients that are not Claude.
+
+**Another machine** connects to the server instead of keeping its own memory. Make a token for it on the server, then run `agent-julia init` on the other machine and choose "On an agent-julia server": it asks for the address and the token, checks both, and registers the server with that machine's Claude apps. The config it writes names the server:
+
+```json
+"remote": { "url": "https://julia.example.com/mcp", "tokenEnv": "AGENT_JULIA_TOKEN" }
+```
+
+- `agent-julia serve` on that machine is then a relay: stdio towards Claude, HTTP towards the server. Tools, the `agent-julia://core` resource and the instructions come from the server unchanged. No store, index or git runs there, and the commands that work on a store say to run them on the server.
+- At each session start it refreshes the persona block in `~/.claude/CLAUDE.md` and the shipped skills from the server's core, and again after `correct_voice`, as a local install does.
+- The token is read from the variable named in `tokenEnv`, else from `secrets/remote-token` next to the config, where the wizard keeps it (readable by you only). It is never written to the config.
+- When the server is down, a session still starts within seconds: it gets the tools it saw last, and each call answers with an error naming the server instead of hanging. The relay tries again every 30 seconds and picks up a restarted server by itself.
+- `agent-julia doctor` checks the way to the server: that it answers, that it takes the token, and whether its version matches this machine's. `serve --remote <url>` points one run at another server.
 
 ---
 
@@ -173,6 +275,23 @@ your-memory/
 Pages carry light frontmatter — title, status, last-updated date, and an auto-detected language — and link to each other with `[[wiki-links]]`. Writing always goes through the `ingest` tool, which writes the page, refreshes the catalog, appends the journal, reindexes, and commits to git in one step. A write either appends to the page or replaces it, says which it did and by how much, and refuses a replace that would throw an established page away. `agent-julia undo` walks the commits it wrote and reverses one.
 
 Point the wizard at an existing markdown knowledge base and Agent Julia adopts it: your pages are indexed and a hand-written `index.md` is left alone — Agent Julia only manages a clearly marked block inside it.
+
+### Shared stores
+
+A store can be mounted next to your own, for memory that belongs to more than one person (a team, a household, a project two people run). It is an ordinary Agent Julia store in its own directory, with its own index, git history and remote, and it can be served on its own as well.
+
+```json
+"stores": [
+  { "name": "team", "dir": "~/team-memory", "write": true,
+    "gitRemote": "git@github.com:acme/team-memory.git", "gitAutoPush": true }
+]
+```
+
+- Its pages are addressed as `team:page`; your own keep their bare ids. `[[team:pricing]]` links into it, a bare `[[link]]` stays inside the store it is written in.
+- `search` and `list` cover every mounted store, and each hit says which one it came from. Search ranks them as if they were one store: on a test that split a real 282-page store in two, the merged results matched the unsplit store's top hit in 98-99% of queries.
+- Writing goes to your own memory unless `ingest` is given `store: "team"`, and the agent is told to do that only when you ask. A shared page id alone does not count, so an agent cannot spill a private fact into a shared page by copying its id. A store without `"write": true` is read-only.
+- Your persona, voice corrections, catalog and the blocks in Claude's files stay with your own store; a shared store's `persona.md` is never read.
+- Maintenance runs per store on startup and in `agent-julia maintenance`; one store failing does not stop the others. A store with a `gitRemote` is pulled first.
 
 ### When a project documents itself
 
@@ -254,7 +373,13 @@ The persona core is also exposed as a resource (`agent-julia://core`) for client
 | Command | |
 | --- | --- |
 | `agent-julia serve` | Start the MCP server (default; used by the Claude apps) |
+| `agent-julia server token add <name> [--stores a,b]` | Make a bearer token for the HTTP server (`list`, `revoke <name>` too) |
+| `agent-julia server set-owner` | Set the password that approves OAuth connections such as claude.ai |
+| `agent-julia server oauth list` | List the apps connected over OAuth (`revoke <client-id\|all>` cuts them off) |
+| `agent-julia serve --http` | Run one long-lived HTTP server for many sessions and machines (see [Run as a server](#run-as-a-server)) |
+| `agent-julia serve --remote [url]` | Relay to an agent-julia server instead of a local store; the default for `serve` when the config has `remote` |
 | `agent-julia init` | Run the setup wizard |
+| `agent-julia hooks install` | Add the [capture hooks](#capture-hooks) to Claude Code (`uninstall`, `status` too) |
 | `agent-julia sync` | Re-apply registration, the persona block, the shipped skills and the Claude Code memory handling (`codeMemory`) for the current config. `--print` shows the exact changes instead of making them; `--absorb-all` also brings in directories holding more than 25 facts |
 | `agent-julia uninstall` | Remove the managed blocks, registration, and shipped skills (backups are kept) |
 | `agent-julia search <query>` | Search your memory from the terminal (same hybrid index the agent uses) |
@@ -295,6 +420,11 @@ Settings live in `~/.config/agent-julia/config.json` and carry a `schemaVersion`
 | `exports` | Files outside Claude that carry an exported persona block, kept current on every start (managed with `agent-julia export`) |
 | `weeklyMaintenance` | How the weekly digest is meant to run: `cowork-task` (a scheduled Cowork task) or `own-routine` |
 | `privacyHardOff` | Categories the agent must never store (keys, card numbers, third-party private data) |
+| `server` | Optional, read only by `serve --http`: `host`, `port`, `publicUrl`, `auth`, `maintenanceEveryMinutes` (see [Run as a server](#run-as-a-server)) |
+| `remote` | Optional. The agent-julia server this machine connects to instead of keeping a store: `url`, `tokenEnv` (default `AGENT_JULIA_TOKEN`). `memoryDir` is then unused (see [Run as a server](#run-as-a-server)) |
+| `stores` | Optional. Other agent-julia stores mounted next to yours: `name`, `dir`, `write` (default off), `git`, `gitRemote`, `gitAutoPush` (see [Shared stores](#shared-stores)) |
+| `capture` | Optional: `hooks` (set by `hooks install`), `nudgeEveryTurns` (10), `extractOnCompact` (true), `serverNudge` (false) (see [Capture hooks](#capture-hooks)) |
+| `personaDir` | Optional. Read `persona.md` and `voice-corrections.md` from another agent-julia store instead of `memoryDir`, and record corrections there. For a process whose memory is a shared store but whose voice is yours. Corrections are committed in that store's repo; its own server pushes them |
 
 </details>
 

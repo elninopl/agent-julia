@@ -32,7 +32,7 @@ export interface SemanticHit {
 // the best thing I found" travels. Without it, semantic search always returned
 // a full page of results, so "no, I don't know that" was not an answer the
 // product could give.
-const RELATIVE_FLOOR = 0.06;
+export const RELATIVE_FLOOR = 0.06;
 
 export function semanticDelete(db: DB, id: string): void {
   db.prepare("DELETE FROM embeddings WHERE id = ?").run(id);
