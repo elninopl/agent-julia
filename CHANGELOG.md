@@ -7,6 +7,8 @@ changes, which always ship an automatic, backup-protected data migration.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-02
+
 > Requires `@modelcontextprotocol/sdk` 1.32.1 or newer (was 1.30.2), moves
 > to zod 4 (zod 3 has an open advisory with no fix on that line), and adds
 > `express`, which the SDK already depended on.

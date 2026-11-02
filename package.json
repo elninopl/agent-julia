@@ -1,6 +1,6 @@
 {
   "name": "agent-julia",
-  "version": "0.1.44",
+  "version": "0.2.0",
   "description": "One AI that knows you, in every Claude you use: a named persona and a memory you own, shared by Claude Code, Claude Desktop, claude.ai and the Claude mobile app. Plain markdown in git, served over MCP.",
   "author": "Paweł Gniadkowski (elniño) <el@elnino.pl>",
   "license": "MIT",
