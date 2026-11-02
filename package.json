@@ -1,7 +1,7 @@
 {
   "name": "agent-julia",
   "version": "0.1.44",
-  "description": "One brain for your AI — a local-first, owned memory and configurable persona shared across Claude Code and Cowork (Claude Desktop), exposed as an MCP server.",
+  "description": "One AI that knows you, in every Claude you use: a named persona and a memory you own, shared by Claude Code, Claude Desktop, claude.ai and the Claude mobile app. Plain markdown in git, served over MCP.",
   "author": "Paweł Gniadkowski (elniño) <el@elnino.pl>",
   "license": "MIT",
   "type": "module",

@@ -1,10 +1,12 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/elninopl/agent-julia/main/scripts/AgentJulia.png" alt="Agent Julia — a named persona and one memory for Claude Code and Claude Desktop" width="540">
+  <img src="https://raw.githubusercontent.com/elninopl/agent-julia/main/scripts/AgentJulia.png" alt="Agent Julia: one persona and one memory for every Claude you use" width="540">
 </p>
 
 # Agent Julia
 
-**Give your AI a name, a voice, and a memory that stays.** You start by building the persona: what it is called, its pronouns, the language it answers in, how it writes, what it must never store. From then on you address it by that name instead of prompting an assistant, and the same character answers on Claude Code and on Claude Desktop. It is yours: plain markdown in a git repo you own, kept small in the model's context, corrected in passing and remembered for good.
+**One AI that knows you, in every Claude you use.**
+
+You build the persona once: what it is called, which language it answers in, how it writes and what it must never store. From then on you talk to it by name in Claude Code, Claude Desktop, claude.ai, the Claude app on your phone and on your other computers, and it is the same one everywhere. It remembers what you decided and writes the way you taught it. Everything it knows is plain markdown in a git repo you own.
 
 [![npm](https://img.shields.io/npm/v/agent-julia.svg)](https://www.npmjs.com/package/agent-julia)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
@@ -13,18 +15,55 @@
 npx agent-julia init
 ```
 
-Every Claude surface forgets between sessions and keeps its own separate notes, so the same person gets a slightly different, amnesiac assistant on each one — one that has to be re-taught the same preferences and called nothing in particular. The usual fix, piling everything into `CLAUDE.md` and global instructions, backfires: long context measurably degrades the model, and a pasted block goes stale the moment you correct something.
+## What it looks like
 
-Agent Julia gives your AI an identity instead of a configuration. The first thing the wizard asks is what to call it, and from then on that is who answers: you write "Julia, take a look at this" and Julia replies, in her own voice, on Claude Code and on Claude Desktop alike. You build that voice by talking, correcting it the way you would correct a colleague ("stop hedging", "don't open with my name"), and it keeps the correction everywhere from the next turn on. Its memory is one folder of markdown you own, with a small budgeted slice of persona riding each message and the rest recalled only when it is needed.
+**Monday, Claude Code on your laptop**
+
+> **You:** Julia, remember: the Atlas launch moves to April, after the security audit.
+>
+> **Julia:** Saved → atlas.
+
+**Wednesday, the Claude app on your phone**
+
+> **You:** Julia, when does Atlas launch?
+>
+> **Julia:** In April. You moved it on Monday because of the security audit.
+
+**Any day, in any app**
+
+> **You:** Stop opening with "Great question".
+>
+> **Julia:** Saved as a voice correction. Every app follows it from now on.
+
+The phone and claude.ai reach your memory through [server mode](#run-as-a-server).
+
+## Why it helps
+
+**You keep re-teaching the same preferences.** You told Claude Code to skip the "Great question!" preamble and to answer in Polish. Tomorrow, in Claude Desktop, the preamble is back and the answer comes in English. With Agent Julia you say it once, and every app reads the same correction from the next turn on.
+
+**Your `CLAUDE.md` has grown to 500 lines.** All of it loads on every turn of every session, and the answers get worse as the window fills with things the task at hand does not need. Agent Julia keeps a persona core of about 1,200 tokens in context and leaves the rest in memory, where the agent finds the one page it needs when you ask.
+
+## Where it works
+
+| | How it connects |
+| --- | --- |
+| **Claude Code** | registered by the wizard; the persona is in every session from the first message |
+| **Claude Desktop** (Cowork) | registered by the wizard; you paste one short block into its settings once |
+| **claude.ai** | a custom connector to your [server](#run-as-a-server), approved with your own password |
+| **The Claude app on your phone** | the same connector: add it on the web and it is there |
+| **Your other computers** | `agent-julia init`, then "On an agent-julia server" |
+| **A team or a household** | a [shared store](#shared-stores) mounted next to your own memory |
+| **Codex, Gemini CLI** | the persona [exported](#beyond-claude) into their instruction file and kept current |
 
 ## Highlights
 
-- **A persona you build, then call by name** — the wizard asks what it is called, then pronouns, the language it replies in and how it writes. You open with "Julia, look at this" the way you would with a person, it answers as that name rather than as "the assistant", and it is the same character on every surface. Renaming it later is a line in `~/.config/agent-julia/config.json` plus `agent-julia sync`.
-- **A voice you shape by talking** — "stop hedging", "don't use that word", "write to my co-founder, not to an engineer". Say it once, in passing, and it holds. Withdraw it the same way.
-- **One memory, every surface** — Claude Code and Claude Desktop share the same brain; a fact saved in one is known in the other.
-- **Other machines, claude.ai and the phone too** — run it as a server and every Claude you use reaches the same memory: another computer through a relay, claude.ai and the mobile app as a custom connector. Shared stores sit next to your own when a team keeps one.
-- **You own it** — plain markdown in a git repo you control, not a database locked inside an app. Readable, portable, `git log`-able, and no write can silently destroy what it was meant to extend.
-- **Small context footprint** — only a budgeted persona core rides each turn; everything else is recalled on demand, so the window stays clear.
+- **A persona you call by name.** The wizard asks what it is called, then its pronouns, its language and how it writes. You open with "Julia, look at this" as you would with a colleague, and Julia is the one who answers.
+- **A voice you shape by talking.** "Stop hedging." "Don't open with my name." Say it once, in passing, and it holds in every app. Take it back the same way.
+- **It catches what you forget to save.** Ask it to remember and it does. With [capture hooks](#capture-hooks) on, a background pass after a Claude Code session also saves the decisions and corrections nobody asked it to keep.
+- **Yours, in plain files.** Markdown in a git repo you control: open it, edit it by hand, `git log` it, take it elsewhere. The search index is built from those files and rebuilds itself if you delete it.
+- **Light on context.** About 1,200 tokens of persona ride each turn. Everything else waits in memory until a question needs it.
+- **Search that gets your meaning.** Keyword search with stemming and accent folding is always on. Add the optional multilingual model, which runs on your machine, and a question in Polish finds a note you wrote in English.
+- **Private where it counts.** You decide what it must never store, starting from passwords, keys, card numbers and other people's private details, and that rule rides every message. The server listens only on your own machine until you turn on authentication, and claude.ai gets in only after you type the owner password.
 
 ---
 
@@ -86,20 +125,6 @@ You don't call tools or memorize commands. You talk to your agent by name, and i
   the state lives in memory, so you can start on one machine and finish on another.
 
 Everything you save lands as markdown in your repo and is committed, so you can open it, edit it by hand, or `git log` the history any time.
-
-## Why it helps
-
-Two everyday frustrations it removes:
-
-**A preference you keep re-teaching.** You tell Claude Code to skip the "Great question!" preamble and reply in Polish.
-
-- *Before* — tomorrow, in Cowork on your laptop, the preamble is back and it answers in English. You correct it again. And again.
-- *After* — you record it once with `correct_voice`; Code and Cowork both read the same correction from the next turn on.
-
-**The `CLAUDE.md` tax.** Your `~/.claude/CLAUDE.md` has grown to 500 lines — every project, every preference, every person.
-
-- *Before* — all of it loads on every turn of every session, and the answer degrades as the window fills with things this task doesn't need.
-- *After* — a persona core sized by `contextBudget` (1,200 tokens by default, plus a short instruction telling the agent where its memory lives) rides each turn; the 500 lines live in your memory, and only the page you actually need is pulled in when you ask.
 
 ## How it works
 
