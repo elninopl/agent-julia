@@ -109,7 +109,9 @@ describe("a server with no stores mounted", () => {
   });
 });
 
-describe("mounted stores", () => {
+// Some of these keep both stores under git, and a commit on a Windows runner
+// takes most of a second: the whole test runs close to the default 5 s there.
+describe("mounted stores", { timeout: 30_000 }, () => {
   it("search all stores at once and label each hit with its store", async () => {
     const { call } = await session();
     await call("ingest", { page: "launch-plan", content: "Launch the trail app in Lisbon first." });
